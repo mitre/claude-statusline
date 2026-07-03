@@ -69,7 +69,7 @@ subscription — two concurrent sessions correctly show the same pools):
 |---|---|
 | `5h N%` | rolling 5-hour, all models |
 | `week N%` | rolling 7-day, all models |
-| `<model>/wk N%` | rolling 7-day pool for **this session's** model family (opus/sonnet/haiku) — a parallel weekly cap, not a slice of `week`; omitted when the payload has no window for the session's model |
+| `<model>/wk N%` | rolling 7-day pool for **this session's** model family (opus/sonnet/haiku) — a parallel weekly cap, not a slice of `week`; omitted when the payload has no window for the session's model. The usage endpoint values a per-model window only when that limit policy is active on your account (plans without model-specific caps report them as `null`, so the meter self-omits). The Fable weekly limit is never exposed by this endpoint — Claude Code reads it from API response headers that external tools can't see (upstream requests to forward it: anthropics/claude-code#73770, #69791) |
 
 Reset times show on every meter by default; `show_resets = "quiet"` restores
 the hot-only (≥80%) behavior.
