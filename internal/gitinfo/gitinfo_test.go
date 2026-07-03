@@ -1,7 +1,6 @@
 package gitinfo
 
 import (
-	"crypto/md5"
 	"errors"
 	"fmt"
 	"os"
@@ -11,7 +10,7 @@ import (
 	"time"
 )
 
-const cwd = "/Users/dev/github/mitre/ts-inspec-profile-parser"
+const cwd = "/Users/dev/projects/demo-app"
 
 func runnerFor(m map[string]string) RunGit {
 	return func(_ string, args ...string) (string, error) {
@@ -71,9 +70,10 @@ func TestCleanTreeDirtyZero(t *testing.T) {
 
 func TestStaleCachesServedWhenGitFails(t *testing.T) {
 	dir := t.TempDir()
-	key := fmt.Sprintf("%x", md5.Sum([]byte(cwd)))
+	const key = "e6531ce5fc09ac4f" // fnv1a-64 of the cwd fixture
 	stale := filepath.Join(dir, "branch-"+key)
-	if err := os.WriteFile(stale, []byte("feature-x\n"), 0o600); err != nil {
+	// Byte-exact as Get writes it (Go-only cache dir — no bash-era newlines).
+	if err := os.WriteFile(stale, []byte("feature-x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	old := time.Now().Add(-time.Hour)
@@ -112,18 +112,19 @@ func TestStatusUsesNoOptionalLocks(t *testing.T) {
 	}
 }
 
-func TestCacheFilesUseBashCompatibleMD5Keys(t *testing.T) {
-	// Drop-in requirement: share cache files with the bash reference, which
-	// keys by `md5 -qs "$CWD"`.
+func TestCacheFilesUseFNVKeys(t *testing.T) {
+	// Full-Go contract: cache filenames derive from the FNV-1a 64-bit hex of
+	// cwd (stdlib hash/fnv, non-crypto — the md5 bash-interop keys and their
+	// gosec exclusions are gone). Literal pinned so derivation drift fails.
 	dir := t.TempDir()
 	run := runnerFor(map[string]string{
 		"[branch --show-current]":                  "main\n",
 		"[--no-optional-locks status --porcelain]": "?? x\n",
 	})
 	Get(dir, cwd, run)
-	key := fmt.Sprintf("%x", md5.Sum([]byte(cwd)))
+	const key = "e6531ce5fc09ac4f" // fnv1a-64 of the cwd fixture above
 	if _, err := os.Stat(filepath.Join(dir, "branch-"+key)); err != nil {
-		t.Errorf("branch cache not at bash-compatible key: %v", err)
+		t.Errorf("branch cache not at FNV key: %v", err)
 	}
 	if b, err := os.ReadFile(filepath.Join(dir, "dirty-"+key)); err != nil || string(b) != "1" {
 		t.Errorf("dirty cache = %q, %v; want \"1\"", b, err)

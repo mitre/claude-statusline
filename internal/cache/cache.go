@@ -8,7 +8,6 @@ package cache
 import (
 	"fmt"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -26,19 +25,13 @@ func ReadFresh(path string, ttl time.Duration) (string, bool) {
 }
 
 // ReadStale returns the file content regardless of age (stale-truth fallback
-// for the usage endpoint when a live fetch fails). Trailing newlines are
-// stripped to match bash command-substitution semantics — the reference
-// writes some shared caches with echo, so files may end in "\n".
+// for the usage endpoint when a live fetch fails), byte-exact as written.
 func ReadStale(path string) (string, bool) {
 	b, err := os.ReadFile(path)
-	if err != nil {
+	if err != nil || len(b) == 0 {
 		return "", false
 	}
-	s := strings.TrimRight(string(b), "\n")
-	if s == "" {
-		return "", false
-	}
-	return s, true
+	return string(b), true
 }
 
 // Write atomically replaces path's content via temp file + rename.

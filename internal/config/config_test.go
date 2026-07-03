@@ -21,8 +21,14 @@ func TestLoadMissingFileGivesDefaults(t *testing.T) {
 	if !cfg.Usage.Enabled || cfg.Usage.TTLSeconds != 180 {
 		t.Errorf("usage defaults wrong: %+v", cfg.Usage)
 	}
-	if cfg.CacheDir != "/tmp/.claude-statusline-cache" {
-		t.Errorf("CacheDir default = %q", cfg.CacheDir)
+	// Full-Go contract: platform-correct per-user cache location, not the
+	// bash era's world-shared /tmp path.
+	ucd, err := os.UserCacheDir()
+	if err != nil {
+		t.Fatalf("UserCacheDir: %v", err)
+	}
+	if want := filepath.Join(ucd, "claude-statusline"); cfg.CacheDir != want {
+		t.Errorf("CacheDir default = %q, want %q", cfg.CacheDir, want)
 	}
 }
 

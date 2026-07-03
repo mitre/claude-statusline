@@ -1,11 +1,10 @@
 // Package gitinfo reports the working tree's branch and dirty-file count,
-// sharing cache files with the bash reference (md5-of-cwd keys) so the Go
-// binary is a drop-in replacement.
+// caching both per working directory (FNV-1a keyed files under the cache dir).
 package gitinfo
 
 import (
-	"crypto/md5"
 	"fmt"
+	"hash/fnv"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,7 +23,9 @@ const branchTTL = 5 * time.Second
 // Unlike the bash reference, the dirty count is computed synchronously —
 // no one-render lag — while still writing the shared cache for other readers.
 func Get(cacheDir, cwd string, run RunGit) (string, int) {
-	key := fmt.Sprintf("%x", md5.Sum([]byte(cwd)))
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(cwd)) // hash.Hash.Write never returns an error
+	key := fmt.Sprintf("%x", h.Sum64())
 	branchPath := filepath.Join(cacheDir, "branch-"+key)
 	dirtyPath := filepath.Join(cacheDir, "dirty-"+key)
 
@@ -39,9 +40,6 @@ func Get(cacheDir, cwd string, run RunGit) (string, int) {
 			branch = "?"
 		}
 	}
-	// First line only, in case a stale multiline cache exists (reference rule).
-	branch = strings.SplitN(branch, "\n", 2)[0]
-
 	dirty := 0
 	// --no-optional-locks: a statusline renders every few hundred ms, and a
 	// plain `git status` takes the optional index lock to refresh the stat

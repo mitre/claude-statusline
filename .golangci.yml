@@ -9,14 +9,6 @@ linters:
     - revive
   exclusions:
     rules:
-      # md5 is NOT used cryptographically here: it generates cache-file names
-      # that MUST match the bash reference's `md5 -qs "$CWD"` keys so the Go
-      # binary and reference/statusline.sh share caches (drop-in contract,
-      # pinned by TestCacheFilesUseBashCompatibleMD5Keys). No code change can
-      # satisfy G401/G501 without breaking that interop.
-      - path: internal/gitinfo/
-        linters: [gosec]
-        text: "G(401|501)"
       # Test infrastructure reads files by t.TempDir()-derived variable paths;
       # reading by variable path IS the tests' purpose. Production code paths
       # remain fully checked.

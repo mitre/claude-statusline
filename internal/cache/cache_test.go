@@ -49,18 +49,17 @@ func TestReadFreshMissesOnEmptyAndMissing(t *testing.T) {
 	}
 }
 
-func TestReadStripsTrailingNewlinesLikeCommandSubstitution(t *testing.T) {
-	// The bash reference writes some caches with echo (trailing \n) and reads
-	// them through $(...), which strips trailing newlines. Shared cache files
-	// must read identically here or badge comparisons fail ("Sub\n" != "Sub").
+func TestReadPreservesContentExactly(t *testing.T) {
+	// Full-Go contract (bash-compat superseded 2026-07-03): the cache returns
+	// exactly what was written — no command-substitution newline stripping.
 	dir := t.TempDir()
 	p := filepath.Join(dir, "auth")
 	if err := os.WriteFile(p, []byte("Sub\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got, ok := ReadFresh(p, time.Minute)
-	if !ok || got != "Sub" {
-		t.Errorf("ReadFresh = %q, %v; want \"Sub\" with newline stripped", got, ok)
+	if !ok || got != "Sub\n" {
+		t.Errorf("ReadFresh = %q, %v; want \"Sub\\n\" byte-exact", got, ok)
 	}
 }
 

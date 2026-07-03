@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/BurntSushi/toml"
 	"github.com/mitre/claude-statusline/internal/render"
@@ -65,8 +66,19 @@ func Default() Config {
 	cfg.Usage.Enabled = true
 	cfg.Usage.TTLSeconds = 180
 	cfg.GitTimeoutMS = 150
-	cfg.CacheDir = "/tmp/.claude-statusline-cache"
+	cfg.CacheDir = defaultCacheDir()
 	return cfg
+}
+
+// defaultCacheDir is the platform-correct per-user cache location
+// (~/Library/Caches on macOS). Falls back to the system temp dir when the
+// user cache dir is undeterminable (e.g. HOME unset).
+func defaultCacheDir() string {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		base = os.TempDir()
+	}
+	return filepath.Join(base, "claude-statusline")
 }
 
 // Load reads path if it exists and overlays it onto defaults. A missing file

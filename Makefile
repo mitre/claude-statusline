@@ -8,9 +8,8 @@ COVER_MIN ?= 85
 # The one gate: everything a card close (and CI) must prove, in one command.
 # (race runs the full suite under the race detector; cover re-runs for the
 # coverage floor — separate passes because -race skews coverage timing.)
-# Parity vs the bash reference was retired 2026-07-03 with the first
-# intentional display change (account row); the Go golden tests are the
-# display spec of record. reference/statusline.sh is frozen as the port-era spec.
+# The Go golden tests are the display spec of record (bash-parity era ended
+# 2026-07-03; the original script lives in git history).
 check: lint vuln race cover build
 
 race:

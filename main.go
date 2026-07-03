@@ -1,8 +1,7 @@
 // claude-statusline renders a multi-row status line for Claude Code.
 //
 // Claude Code invokes it on every render, passing session JSON on stdin;
-// whatever is printed to stdout becomes the status line. Drop-in replacement
-// for the bash reference in reference/statusline.sh, sharing its cache files.
+// whatever is printed to stdout becomes the status line.
 //
 // Optional config: ~/.claude/statusline.toml (see statusline.example.toml),
 // overridable via $CLAUDE_STATUSLINE_CONFIG.

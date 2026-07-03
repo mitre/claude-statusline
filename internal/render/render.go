@@ -1,5 +1,5 @@
-// Package render builds the statusline's ANSI rows. Output is byte-for-byte
-// compatible with the reference bash implementation (reference/statusline.sh).
+// Package render builds the statusline's ANSI rows. The golden tests in this
+// package are the display spec of record.
 package render
 
 import (
@@ -140,10 +140,7 @@ func ProjectRow(cwd, home, branch string, dirty int, o Options) string {
 // ContextRow renders the 10-segment context bar with green/yellow/red
 // thresholds and the /compact alarm at >= 85%.
 func ContextRow(pct int) string {
-	filled := pct / 10
-	if filled > 10 {
-		filled = 10
-	}
+	filled := min(pct/10, 10)
 	bar := strings.Repeat("▓", filled) + strings.Repeat("░", 10-filled)
 
 	var color, label string
