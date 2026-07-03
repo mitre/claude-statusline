@@ -87,19 +87,32 @@ the hot-only (≥80%) behavior.
   (`~/Library/Caches/claude-statusline` on macOS; `[cache] dir` overrides),
   keyed per working directory by FNV-1a hash. Caches are disposable —
   deleting the directory costs one cold render.
-- **Bounded git latency** (Starship's `command_timeout` pattern): every git
-  call runs under a deadline — `[project] git_timeout_ms`, default 150 ms,
-  `0` disables — with the child process killed on expiry, and the cached
-  branch/dirty values served instead. A pathological worktree (huge repo,
-  NFS, cold caches) can never stall a render. On very large repos, also
-  enable git's built-in fsmonitor daemon (`git config core.fsmonitor true`)
-  so `git status` itself stays fast.
+- **Git engine — in-process by default, CLI as the huge-repo escape hatch:**
+  branch and dirty count are read in-process via go-git, so no git
+  installation is required and the default path spawns zero subprocesses.
+  Every read runs under the render budget (`[project] git_timeout_ms`,
+  default 150 ms, `0` disables), so a pathological worktree can never stall
+  a render. The fallback exists because the statusline is a one-shot process:
+  an in-process status walk that overruns is abandoned with no surviving
+  progress, so a huge repo would degrade on every render forever — while the
+  git CLI's fsmonitor daemon and on-disk caches persist *between*
+  invocations. A repo that blows the budget is therefore escalated (per-repo
+  marker, re-probed daily) to the CLI engine, which keeps the hard deadline
+  with the child process killed on expiry. On very large repos, enable
+  `git config core.fsmonitor true` so the CLI's `git status` stays fast;
+  `[project] git_engine` forces `"gogit"` or `"cli"` explicitly.
 - **Atomic cache writes** (temp file + rename): a bare `>` redirect truncates
   before writing, which let concurrent renders read empty files — the bug
   that silently ate the dirty badge in the bash version.
 - **No fabricated zeros:** the usage endpoint's rate-limit error bodies are
   valid JSON; they are rejected by shape, never cached, and a failed fetch
   serves the last *good* payload instead of rendering `0%`.
+- **Styling** goes through lipgloss v2 (`charm.land/lipgloss/v2`) with the
+  ANSI 16-color palette, and the output is deliberately
+  environment-independent: a statusline is always piped and the host
+  interprets the sequences, so there is no tty detection and `NO_COLOR` is
+  intentionally not honored (pinned by a test). This is the foundation for
+  user-configurable theming later.
 - **Never crashes the host:** unparseable stdin renders nothing; a malformed
   config falls back to defaults and complains on stderr.
 - **Security posture:** stdin JSON and the workspace path are untrusted input —

@@ -38,6 +38,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **lipgloss v2 styling engine** (`charm.land/lipgloss/v2`): all ANSI
+  styling flows through composed styles instead of raw escape constants,
+  opening the door to user-configurable theming. Output stays
+  environment-independent by design (no tty detection; `NO_COLOR`
+  deliberately not honored — the host renders the sequences), pinned by a
+  test. Rendered bytes changed encoding only (`\x1b[m` resets, merged SGR
+  params like `\x1b[1;36m`) — visually identical, same 16-color palette.
+- **In-process git engine** (go-git): branch and dirty count are read without
+  any subprocess by default — no git installation required. Repos whose
+  in-process status overruns the `git_timeout_ms` budget are escalated
+  per-repo (marker with daily re-probe) to the git CLI engine, which keeps
+  the hard deadline and benefits from `core.fsmonitor` on huge worktrees —
+  a one-shot statusline process cannot carry an abandoned in-process walk
+  across renders, but the git binary's caches persist. `[project]
+  git_engine = "auto" | "gogit" | "cli"` selects explicitly.
 - **Per-model weekly meter** on the account row: `opus/wk 41%` — the rolling
   7-day pool for the session's model family (opus/sonnet/haiku), parsed from
   the payload's `seven_day_<family>` window. A parallel weekly cap, not a
