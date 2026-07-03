@@ -121,6 +121,37 @@ func TestLoadRowsAccountWithLimitsAlias(t *testing.T) {
 	}
 }
 
+func TestLoadProjectGitTimeout(t *testing.T) {
+	dir := t.TempDir()
+	write := func(body string) string {
+		p := filepath.Join(dir, "c.toml")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	cfg, err := Load(write("[project]\nshow_dirty = true\n"))
+	if err != nil || cfg.GitTimeoutMS != 150 {
+		t.Errorf("absent git_timeout_ms must default to 150: err=%v got=%d", err, cfg.GitTimeoutMS)
+	}
+
+	cfg, err = Load(write("[project]\ngit_timeout_ms = 50\n"))
+	if err != nil || cfg.GitTimeoutMS != 50 {
+		t.Errorf("git_timeout_ms=50: err=%v got=%d", err, cfg.GitTimeoutMS)
+	}
+
+	// 0 is the documented "unbounded" escape hatch, not an error.
+	cfg, err = Load(write("[project]\ngit_timeout_ms = 0\n"))
+	if err != nil || cfg.GitTimeoutMS != 0 {
+		t.Errorf("git_timeout_ms=0 (unbounded): err=%v got=%d", err, cfg.GitTimeoutMS)
+	}
+
+	if _, err = Load(write("[project]\ngit_timeout_ms = -1\n")); err == nil {
+		t.Error("negative git_timeout_ms must surface an error")
+	}
+}
+
 func TestLoadRejectsMalformedTOML(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "bad.toml")
 	if err := os.WriteFile(p, []byte("rows = [unclosed"), 0o600); err != nil {

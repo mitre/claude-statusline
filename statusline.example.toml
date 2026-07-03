@@ -7,7 +7,7 @@
 #   model    Fable 5 1M · Sub · session 0a1b2c3d
 #   project  ~/github/mitre/ts-inspec-profile-parser · ⎇ main ~2
 #   context  ▓▓▓░░░░░░░ 30%
-#   limits   5h 5% · week 13%
+#   account  5h 5% · week 13%
 #   activity 17h23m · +1,598/-8 lines
 
 # Whole rows. A disabled row disappears entirely.
@@ -30,6 +30,10 @@ show_context_size = true # append "1M"/"200k" to the model name
 show_branch = true # "· ⎇ main"
 show_dirty = true  # " ~2" changed-file count (yellow)
 tilde_home = true  # shorten $HOME prefix to ~
+# Deadline per git call, in milliseconds; a call that overruns is killed and
+# the cached value is served instead. 0 disables the bound entirely. On very
+# large repos also see the README note on `git config core.fsmonitor true`.
+git_timeout_ms = 150
 
 # Account-scope meters row (Sub auth only).
 [account]

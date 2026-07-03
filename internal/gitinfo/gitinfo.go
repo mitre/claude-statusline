@@ -43,7 +43,10 @@ func Get(cacheDir, cwd string, run RunGit) (string, int) {
 	branch = strings.SplitN(branch, "\n", 2)[0]
 
 	dirty := 0
-	if out, err := run(cwd, "status", "--porcelain"); err == nil {
+	// --no-optional-locks: a statusline renders every few hundred ms, and a
+	// plain `git status` takes the optional index lock to refresh the stat
+	// cache — racing the user's interactive git for .git/index.lock.
+	if out, err := run(cwd, "--no-optional-locks", "status", "--porcelain"); err == nil {
 		dirty = countLines(out)
 		_ = cache.Write(dirtyPath, strconv.Itoa(dirty))
 	} else if s, sok := cache.ReadStale(dirtyPath); sok {

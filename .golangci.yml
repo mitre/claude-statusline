@@ -41,6 +41,13 @@ linters:
       - path: main\.go
         linters: [gosec]
         text: "G204"
+      # Test infrastructure writes an executable PATH-shim script (a fake
+      # `git`) into t.TempDir(); an executable cannot satisfy G306's 0600 —
+      # 0o700 is already the minimum (owner-only). Writing 0600 then Chmod
+      # 0700 would produce the identical file while dodging the check.
+      - path: _test\.go
+        linters: [gosec]
+        text: "G306"
 
 formatters:
   enable:

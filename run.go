@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -20,9 +21,29 @@ import (
 type deps struct {
 	stdin      io.Reader
 	getenv     func(string) string
-	runGit     gitinfo.RunGit
+	runGit     runGitCtx
 	keychainOK func() error
 	fetchUsage func() ([]byte, error)
+}
+
+// runGitCtx executes git under a context so a deadline can actually kill the
+// child process (exec.CommandContext in the real runner, not fire-and-forget).
+type runGitCtx func(ctx context.Context, dir string, args ...string) (string, error)
+
+// withGitDeadline adapts a context-aware git runner to gitinfo's RunGit,
+// bounding each call at timeout (Starship's command_timeout pattern);
+// timeout 0 disables the bound. On expiry the runner surfaces an error,
+// which flows into gitinfo's existing stale-cache fallback.
+func withGitDeadline(run runGitCtx, timeout time.Duration) gitinfo.RunGit {
+	return func(dir string, args ...string) (string, error) {
+		ctx := context.Background()
+		if timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
+		return run(ctx, dir, args...)
+	}
 }
 
 // run renders one statusline frame. It returns the frame for stdout and any
@@ -60,7 +81,8 @@ func run(d deps) (string, string) {
 	}
 
 	if sess.CWD != "" {
-		st.Branch, st.Dirty = gitinfo.Get(cfg.CacheDir, sess.CWD, d.runGit)
+		deadline := time.Duration(cfg.GitTimeoutMS) * time.Millisecond
+		st.Branch, st.Dirty = gitinfo.Get(cfg.CacheDir, sess.CWD, withGitDeadline(d.runGit, deadline))
 	} else {
 		st.Branch = "?"
 	}

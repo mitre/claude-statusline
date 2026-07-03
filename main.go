@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,8 +36,15 @@ func main() {
 	fmt.Print(out)
 }
 
-func runGit(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+// runGit executes git bounded by ctx: on expiry CommandContext kills the
+// child process — never left running behind an abandoned render.
+func runGit(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	// A killed git can leave descendants (hooks, fsmonitor, credential
+	// helpers) holding the stdout pipe; without WaitDelay, Output() blocks
+	// until every one of them exits. WaitDelay force-closes the pipes
+	// shortly after the deadline so the render is actually bounded.
+	cmd.WaitDelay = 100 * time.Millisecond
 	out, err := cmd.Output()
 	return string(out), err
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -26,8 +27,8 @@ func runnerFor(m map[string]string) RunGit {
 func TestBranchAndDirty(t *testing.T) {
 	dir := t.TempDir()
 	run := runnerFor(map[string]string{
-		"[branch --show-current]": "main\n",
-		"[status --porcelain]":    "?? SESSION-KICKOFF.md\n?? docs/\n",
+		"[branch --show-current]":                  "main\n",
+		"[--no-optional-locks status --porcelain]": "?? SESSION-KICKOFF.md\n?? docs/\n",
 	})
 	branch, dirty := Get(dir, cwd, run)
 	if branch != "main" || dirty != 2 {
@@ -38,9 +39,9 @@ func TestBranchAndDirty(t *testing.T) {
 func TestDetachedHeadShowsShortSHA(t *testing.T) {
 	dir := t.TempDir()
 	run := runnerFor(map[string]string{
-		"[branch --show-current]":  "\n",
-		"[rev-parse --short HEAD]": "abc1234\n",
-		"[status --porcelain]":     "",
+		"[branch --show-current]":                  "\n",
+		"[rev-parse --short HEAD]":                 "abc1234\n",
+		"[--no-optional-locks status --porcelain]": "",
 	})
 	branch, _ := Get(dir, cwd, run)
 	if branch != "@abc1234" {
@@ -59,8 +60,8 @@ func TestGitFailureFallsBack(t *testing.T) {
 func TestCleanTreeDirtyZero(t *testing.T) {
 	dir := t.TempDir()
 	run := runnerFor(map[string]string{
-		"[branch --show-current]": "main\n",
-		"[status --porcelain]":    "",
+		"[branch --show-current]":                  "main\n",
+		"[--no-optional-locks status --porcelain]": "",
 	})
 	_, dirty := Get(dir, cwd, run)
 	if dirty != 0 {
@@ -89,13 +90,35 @@ func TestStaleCachesServedWhenGitFails(t *testing.T) {
 	}
 }
 
+func TestStatusUsesNoOptionalLocks(t *testing.T) {
+	// Plain `git status` takes the optional index lock to refresh the stat
+	// cache, so a ~300ms render cadence races the user's interactive git
+	// for .git/index.lock (observed live 2026-07-03: a commit failed while
+	// our own installed binary held the lock). --no-optional-locks is git's
+	// documented mechanism for background tooling.
+	dir := t.TempDir()
+	var statusArgs string
+	run := func(_ string, args ...string) (string, error) {
+		joined := fmt.Sprintf("%v", args)
+		if strings.Contains(joined, "status") {
+			statusArgs = joined
+			return "?? x\n", nil
+		}
+		return "main\n", nil
+	}
+	Get(dir, cwd, run)
+	if statusArgs != "[--no-optional-locks status --porcelain]" {
+		t.Errorf("status args = %s; want [--no-optional-locks status --porcelain]", statusArgs)
+	}
+}
+
 func TestCacheFilesUseBashCompatibleMD5Keys(t *testing.T) {
 	// Drop-in requirement: share cache files with the bash reference, which
 	// keys by `md5 -qs "$CWD"`.
 	dir := t.TempDir()
 	run := runnerFor(map[string]string{
-		"[branch --show-current]": "main\n",
-		"[status --porcelain]":    "?? x\n",
+		"[branch --show-current]":                  "main\n",
+		"[--no-optional-locks status --porcelain]": "?? x\n",
 	})
 	Get(dir, cwd, run)
 	key := fmt.Sprintf("%x", md5.Sum([]byte(cwd)))
