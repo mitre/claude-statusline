@@ -8,3 +8,8 @@ coverage.out
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Local session recovery state (per-machine, never shared)
+.beads/recovery-context.md
+.beads/recovery-prompt.md
+.beads/archive/
