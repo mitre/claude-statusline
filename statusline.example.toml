@@ -1,0 +1,41 @@
+# claude-statusline configuration
+#
+# Copy to ~/.claude/statusline.toml (or point $CLAUDE_STATUSLINE_CONFIG at it).
+# Every key is optional — a missing file or missing key keeps the default
+# shown below. Zero config renders exactly the reference layout:
+#
+#   model    Fable 5 1M · Sub · session 0a1b2c3d
+#   project  ~/github/mitre/ts-inspec-profile-parser · ⎇ main ~2
+#   context  ▓▓▓░░░░░░░ 30%
+#   limits   5h 5% · week 13%
+#   activity 17h23m · +1,598/-8 lines
+
+# Whole rows. A disabled row disappears entirely.
+[rows]
+model = true
+project = true
+context = true
+limits = true
+activity = true
+
+# Segments within the model row.
+[model]
+show_auth = true         # "· Sub" / "· API" badge
+show_session = true      # "· session 0a1b2c3d" (first 8 chars of session id)
+show_context_size = true # append "1M"/"200k" to the model name
+
+# Segments within the project row.
+[project]
+show_branch = true # "· ⎇ main"
+show_dirty = true  # " ~2" changed-file count (yellow)
+tilde_home = true  # shorten $HOME prefix to ~
+
+# Subscription limits row (Sub auth only).
+[usage]
+enabled = true     # set false to skip the usage endpoint entirely
+ttl_seconds = 180  # how long a fetched payload is served before re-fetching
+
+# Cache location — shared with the bash reference implementation, so the Go
+# binary is a drop-in replacement.
+[cache]
+dir = "/tmp/.claude-statusline-cache"

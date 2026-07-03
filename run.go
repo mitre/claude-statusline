@@ -1,0 +1,85 @@
+package main
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/mitre/claude-statusline/internal/auth"
+	"github.com/mitre/claude-statusline/internal/config"
+	"github.com/mitre/claude-statusline/internal/gitinfo"
+	"github.com/mitre/claude-statusline/internal/input"
+	"github.com/mitre/claude-statusline/internal/render"
+	"github.com/mitre/claude-statusline/internal/usage"
+)
+
+// deps are run's injectable edges: everything that touches the OS, network,
+// or environment. main() wires the real implementations; tests wire fakes.
+type deps struct {
+	stdin      io.Reader
+	getenv     func(string) string
+	runGit     gitinfo.RunGit
+	keychainOK func() error
+	fetchUsage func() ([]byte, error)
+}
+
+// run renders one statusline frame. It returns the frame for stdout and any
+// diagnostic for stderr; it never fails hard — a statusline must not crash
+// the host UI.
+func run(d deps) (string, string) {
+	sess, err := input.Parse(d.stdin)
+	if err != nil {
+		// Unparseable stdin: render nothing rather than garbage.
+		return "", ""
+	}
+
+	var diag string
+	cfg, err := config.Load(configPath(d.getenv))
+	if err != nil {
+		cfg = config.Default()
+		diag = fmt.Sprintf("claude-statusline: config error: %v\n", err)
+	}
+	_ = os.MkdirAll(cfg.CacheDir, 0o700)
+
+	badge, apiKeySet := auth.Detect(cfg.CacheDir, d.getenv, d.keychainOK)
+
+	st := render.State{
+		Model:        sess.ModelName,
+		CtxSize:      sess.CtxSize,
+		Auth:         badge,
+		SessionID:    sess.SessionID,
+		CWD:          sess.CWD,
+		Home:         d.getenv("HOME"),
+		CtxPct:       sess.CtxPct,
+		DurationMS:   sess.DurationMS,
+		LinesAdded:   sess.LinesAdded,
+		LinesRemoved: sess.LinesRemoved,
+		APIKeySet:    apiKeySet,
+	}
+
+	if sess.CWD != "" {
+		st.Branch, st.Dirty = gitinfo.Get(cfg.CacheDir, sess.CWD, d.runGit)
+	} else {
+		st.Branch = "?"
+	}
+
+	if cfg.Usage.Enabled && badge == "Sub" {
+		ttl := time.Duration(cfg.Usage.TTLSeconds) * time.Second
+		if raw, ok := usage.Resolve(cfg.CacheDir, ttl, d.fetchUsage); ok {
+			if u, uerr := usage.Parse(raw, time.Now()); uerr == nil {
+				st.Usage = &u
+			}
+		}
+	}
+
+	return render.Build(st, cfg.Options), diag
+}
+
+func configPath(getenv func(string) string) string {
+	if p := getenv("CLAUDE_STATUSLINE_CONFIG"); p != "" {
+		return p
+	}
+	return filepath.Join(getenv("HOME"), ".claude", "statusline.toml")
+}
