@@ -126,7 +126,7 @@ func TestParseOmitsModelWindowWhenAbsent(t *testing.T) {
 
 func TestResolveCachesGoodPayload(t *testing.T) {
 	dir := t.TempDir()
-	got, ok := Resolve(dir, time.Minute, func() ([]byte, error) { return []byte(goodPayload), nil })
+	got, ok := Resolve(dir, time.Minute, now, func() ([]byte, error) { return []byte(goodPayload), nil })
 	if !ok {
 		t.Fatal("Resolve returned no payload")
 	}
@@ -148,7 +148,7 @@ func TestResolveFallsBackToStaleOnBadFetch(t *testing.T) {
 	_ = os.Chtimes(p, old, old) // expired
 
 	errPayload := []byte(`{"error":{"type":"rate_limit_error"}}`)
-	got, ok := Resolve(dir, time.Minute, func() ([]byte, error) { return errPayload, nil })
+	got, ok := Resolve(dir, time.Minute, now, func() ([]byte, error) { return errPayload, nil })
 	if !ok || string(got) != goodPayload {
 		t.Errorf("stale-good fallback failed: ok=%v got=%q", ok, got)
 	}
@@ -157,7 +157,7 @@ func TestResolveFallsBackToStaleOnBadFetch(t *testing.T) {
 	}
 
 	// Transport failure: same fallback.
-	got, ok = Resolve(dir, time.Minute, func() ([]byte, error) { return nil, errors.New("timeout") })
+	got, ok = Resolve(dir, time.Minute, now, func() ([]byte, error) { return nil, errors.New("timeout") })
 	if !ok || string(got) != goodPayload {
 		t.Errorf("stale-good fallback on transport error failed: ok=%v", ok)
 	}
@@ -168,12 +168,123 @@ func TestResolveFreshCacheSkipsFetch(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "usage"), []byte(goodPayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, ok := Resolve(dir, time.Minute, func() ([]byte, error) {
+	_, ok := Resolve(dir, time.Minute, now, func() ([]byte, error) {
 		t.Fatal("fetch called despite fresh cache")
 		return nil, nil
 	})
 	if !ok {
 		t.Error("fresh cache not served")
+	}
+}
+
+// boundaryFixture writes a TTL-fresh cache whose payload was fetched BEFORE
+// its own reset moment: resets_at is in the past and the file mtime predates
+// it. Returns the cache dir and the payload written.
+func boundaryFixture(t *testing.T, realNow time.Time, fiveHourReset, sevenDayReset time.Time) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	payload := `{
+	  "five_hour": {"utilization": 55, "resets_at": "` + fiveHourReset.Format(time.RFC3339) + `"},
+	  "seven_day": {"utilization": 23, "resets_at": "` + sevenDayReset.Format(time.RFC3339) + `"}
+	}`
+	p := filepath.Join(dir, "usage")
+	if err := os.WriteFile(p, []byte(payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fetched := realNow.Add(-5 * time.Minute) // within a 10m TTL, before both resets
+	if err := os.Chtimes(p, fetched, fetched); err != nil {
+		t.Fatal(err)
+	}
+	return dir, payload
+}
+
+func TestResolveRefetchesWhenResetsAtPassed(t *testing.T) {
+	realNow := time.Now()
+	rolled := `{"five_hour": {"utilization": 0, "resets_at": "` +
+		realNow.Add(5*time.Hour).Format(time.RFC3339) + `"}}`
+
+	// five_hour reset passed 2 minutes ago; seven_day still ahead.
+	dir, _ := boundaryFixture(t, realNow, realNow.Add(-2*time.Minute), realNow.Add(48*time.Hour))
+	calls := 0
+	got, ok := Resolve(dir, 10*time.Minute, realNow, func() ([]byte, error) { calls++; return []byte(rolled), nil })
+	if !ok || string(got) != rolled || calls != 1 {
+		t.Errorf("five_hour boundary: ok=%v calls=%d got=%q; want refetched rolled payload", ok, calls, got)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "usage")); string(b) != rolled {
+		t.Errorf("rolled payload not cached: %q", b)
+	}
+
+	// seven_day reset passed; five_hour still ahead — must also trigger.
+	dir, _ = boundaryFixture(t, realNow, realNow.Add(2*time.Hour), realNow.Add(-time.Minute))
+	calls = 0
+	got, ok = Resolve(dir, 10*time.Minute, realNow, func() ([]byte, error) { calls++; return []byte(rolled), nil })
+	if !ok || string(got) != rolled || calls != 1 {
+		t.Errorf("seven_day boundary: ok=%v calls=%d got=%q; want refetched rolled payload", ok, calls, got)
+	}
+}
+
+func TestResolveBoundaryRefetchIsBounded(t *testing.T) {
+	// A payload REfetched after the boundary that still reports a past
+	// resets_at (API lag / clock skew): mtime >= resets_at, so the boundary
+	// check must NOT fire — TTL cadence, no per-render fetch storm.
+	realNow := time.Now()
+	dir := t.TempDir()
+	stillPast := `{"five_hour": {"utilization": 55, "resets_at": "` +
+		realNow.Add(-10*time.Minute).Format(time.RFC3339) + `"}}`
+	p := filepath.Join(dir, "usage")
+	if err := os.WriteFile(p, []byte(stillPast), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	after := realNow.Add(-2 * time.Minute) // fetched AFTER the reset moment
+	if err := os.Chtimes(p, after, after); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := Resolve(dir, 10*time.Minute, realNow, func() ([]byte, error) {
+		t.Fatal("fetch called for a post-boundary payload — storm guard broken")
+		return nil, nil
+	})
+	if !ok || string(got) != stillPast {
+		t.Errorf("post-boundary payload must serve from cache: ok=%v got=%q", ok, got)
+	}
+}
+
+func TestResolveBoundaryFetchFailureServesStaleGood(t *testing.T) {
+	realNow := time.Now()
+	dir, cached := boundaryFixture(t, realNow, realNow.Add(-2*time.Minute), realNow.Add(48*time.Hour))
+	got, ok := Resolve(dir, 10*time.Minute, realNow, func() ([]byte, error) { return nil, errors.New("api down") })
+	if !ok || string(got) != cached {
+		t.Errorf("boundary + failed fetch must serve stale-good payload: ok=%v got=%q", ok, got)
+	}
+}
+
+func TestResolveMissingResetsAtKeepsTTLBehavior(t *testing.T) {
+	realNow := time.Now()
+	dir := t.TempDir()
+	noResets := `{"five_hour": {"utilization": 5.9}, "seven_day": {"utilization": 13}}`
+	if err := os.WriteFile(filepath.Join(dir, "usage"), []byte(noResets), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := Resolve(dir, time.Minute, realNow, func() ([]byte, error) {
+		t.Fatal("fetch called despite fresh cache without resets_at")
+		return nil, nil
+	})
+	if !ok || string(got) != noResets {
+		t.Errorf("fresh cache without resets_at must serve: ok=%v", ok)
+	}
+
+	// Unparseable resets_at: same — plain TTL, no crash, no fetch.
+	dir = t.TempDir()
+	badReset := `{"five_hour": {"utilization": 5.9, "resets_at": "not-a-timestamp"}}`
+	if err := os.WriteFile(filepath.Join(dir, "usage"), []byte(badReset), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, ok = Resolve(dir, time.Minute, realNow, func() ([]byte, error) {
+		t.Fatal("fetch called despite fresh cache with unparseable resets_at")
+		return nil, nil
+	})
+	if !ok || string(got) != badReset {
+		t.Errorf("fresh cache with unparseable resets_at must serve: ok=%v", ok)
 	}
 }
 

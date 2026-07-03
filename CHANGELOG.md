@@ -53,6 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The account row lagged up to a full cache-TTL (3 minutes) behind usage-window
+  resets: a payload fetched just before a boundary stayed "fresh" while showing
+  pre-reset numbers with a reset time already in the past. A cached payload
+  whose `resets_at` has passed — and whose fetch provably predates that reset —
+  is now treated as expired regardless of TTL, so the row flips on the first
+  render after the boundary. Post-boundary payloads still reporting a past
+  reset (API lag) keep plain TTL cadence — no fetch storms.
 - The statusline's `git status` took git's optional index lock on every
   render, intermittently racing the user's interactive git for
   `.git/index.lock` (observed live: a `git commit` failed while a concurrent

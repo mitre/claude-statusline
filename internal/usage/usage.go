@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -133,13 +134,13 @@ func resetLabel(iso string, now time.Time) string {
 // Resolve returns a usage payload: fresh cache if young enough, else a live
 // fetch (cached only when shape-valid), else the last good cache regardless
 // of age. ok=false means no usable data — the limits row must collapse.
-func Resolve(cacheDir string, ttl time.Duration, fetch func() ([]byte, error)) ([]byte, bool) {
+func Resolve(cacheDir string, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) ([]byte, bool) {
 	p := filepath.Join(cacheDir, "usage")
-	if s, ok := cache.ReadFresh(p, ttl); ok {
+	if s, ok := cache.ReadFresh(p, ttl); ok && !boundaryExpired(p, []byte(s), now) {
 		return []byte(s), true
 	}
 	if b, err := fetch(); err == nil {
-		if _, perr := Parse(b, time.Now(), ""); perr == nil {
+		if _, perr := Parse(b, now, ""); perr == nil {
 			_ = cache.Write(p, string(b))
 			return b, true
 		}
@@ -148,6 +149,37 @@ func Resolve(cacheDir string, ttl time.Duration, fetch func() ([]byte, error)) (
 		return []byte(s), true
 	}
 	return nil, false
+}
+
+// boundaryExpired reports whether a TTL-fresh cached payload is provably
+// pre-boundary: some window's resets_at has passed AND the file was written
+// before that reset — the reset moment is precisely when a young cache is
+// guaranteed wrong. The mtime clause is the storm guard: a payload refetched
+// after the boundary that still carries a past resets_at (API lag, clock
+// skew) has mtime >= resets_at, so it keeps plain TTL cadence instead of
+// fetching every render. Missing or unparseable resets_at never expires.
+func boundaryExpired(path string, raw []byte, now time.Time) bool {
+	var p payload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return false
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	for _, w := range []*window{p.FiveHour, p.SevenDay} {
+		if w == nil || w.ResetsAt == "" {
+			continue
+		}
+		reset, err := time.Parse(time.RFC3339, w.ResetsAt)
+		if err != nil {
+			continue
+		}
+		if reset.Before(now) && st.ModTime().Before(reset) {
+			return true
+		}
+	}
+	return false
 }
 
 // TokenFromKeychain extracts the OAuth access token from the keychain
