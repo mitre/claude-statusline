@@ -84,6 +84,13 @@ the hot-only (≥80%) behavior.
   port-era spec and functional rollback.
 - **Shared caches:** uses the same `/tmp/.claude-statusline-cache` files and
   md5-of-cwd keys as the bash reference, so the two can be swapped freely.
+- **Bounded git latency** (Starship's `command_timeout` pattern): every git
+  call runs under a deadline — `[project] git_timeout_ms`, default 150 ms,
+  `0` disables — with the child process killed on expiry, and the cached
+  branch/dirty values served instead. A pathological worktree (huge repo,
+  NFS, cold caches) can never stall a render. On very large repos, also
+  enable git's built-in fsmonitor daemon (`git config core.fsmonitor true`)
+  so `git status` itself stays fast.
 - **Atomic cache writes** (temp file + rename): a bare `>` redirect truncates
   before writing, which let concurrent renders read empty files — the bug
   that silently ate the dirty badge in the bash version.

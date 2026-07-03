@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the payload's `seven_day_<family>` window. A parallel weekly cap, not a
   slice of `week`; omitted entirely when the payload carries no window for
   the session's model (never a fabricated 0%).
+- **Bounded git subprocess latency** (Starship's `command_timeout` pattern):
+  each git call runs under a configurable deadline — `[project]
+  git_timeout_ms`, default 150 ms, `0` = unbounded — with the child process
+  killed on expiry (`exec.CommandContext`), falling back to the cached
+  branch/dirty values so a pathological worktree can never stall a render.
+  Very large repos are pointed at git's own `core.fsmonitor` daemon.
 
 - Go port of the bash statusline (`reference/statusline.sh`), verified
   **byte-identical** on the fixture corpus before any divergence; ~90 ms per
@@ -46,6 +52,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   floor, byte-parity harness against the reference script
 
 ### Fixed
+
+- The statusline's `git status` took git's optional index lock on every
+  render, intermittently racing the user's interactive git for
+  `.git/index.lock` (observed live: a `git commit` failed while a concurrent
+  session's render held the lock). Status now runs with
+  `--no-optional-locks`, git's documented mechanism for background tooling.
+  Inherited from the bash implementation.
 
 Inherited from the bash implementation, found during the port, and pinned by
 regression tests:
