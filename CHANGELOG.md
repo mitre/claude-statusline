@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Account email on the account row** — the row now opens with the
+  logged-in email as a scope label (regular weight; `email_style = "dim"` available) (`account dev@example.com · 5h 5% …`),
+  naming whose pools the meters describe. Sourced from Claude Code's local
+  state (`~/.claude.json` → `oauthAccount.emailAddress`; the statusline stdin
+  payload carries no identity and the keychain holds tokens only), read fresh
+  on every render — identity is deliberately never cached, so a login change
+  shows immediately. Omitted entirely when unavailable, never fabricated;
+  `[account] show_email = false` hides it.
 - **lipgloss v2 styling engine** (`charm.land/lipgloss/v2`): all ANSI
   styling flows through composed styles instead of raw escape constants,
   opening the door to user-configurable theming. Output stays

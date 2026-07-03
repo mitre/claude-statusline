@@ -8,7 +8,7 @@ script it replaces (~90 ms vs ~950 ms per render).
 model    Fable 5 1M · Sub · session 0a1b2c3d
 project  ~/projects/demo-app · ⎇ main ~2
 context  ▓▓▓░░░░░░░ 30%
-account  5h 28% (resets 1:30p) · week 18% (resets Mon 10a) · opus/wk 41% (resets Tue 3p)
+account  dev@example.com · 5h 28% (resets 1:30p) · week 18% (resets Mon 10a) · opus/wk 41% (resets Tue 3p)
 activity 17h23m · +1,598/-8 lines
 ```
 
@@ -61,7 +61,12 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | `account` | ACCOUNT-scope subscription meters (Sub auth only) — see meter table below |
 | `activity` | Session duration and lines added/removed |
 
-The `account` row's meters are all **account-wide percent-of-plan-allotment**
+The `account` row opens with the logged-in **account email** — it names
+whose pools the meters describe, which matters when you run multiple
+accounts. It is read from Claude Code's local state (`~/.claude.json`) on
+every render — identity is deliberately never cached, so a login change
+shows immediately — and omitted when unavailable;
+`[account] show_email = false` hides it and `email_style = "dim"` quiets it to the furniture tier. The meters are all **account-wide percent-of-plan-allotment**
 as reported by the usage API (shared by every session under your
 subscription — two concurrent sessions correctly show the same pools):
 
