@@ -4,6 +4,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 
@@ -28,7 +29,8 @@ type fileSchema struct {
 		Model    *bool `toml:"model"`
 		Project  *bool `toml:"project"`
 		Context  *bool `toml:"context"`
-		Limits   *bool `toml:"limits"`
+		Account  *bool `toml:"account"`
+		Limits   *bool `toml:"limits"` // deprecated alias for account
 		Activity *bool `toml:"activity"`
 	} `toml:"rows"`
 	Model struct {
@@ -41,6 +43,9 @@ type fileSchema struct {
 		ShowDirty  *bool `toml:"show_dirty"`
 		TildeHome  *bool `toml:"tilde_home"`
 	} `toml:"project"`
+	Account struct {
+		ShowResets *string `toml:"show_resets"` // "always" (default) | "quiet"
+	} `toml:"account"`
 	Usage struct {
 		Enabled    *bool `toml:"enabled"`
 		TTLSeconds *int  `toml:"ttl_seconds"`
@@ -85,7 +90,9 @@ func Load(path string) (Config, error) {
 	setB(&cfg.Options.Rows.Model, f.Rows.Model)
 	setB(&cfg.Options.Rows.Project, f.Rows.Project)
 	setB(&cfg.Options.Rows.Context, f.Rows.Context)
-	setB(&cfg.Options.Rows.Limits, f.Rows.Limits)
+	// Deprecated alias first, preferred key second: account wins when both set.
+	setB(&cfg.Options.Rows.Account, f.Rows.Limits)
+	setB(&cfg.Options.Rows.Account, f.Rows.Account)
 	setB(&cfg.Options.Rows.Activity, f.Rows.Activity)
 	setB(&cfg.Options.Model.ShowAuth, f.Model.ShowAuth)
 	setB(&cfg.Options.Model.ShowSession, f.Model.ShowSession)
@@ -93,6 +100,16 @@ func Load(path string) (Config, error) {
 	setB(&cfg.Options.Project.ShowBranch, f.Project.ShowBranch)
 	setB(&cfg.Options.Project.ShowDirty, f.Project.ShowDirty)
 	setB(&cfg.Options.Project.TildeHome, f.Project.TildeHome)
+	if f.Account.ShowResets != nil {
+		switch *f.Account.ShowResets {
+		case "always":
+			cfg.Options.Account.AlwaysShowResets = true
+		case "quiet":
+			cfg.Options.Account.AlwaysShowResets = false
+		default:
+			return cfg, fmt.Errorf("account.show_resets: %q is not valid (use \"always\" or \"quiet\")", *f.Account.ShowResets)
+		}
+	}
 	setB(&cfg.Usage.Enabled, f.Usage.Enabled)
 	if f.Usage.TTLSeconds != nil {
 		cfg.Usage.TTLSeconds = *f.Usage.TTLSeconds

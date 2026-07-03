@@ -11,11 +11,12 @@
 #   activity 17h23m · +1,598/-8 lines
 
 # Whole rows. A disabled row disappears entirely.
+# ("limits" is accepted as a deprecated alias for "account".)
 [rows]
 model = true
 project = true
 context = true
-limits = true
+account = true
 activity = true
 
 # Segments within the model row.
@@ -30,7 +31,14 @@ show_branch = true # "· ⎇ main"
 show_dirty = true  # " ~2" changed-file count (yellow)
 tilde_home = true  # shorten $HOME prefix to ~
 
-# Subscription limits row (Sub auth only).
+# Account-scope meters row (Sub auth only).
+[account]
+# "always" (default): reset times shown on every meter.
+# "quiet": reset times appear only once a window is running hot (>=80%) —
+#          quiet is NOT never.
+show_resets = "always"
+
+# Usage-endpoint fetching for the account row.
 [usage]
 enabled = true     # set false to skip the usage endpoint entirely
 ttl_seconds = 180  # how long a fetched payload is served before re-fetching

@@ -26,14 +26,14 @@ var now = time.Date(2026, 7, 3, 9, 0, 0, 0, time.FixedZone("PDT", -7*3600))
 func TestParseRejectsErrorPayload(t *testing.T) {
 	// The exact payload that poisoned the bash cache on 2026-07-03: valid
 	// JSON, but not usage data. Must be an error, never zeros.
-	_, err := Parse([]byte(`{"error":{"type":"rate_limit_error","message":"Rate limited."}}`), now)
+	_, err := Parse([]byte(`{"error":{"type":"rate_limit_error","message":"Rate limited."}}`), now, "")
 	if err == nil {
 		t.Fatal("error payload parsed as usage data")
 	}
 }
 
 func TestParseExtractsFields(t *testing.T) {
-	u, err := Parse([]byte(goodPayload), now)
+	u, err := Parse([]byte(goodPayload), now, "")
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestParseExtractsFields(t *testing.T) {
 }
 
 func TestParseResetLabels(t *testing.T) {
-	u, err := Parse([]byte(goodPayload), now)
+	u, err := Parse([]byte(goodPayload), now, "")
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -62,6 +62,65 @@ func TestParseResetLabels(t *testing.T) {
 	// 2026-07-06 is a Monday; 17:00Z → 10:00 PDT.
 	if u.R7 != "Mon 10:00a" {
 		t.Errorf("R7 = %q, want \"Mon 10:00a\" (other day: weekday prefix)", u.R7)
+	}
+}
+
+const opusPayload = `{
+  "five_hour": {"utilization": 28, "resets_at": "2026-07-03T20:30:00Z"},
+  "seven_day": {"utilization": 18, "resets_at": "2026-07-06T17:00:00Z"},
+  "seven_day_opus": {"utilization": 41.7, "resets_at": "2026-07-07T22:00:00Z"},
+  "seven_day_sonnet": {"utilization": 3}
+}`
+
+func TestFamilyFromModelName(t *testing.T) {
+	cases := []struct {
+		name   string
+		family string
+	}{
+		{name: "Opus 4.8", family: "opus"},
+		{name: "Claude Sonnet 5", family: "sonnet"},
+		{name: "Haiku 4.5", family: "haiku"},
+		{name: "Fable 5", family: ""},
+		{name: "Fable 5 (1M context)", family: ""},
+		{name: "?", family: ""},
+	}
+	for _, c := range cases {
+		if got := FamilyFromModelName(c.name); got != c.family {
+			t.Errorf("FamilyFromModelName(%q) = %q, want %q", c.name, got, c.family)
+		}
+	}
+}
+
+func TestParseExtractsModelWindow(t *testing.T) {
+	u, err := Parse([]byte(opusPayload), now, "opus")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if u.ModelFamily != "opus" || u.ModelPct != 41 {
+		t.Errorf("model window = %q %d, want opus floor(41.7)=41", u.ModelFamily, u.ModelPct)
+	}
+	// 2026-07-07 is a Tuesday; 22:00Z -> 15:00 PDT.
+	if u.ModelReset != "Tue 3:00p" {
+		t.Errorf("ModelReset = %q, want \"Tue 3:00p\"", u.ModelReset)
+	}
+}
+
+func TestParseOmitsModelWindowWhenAbsent(t *testing.T) {
+	// Family requested but payload has no matching window: omit (Gate 8).
+	u, err := Parse([]byte(goodPayload), now, "opus")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if u.ModelFamily != "" || u.ModelPct != 0 || u.ModelReset != "" {
+		t.Errorf("absent window must omit segment, got %q %d %q", u.ModelFamily, u.ModelPct, u.ModelReset)
+	}
+	// Empty family: never populated even when windows exist.
+	u, err = Parse([]byte(opusPayload), now, "")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if u.ModelFamily != "" {
+		t.Errorf("empty family must omit segment, got %q", u.ModelFamily)
 	}
 }
 
@@ -120,7 +179,7 @@ func TestResolveFreshCacheSkipsFetch(t *testing.T) {
 
 func TestParseMalformedResetTimestampYieldsEmptyLabel(t *testing.T) {
 	payload := `{"five_hour":{"utilization":50,"resets_at":"not-a-timestamp"}}`
-	u, err := Parse([]byte(payload), now)
+	u, err := Parse([]byte(payload), now, "")
 	if err != nil {
 		t.Fatalf("Parse(%q): %v", payload, err)
 	}

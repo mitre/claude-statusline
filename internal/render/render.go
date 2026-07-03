@@ -26,6 +26,9 @@ const (
 type Usage struct {
 	U5, U7       int    // five-hour / seven-day utilization percent
 	R5, R7       string // local-time reset labels, "" when absent
+	ModelFamily  string // session model's family (opus/sonnet/haiku), "" = no window
+	ModelPct     int    // rolling 7-day model-specific pool utilization percent
+	ModelReset   string // reset label for the model window, "" when absent
 	ExtraEnabled bool
 	CreditsMinor int // spend in minor units
 	CreditsExp   int // exponent for minor units (2 → cents)
@@ -53,7 +56,7 @@ type State struct {
 // Options are the user-configurable display toggles (config maps TOML here).
 type Options struct {
 	Rows struct {
-		Model, Project, Context, Limits, Activity bool
+		Model, Project, Context, Account, Activity bool
 	}
 	Model struct {
 		ShowAuth, ShowSession, ShowContextSize bool
@@ -61,14 +64,21 @@ type Options struct {
 	Project struct {
 		ShowBranch, ShowDirty, TildeHome bool
 	}
+	Account struct {
+		// AlwaysShowResets: true = show (resets …) on every meter (config
+		// "always", the default); false = only once a window runs hot >=80%
+		// (config "quiet" — quiet is not never).
+		AlwaysShowResets bool
+	}
 }
 
 // DefaultOptions returns the zero-config behavior: everything on.
 func DefaultOptions() Options {
 	var o Options
-	o.Rows.Model, o.Rows.Project, o.Rows.Context, o.Rows.Limits, o.Rows.Activity = true, true, true, true, true
+	o.Rows.Model, o.Rows.Project, o.Rows.Context, o.Rows.Account, o.Rows.Activity = true, true, true, true, true
 	o.Model.ShowAuth, o.Model.ShowSession, o.Model.ShowContextSize = true, true, true
 	o.Project.ShowBranch, o.Project.ShowDirty, o.Project.TildeHome = true, true, true
+	o.Account.AlwaysShowResets = true
 	return o
 }
 
@@ -164,17 +174,31 @@ func limitColor(pct int) string {
 	}
 }
 
-// LimitsRow renders 5h and week utilization with reset labels once hot (>= 80%).
-func LimitsRow(u Usage) string {
-	five := limitColor(u.U5) + fmt.Sprintf("5h %d%%", u.U5) + rst
-	if u.U5 >= 80 && u.R5 != "" {
-		five += " " + dim + "(resets " + u.R5 + ")" + rst
+// meter renders one account meter with its optional reset label.
+func meter(text string, pct int, reset string, alwaysShowReset bool) string {
+	s := limitColor(pct) + text + rst
+	if reset != "" && (alwaysShowReset || pct >= 80) {
+		s += " " + dim + "(resets " + reset + ")" + rst
 	}
-	week := limitColor(u.U7) + fmt.Sprintf("week %d%%", u.U7) + rst
-	if u.U7 >= 80 && u.R7 != "" {
-		week += " " + dim + "(resets " + u.R7 + ")" + rst
+	return s
+}
+
+// AccountRow renders the ACCOUNT-scope meters: the 5-hour and 7-day
+// all-models pools, plus the rolling 7-day pool for this session's model
+// family when the payload carries one (omitted otherwise — never a
+// fabricated 0%). All values are account-wide percent-of-plan-allotment
+// as reported by the usage API. The model window is a PARALLEL weekly cap,
+// not a subset of the week meter.
+func AccountRow(u Usage, o Options) string {
+	always := o.Account.AlwaysShowResets
+	parts := []string{
+		meter(fmt.Sprintf("5h %d%%", u.U5), u.U5, u.R5, always),
+		meter(fmt.Sprintf("week %d%%", u.U7), u.U7, u.R7, always),
 	}
-	return lbl("limits") + five + " " + dim + "·" + rst + " " + week
+	if u.ModelFamily != "" {
+		parts = append(parts, meter(fmt.Sprintf("%s/wk %d%%", u.ModelFamily, u.ModelPct), u.ModelPct, u.ModelReset, always))
+	}
+	return lbl("account") + strings.Join(parts, " "+dim+"·"+rst+" ")
 }
 
 // ActivityRow renders session duration and code churn; collapses when idle.
@@ -254,7 +278,7 @@ func Build(st State, o Options) string {
 	add(o.Rows.Project, ProjectRow(st.CWD, st.Home, st.Branch, st.Dirty, o))
 	add(o.Rows.Context, ContextRow(st.CtxPct))
 	if st.Usage != nil {
-		add(o.Rows.Limits, LimitsRow(*st.Usage))
+		add(o.Rows.Account, AccountRow(*st.Usage, o))
 	}
 	add(o.Rows.Activity, ActivityRow(st.DurationMS, st.LinesAdded, st.LinesRemoved))
 	return strings.Join(rows, "\n")

@@ -81,17 +81,62 @@ func TestContextRowThresholds(t *testing.T) {
 	}
 }
 
-func TestLimitsRow(t *testing.T) {
-	got := LimitsRow(Usage{U5: 5, U7: 13})
-	want := "\x1b[2mlimits   \x1b[0m\x1b[32m5h 5%\x1b[0m \x1b[2m·\x1b[0m \x1b[32mweek 13%\x1b[0m"
+func TestAccountRow(t *testing.T) {
+	// No reset labels in the payload: nothing to show in either mode.
+	got := AccountRow(Usage{U5: 5, U7: 13}, DefaultOptions())
+	want := "\x1b[2maccount  \x1b[0m\x1b[32m5h 5%\x1b[0m \x1b[2m·\x1b[0m \x1b[32mweek 13%\x1b[0m"
 	if got != want {
-		t.Errorf("LimitsRow green:\n got %q\nwant %q", got, want)
+		t.Errorf("AccountRow green:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestAccountRowAlwaysShowsResetsBelowThreshold(t *testing.T) {
+	in := Usage{U5: 5, R5: "1:30p", U7: 13, R7: "Mon 10a"}
+	got := AccountRow(in, DefaultOptions()) // default show_resets = always
+	want := "\x1b[2maccount  \x1b[0m\x1b[32m5h 5%\x1b[0m \x1b[2m(resets 1:30p)\x1b[0m \x1b[2m·\x1b[0m \x1b[32mweek 13%\x1b[0m \x1b[2m(resets Mon 10a)\x1b[0m"
+	if got != want {
+		t.Errorf("AccountRow always/low(%+v):\n got %q\nwant %q", in, got, want)
+	}
+}
+
+func TestAccountRowQuietModeIsHotOnly(t *testing.T) {
+	opts := DefaultOptions()
+	opts.Account.AlwaysShowResets = false // "quiet"
+
+	// Below threshold: resets hidden.
+	in := Usage{U5: 5, R5: "1:30p", U7: 13, R7: "Mon 10a"}
+	got := AccountRow(in, opts)
+	want := "\x1b[2maccount  \x1b[0m\x1b[32m5h 5%\x1b[0m \x1b[2m·\x1b[0m \x1b[32mweek 13%\x1b[0m"
+	if got != want {
+		t.Errorf("AccountRow quiet/low(%+v):\n got %q\nwant %q", in, got, want)
 	}
 
-	got = LimitsRow(Usage{U5: 82, R5: "1:30p", U7: 55})
-	want = "\x1b[2mlimits   \x1b[0m\x1b[31m5h 82%\x1b[0m \x1b[2m(resets 1:30p)\x1b[0m \x1b[2m·\x1b[0m \x1b[33mweek 55%\x1b[0m"
+	// Hot window: quiet is NOT never — reset surfaces at >=80%.
+	in = Usage{U5: 82, R5: "1:30p", U7: 55}
+	got = AccountRow(in, opts)
+	want = "\x1b[2maccount  \x1b[0m\x1b[31m5h 82%\x1b[0m \x1b[2m(resets 1:30p)\x1b[0m \x1b[2m·\x1b[0m \x1b[33mweek 55%\x1b[0m"
 	if got != want {
-		t.Errorf("LimitsRow hot:\n got %q\nwant %q", got, want)
+		t.Errorf("AccountRow quiet/hot(%+v):\n got %q\nwant %q", in, got, want)
+	}
+}
+
+func TestAccountRowModelSegment(t *testing.T) {
+	in := Usage{
+		U5: 28, R5: "1:30p", U7: 18, R7: "Mon 10a",
+		ModelFamily: "opus", ModelPct: 41, ModelReset: "Tue 3:00p",
+	}
+	got := AccountRow(in, DefaultOptions())
+	want := "\x1b[2maccount  \x1b[0m\x1b[32m5h 28%\x1b[0m \x1b[2m(resets 1:30p)\x1b[0m \x1b[2m·\x1b[0m \x1b[32mweek 18%\x1b[0m \x1b[2m(resets Mon 10a)\x1b[0m \x1b[2m·\x1b[0m \x1b[32mopus/wk 41%\x1b[0m \x1b[2m(resets Tue 3:00p)\x1b[0m"
+	if got != want {
+		t.Errorf("AccountRow model segment(%+v):\n got %q\nwant %q", in, got, want)
+	}
+}
+
+func TestAccountRowOmitsUnknownModelFamily(t *testing.T) {
+	// No matching payload window (e.g. fable): segment omitted, never 0%.
+	got := AccountRow(Usage{U5: 28, U7: 18, ModelFamily: ""}, DefaultOptions())
+	if strings.Contains(got, "/wk") || strings.Contains(got, "0%") && strings.Count(got, "%") > 2 {
+		t.Errorf("model segment rendered without data: %q", got)
 	}
 }
 
@@ -112,12 +157,14 @@ func TestActivityRow(t *testing.T) {
 	}
 }
 
-func TestLimitsRowHotWeekShowsReset(t *testing.T) {
+func TestAccountRowHotWeekShowsResetInQuietMode(t *testing.T) {
+	opts := DefaultOptions()
+	opts.Account.AlwaysShowResets = false // quiet: hot week must still surface
 	in := Usage{U5: 10, U7: 91, R7: "Mon 10:00a"}
-	got := LimitsRow(in)
-	want := "\x1b[2mlimits   \x1b[0m\x1b[32m5h 10%\x1b[0m \x1b[2m·\x1b[0m \x1b[31mweek 91%\x1b[0m \x1b[2m(resets Mon 10:00a)\x1b[0m"
+	got := AccountRow(in, opts)
+	want := "\x1b[2maccount  \x1b[0m\x1b[32m5h 10%\x1b[0m \x1b[2m·\x1b[0m \x1b[31mweek 91%\x1b[0m \x1b[2m(resets Mon 10:00a)\x1b[0m"
 	if got != want {
-		t.Errorf("LimitsRow(%+v):\n got %q\nwant %q", in, got, want)
+		t.Errorf("AccountRow quiet/hot-week(%+v):\n got %q\nwant %q", in, got, want)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/mitre/claude-statusline/internal/cache"
@@ -38,10 +39,25 @@ type payload struct {
 	} `json:"limits"`
 }
 
+// FamilyFromModelName maps a session model display name to its payload
+// window family. Unknown families (fable, mythos, "?") return "" — the
+// model segment is then omitted entirely.
+func FamilyFromModelName(name string) string {
+	lower := strings.ToLower(name)
+	for _, f := range []string{"opus", "sonnet", "haiku"} {
+		if strings.Contains(lower, f) {
+			return f
+		}
+	}
+	return ""
+}
+
 // Parse validates and extracts a usage payload. Payloads without the
 // expected shape (e.g. rate-limit error bodies) return an error — they must
-// never be rendered as zeros.
-func Parse(raw []byte, now time.Time) (render.Usage, error) {
+// never be rendered as zeros. When family is non-empty and the payload
+// carries a seven_day_<family> window with a utilization, the model segment
+// fields are populated; otherwise they stay zero and the segment is omitted.
+func Parse(raw []byte, now time.Time, family string) (render.Usage, error) {
 	var p payload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return render.Usage{}, err
@@ -69,6 +85,20 @@ func Parse(raw []byte, now time.Time) (render.Usage, error) {
 	for _, l := range p.Limits {
 		if l.IsActive && l.Percent > u.MaxActive {
 			u.MaxActive = l.Percent
+		}
+	}
+
+	if family != "" {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err == nil {
+			if wraw, ok := fields["seven_day_"+family]; ok {
+				var w window
+				if err := json.Unmarshal(wraw, &w); err == nil && w.Utilization != nil {
+					u.ModelFamily = family
+					u.ModelPct = int(math.Floor(*w.Utilization))
+					u.ModelReset = resetLabel(w.ResetsAt, now)
+				}
+			}
 		}
 	}
 	return u, nil
@@ -109,7 +139,7 @@ func Resolve(cacheDir string, ttl time.Duration, fetch func() ([]byte, error)) (
 		return []byte(s), true
 	}
 	if b, err := fetch(); err == nil {
-		if _, perr := Parse(b, time.Now()); perr == nil {
+		if _, perr := Parse(b, time.Now(), ""); perr == nil {
 			_ = cache.Write(p, string(b))
 			return b, true
 		}

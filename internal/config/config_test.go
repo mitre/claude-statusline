@@ -12,7 +12,7 @@ func TestLoadMissingFileGivesDefaults(t *testing.T) {
 		t.Fatalf("missing config must not error: %v", err)
 	}
 	o := cfg.Options
-	if !o.Rows.Model || !o.Rows.Project || !o.Rows.Context || !o.Rows.Limits || !o.Rows.Activity {
+	if !o.Rows.Model || !o.Rows.Project || !o.Rows.Context || !o.Rows.Account || !o.Rows.Activity {
 		t.Errorf("default rows not all enabled: %+v", o.Rows)
 	}
 	if !o.Model.ShowSession || !o.Project.ShowDirty || !o.Project.TildeHome {
@@ -64,6 +64,60 @@ func TestLoadUnreadablePathSurfacesError(t *testing.T) {
 	dir := t.TempDir() // a directory: ReadFile fails with EISDIR, not ErrNotExist
 	if _, err := Load(dir); err == nil {
 		t.Errorf("Load(%q) = nil error, want unreadable-file error", dir)
+	}
+}
+
+func TestLoadAccountShowResets(t *testing.T) {
+	dir := t.TempDir()
+	write := func(body string) string {
+		p := filepath.Join(dir, "c.toml")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	cfg, err := Load(write("[account]\nshow_resets = \"quiet\"\n"))
+	if err != nil {
+		t.Fatalf("Load quiet: %v", err)
+	}
+	if cfg.Options.Account.AlwaysShowResets {
+		t.Error("show_resets=quiet not applied")
+	}
+
+	cfg, err = Load(write("[account]\nshow_resets = \"always\"\n"))
+	if err != nil || !cfg.Options.Account.AlwaysShowResets {
+		t.Errorf("show_resets=always: err=%v applied=%v", err, cfg.Options.Account.AlwaysShowResets)
+	}
+
+	if _, err = Load(write("[account]\nshow_resets = \"never\"\n")); err == nil {
+		t.Error("invalid show_resets value must surface an error")
+	}
+}
+
+func TestLoadRowsAccountWithLimitsAlias(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	cfg, err := Load(write("a.toml", "[rows]\naccount = false\n"))
+	if err != nil || cfg.Options.Rows.Account {
+		t.Errorf("rows.account=false: err=%v applied=%v", err, !cfg.Options.Rows.Account)
+	}
+	// Deprecated alias still honored.
+	cfg, err = Load(write("b.toml", "[rows]\nlimits = false\n"))
+	if err != nil || cfg.Options.Rows.Account {
+		t.Errorf("rows.limits alias: err=%v applied=%v", err, !cfg.Options.Rows.Account)
+	}
+	// Both set: account wins.
+	cfg, err = Load(write("c.toml", "[rows]\nlimits = false\naccount = true\n"))
+	if err != nil || !cfg.Options.Rows.Account {
+		t.Errorf("account precedence over limits alias: err=%v got=%v", err, cfg.Options.Rows.Account)
 	}
 }
 
