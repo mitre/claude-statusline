@@ -1,14 +1,17 @@
 BINARY := claude-statusline
 DIST   := dist
 
-.PHONY: build test vet lint vuln race cover check parity release clean
+.PHONY: build test vet lint vuln race cover check release clean
 
 COVER_MIN ?= 85
 
 # The one gate: everything a card close (and CI) must prove, in one command.
 # (race runs the full suite under the race detector; cover re-runs for the
 # coverage floor — separate passes because -race skews coverage timing.)
-check: lint vuln race cover build parity
+# Parity vs the bash reference was retired 2026-07-03 with the first
+# intentional display change (account row); the Go golden tests are the
+# display spec of record. reference/statusline.sh is frozen as the port-era spec.
+check: lint vuln race cover build
 
 race:
 	go test -race ./...
@@ -19,15 +22,6 @@ cover:
 	awk -v t="$$total" -v m="$(COVER_MIN)" 'BEGIN { \
 	  if (t+0 < m+0) { printf "FAIL: total coverage %.1f%% is below the %s%% floor\n", t, m; exit 1 } \
 	  else           { printf "OK: total coverage %.1f%% meets the %s%% floor\n", t, m } }'
-
-parity: build
-	@for f in testdata/*.json; do \
-	  bash reference/statusline.sh < $$f > /tmp/parity-ref.out; \
-	  ./claude-statusline < $$f > /tmp/parity-go.out; \
-	  diff -q /tmp/parity-ref.out /tmp/parity-go.out >/dev/null \
-	    && echo "$$f: BYTE-IDENTICAL" \
-	    || { echo "$$f: DIFFERS"; exit 1; }; \
-	done
 
 lint:
 	golangci-lint config verify

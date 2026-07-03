@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# ============================================================================
+# FROZEN — port-era specification of record (as of 2026-07-03).
+# This script was the behavioral spec for the Go port (claude-statusline),
+# which was verified byte-identical against it before any divergence. It
+# receives NO feature work: the Go implementation's golden tests are the
+# display spec now. It remains a functional fallback with the port-era
+# feature set (point statusLine.command at it to roll back).
+# ============================================================================
 # Claude Code statusline — model, auth, branch, context bar, session time, churn
 # Receives JSON session data via stdin
 

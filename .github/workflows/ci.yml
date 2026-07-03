@@ -33,15 +33,6 @@ jobs:
       - run: make cover
       # Cross-compile matrix doubles as a multi-platform compile check.
       - run: make release
-
-  parity:
-    name: parity vs bash reference (macOS)
-    # The reference script needs darwin userland (BSD md5, security(1)).
-    # Byte-parity is only meaningful where the reference actually runs.
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - run: make parity
+# The macOS byte-parity job was retired 2026-07-03 alongside the parity make
+# target: the first intentional display change (account row) ended the
+# byte-parity era. Go golden tests are the display spec of record.
