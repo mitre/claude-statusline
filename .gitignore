@@ -2,6 +2,7 @@
 /dist/
 *.test
 coverage.out
+.DS_Store
 
 # Beads / Dolt files (added by bd init)
 .dolt/
