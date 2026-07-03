@@ -11,9 +11,23 @@ import (
 
 const home = "/Users/dev"
 
+func TestRenderIsEnvironmentIndependent(t *testing.T) {
+	// A statusline is always piped: the host interprets the ANSI, so output
+	// must never vary with tty-ness or color env vars (NO_COLOR is
+	// deliberately not honored — documented in the README). This guard must
+	// survive any styling-engine change.
+	baseline := ModelRow("Fable 5", 1000000, "Sub", "0a1b2c3d", "", false, DefaultOptions())
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("TERM", "dumb")
+	t.Setenv("CLICOLOR_FORCE", "0")
+	if got := ModelRow("Fable 5", 1000000, "Sub", "0a1b2c3d", "", false, DefaultOptions()); got != baseline {
+		t.Errorf("output varies with environment:\n got %q\nbase %q", got, baseline)
+	}
+}
+
 func TestModelRowFullState(t *testing.T) {
 	got := ModelRow("Fable 5", 1000000, "Sub", "0a1b2c3d-0000-4000-8000-000000000000", "", false, DefaultOptions())
-	want := "\x1b[2mmodel    \x1b[0m\x1b[1m\x1b[36mFable 5 1M\x1b[0m\x1b[2m · \x1b[0m\x1b[32mSub\x1b[0m\x1b[2m · session 0a1b2c3d\x1b[0m"
+	want := "\x1b[2mmodel    \x1b[m\x1b[1;36mFable 5 1M\x1b[m\x1b[2m · \x1b[m\x1b[32mSub\x1b[m\x1b[2m · session 0a1b2c3d\x1b[m"
 	if got != want {
 		t.Errorf("ModelRow full:\n got %q\nwant %q", got, want)
 	}
@@ -21,7 +35,7 @@ func TestModelRowFullState(t *testing.T) {
 
 func TestModelRowContextSizeLabel(t *testing.T) {
 	got := ModelRow("Fable 5", 200000, "Sub", "", "", false, DefaultOptions())
-	want := "\x1b[2mmodel    \x1b[0m\x1b[1m\x1b[36mFable 5 200k\x1b[0m\x1b[2m · \x1b[0m\x1b[32mSub\x1b[0m"
+	want := "\x1b[2mmodel    \x1b[m\x1b[1;36mFable 5 200k\x1b[m\x1b[2m · \x1b[m\x1b[32mSub\x1b[m"
 	if got != want {
 		t.Errorf("ModelRow 200k:\n got %q\nwant %q", got, want)
 	}
@@ -34,8 +48,8 @@ func TestModelRowContextSizeLabel(t *testing.T) {
 
 func TestModelRowAPIKeyWarning(t *testing.T) {
 	got := ModelRow("Fable 5", 200000, "API", "", "", true, DefaultOptions())
-	wantAuth := "\x1b[2m · \x1b[0m\x1b[33mAPI\x1b[0m"
-	wantWarn := " \x1b[41m\x1b[37m\x1b[1m ⚠ API KEY SET — METERED BILLING \x1b[0m"
+	wantAuth := "\x1b[2m · \x1b[m\x1b[33mAPI\x1b[m"
+	wantWarn := " \x1b[1;37;41m ⚠ API KEY SET — METERED BILLING \x1b[m"
 	if !strings.Contains(got, wantAuth) {
 		t.Errorf("missing yellow API auth badge: %q", got)
 	}
@@ -46,7 +60,7 @@ func TestModelRowAPIKeyWarning(t *testing.T) {
 
 func TestProjectRow(t *testing.T) {
 	got := ProjectRow("/Users/dev/projects/demo-app", home, "main", 2, DefaultOptions())
-	want := "\x1b[2mproject  \x1b[0m\x1b[1m~/projects/demo-app\x1b[0m \x1b[2m·\x1b[0m \x1b[34m⎇ main\x1b[0m \x1b[33m~2\x1b[0m"
+	want := "\x1b[2mproject  \x1b[m\x1b[1m~/projects/demo-app\x1b[m \x1b[2m·\x1b[m \x1b[34m⎇ main\x1b[m \x1b[33m~2\x1b[m"
 	if got != want {
 		t.Errorf("ProjectRow:\n got %q\nwant %q", got, want)
 	}
@@ -61,7 +75,7 @@ func TestProjectRowCleanTreeHidesDirty(t *testing.T) {
 
 func TestProjectRowOutsideHomeKeepsFullPath(t *testing.T) {
 	got := ProjectRow("/opt/work", home, "main", 0, DefaultOptions())
-	if !strings.Contains(got, "\x1b[1m/opt/work\x1b[0m") {
+	if !strings.Contains(got, "\x1b[1m/opt/work\x1b[m") {
 		t.Errorf("path outside home was altered: %q", got)
 	}
 }
@@ -71,9 +85,9 @@ func TestContextRowThresholds(t *testing.T) {
 		pct  int
 		want string
 	}{
-		{30, "\x1b[2mcontext  \x1b[0m\x1b[32m▓▓▓░░░░░░░\x1b[0m \x1b[32m30%\x1b[0m"},
-		{60, "\x1b[2mcontext  \x1b[0m\x1b[33m▓▓▓▓▓▓░░░░\x1b[0m \x1b[33m60%\x1b[0m"},
-		{88, "\x1b[2mcontext  \x1b[0m\x1b[31m▓▓▓▓▓▓▓▓░░\x1b[0m \x1b[31m\x1b[1m88%\x1b[0m \x1b[41m\x1b[37m\x1b[1m /compact \x1b[0m"},
+		{30, "\x1b[2mcontext  \x1b[m\x1b[32m▓▓▓░░░░░░░\x1b[m \x1b[32m30%\x1b[m"},
+		{60, "\x1b[2mcontext  \x1b[m\x1b[33m▓▓▓▓▓▓░░░░\x1b[m \x1b[33m60%\x1b[m"},
+		{88, "\x1b[2mcontext  \x1b[m\x1b[31m▓▓▓▓▓▓▓▓░░\x1b[m \x1b[1;31m88%\x1b[m \x1b[1;37;41m /compact \x1b[m"},
 	}
 	for _, c := range cases {
 		if got := ContextRow(c.pct); got != c.want {
@@ -85,7 +99,7 @@ func TestContextRowThresholds(t *testing.T) {
 func TestAccountRow(t *testing.T) {
 	// No reset labels in the payload: nothing to show in either mode.
 	got := AccountRow(Usage{U5: 5, U7: 13}, DefaultOptions())
-	want := "\x1b[2maccount  \x1b[0m\x1b[32m5h 5%\x1b[0m \x1b[2m·\x1b[0m \x1b[32mweek 13%\x1b[0m"
+	want := "\x1b[2maccount  \x1b[m\x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m"
 	if got != want {
 		t.Errorf("AccountRow green:\n got %q\nwant %q", got, want)
 	}
@@ -94,7 +108,7 @@ func TestAccountRow(t *testing.T) {
 func TestAccountRowAlwaysShowsResetsBelowThreshold(t *testing.T) {
 	in := Usage{U5: 5, R5: "1:30p", U7: 13, R7: "Mon 10a"}
 	got := AccountRow(in, DefaultOptions()) // default show_resets = always
-	want := "\x1b[2maccount  \x1b[0m\x1b[32m5h 5%\x1b[0m \x1b[2m(resets 1:30p)\x1b[0m \x1b[2m·\x1b[0m \x1b[32mweek 13%\x1b[0m \x1b[2m(resets Mon 10a)\x1b[0m"
+	want := "\x1b[2maccount  \x1b[m\x1b[32m5h 5%\x1b[m \x1b[2m(resets 1:30p)\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m \x1b[2m(resets Mon 10a)\x1b[m"
 	if got != want {
 		t.Errorf("AccountRow always/low(%+v):\n got %q\nwant %q", in, got, want)
 	}
@@ -107,7 +121,7 @@ func TestAccountRowQuietModeIsHotOnly(t *testing.T) {
 	// Below threshold: resets hidden.
 	in := Usage{U5: 5, R5: "1:30p", U7: 13, R7: "Mon 10a"}
 	got := AccountRow(in, opts)
-	want := "\x1b[2maccount  \x1b[0m\x1b[32m5h 5%\x1b[0m \x1b[2m·\x1b[0m \x1b[32mweek 13%\x1b[0m"
+	want := "\x1b[2maccount  \x1b[m\x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m"
 	if got != want {
 		t.Errorf("AccountRow quiet/low(%+v):\n got %q\nwant %q", in, got, want)
 	}
@@ -115,7 +129,7 @@ func TestAccountRowQuietModeIsHotOnly(t *testing.T) {
 	// Hot window: quiet is NOT never — reset surfaces at >=80%.
 	in = Usage{U5: 82, R5: "1:30p", U7: 55}
 	got = AccountRow(in, opts)
-	want = "\x1b[2maccount  \x1b[0m\x1b[31m5h 82%\x1b[0m \x1b[2m(resets 1:30p)\x1b[0m \x1b[2m·\x1b[0m \x1b[33mweek 55%\x1b[0m"
+	want = "\x1b[2maccount  \x1b[m\x1b[31m5h 82%\x1b[m \x1b[2m(resets 1:30p)\x1b[m \x1b[2m·\x1b[m \x1b[33mweek 55%\x1b[m"
 	if got != want {
 		t.Errorf("AccountRow quiet/hot(%+v):\n got %q\nwant %q", in, got, want)
 	}
@@ -127,7 +141,7 @@ func TestAccountRowModelSegment(t *testing.T) {
 		ModelFamily: "opus", ModelPct: 41, ModelReset: "Tue 3:00p",
 	}
 	got := AccountRow(in, DefaultOptions())
-	want := "\x1b[2maccount  \x1b[0m\x1b[32m5h 28%\x1b[0m \x1b[2m(resets 1:30p)\x1b[0m \x1b[2m·\x1b[0m \x1b[32mweek 18%\x1b[0m \x1b[2m(resets Mon 10a)\x1b[0m \x1b[2m·\x1b[0m \x1b[32mopus/wk 41%\x1b[0m \x1b[2m(resets Tue 3:00p)\x1b[0m"
+	want := "\x1b[2maccount  \x1b[m\x1b[32m5h 28%\x1b[m \x1b[2m(resets 1:30p)\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 18%\x1b[m \x1b[2m(resets Mon 10a)\x1b[m \x1b[2m·\x1b[m \x1b[32mopus/wk 41%\x1b[m \x1b[2m(resets Tue 3:00p)\x1b[m"
 	if got != want {
 		t.Errorf("AccountRow model segment(%+v):\n got %q\nwant %q", in, got, want)
 	}
@@ -143,7 +157,7 @@ func TestAccountRowOmitsUnknownModelFamily(t *testing.T) {
 
 func TestActivityRow(t *testing.T) {
 	got := ActivityRow(62580000, 1598, 8)
-	want := "\x1b[2mactivity \x1b[0m\x1b[2m17h23m\x1b[0m \x1b[2m·\x1b[0m \x1b[32m+1,598\x1b[0m/\x1b[31m-8\x1b[0m \x1b[2mlines\x1b[0m"
+	want := "\x1b[2mactivity \x1b[m\x1b[2m17h23m\x1b[m \x1b[2m·\x1b[m \x1b[32m+1,598\x1b[m/\x1b[31m-8\x1b[m \x1b[2mlines\x1b[m"
 	if got != want {
 		t.Errorf("ActivityRow:\n got %q\nwant %q", got, want)
 	}
@@ -152,7 +166,7 @@ func TestActivityRow(t *testing.T) {
 	}
 	// Short session: minutes+seconds form, no churn segment.
 	got = ActivityRow(90000, 0, 0)
-	want = "\x1b[2mactivity \x1b[0m\x1b[2m1m30s\x1b[0m"
+	want = "\x1b[2mactivity \x1b[m\x1b[2m1m30s\x1b[m"
 	if got != want {
 		t.Errorf("ActivityRow short:\n got %q\nwant %q", got, want)
 	}
@@ -163,7 +177,7 @@ func TestAccountRowHotWeekShowsResetInQuietMode(t *testing.T) {
 	opts.Account.AlwaysShowResets = false // quiet: hot week must still surface
 	in := Usage{U5: 10, U7: 91, R7: "Mon 10:00a"}
 	got := AccountRow(in, opts)
-	want := "\x1b[2maccount  \x1b[0m\x1b[32m5h 10%\x1b[0m \x1b[2m·\x1b[0m \x1b[31mweek 91%\x1b[0m \x1b[2m(resets Mon 10:00a)\x1b[0m"
+	want := "\x1b[2maccount  \x1b[m\x1b[32m5h 10%\x1b[m \x1b[2m·\x1b[m \x1b[31mweek 91%\x1b[m \x1b[2m(resets Mon 10:00a)\x1b[m"
 	if got != want {
 		t.Errorf("AccountRow quiet/hot-week(%+v):\n got %q\nwant %q", in, got, want)
 	}
@@ -178,7 +192,7 @@ func TestExtraBadgeEnabledNoSpendIsSilent(t *testing.T) {
 
 func TestContextRowClampsAbove100(t *testing.T) {
 	got := ContextRow(120)
-	want := "\x1b[2mcontext  \x1b[0m\x1b[31m▓▓▓▓▓▓▓▓▓▓\x1b[0m \x1b[31m\x1b[1m120%\x1b[0m \x1b[41m\x1b[37m\x1b[1m /compact \x1b[0m"
+	want := "\x1b[2mcontext  \x1b[m\x1b[31m▓▓▓▓▓▓▓▓▓▓\x1b[m \x1b[1;31m120%\x1b[m \x1b[1;37;41m /compact \x1b[m"
 	if got != want {
 		t.Errorf("ContextRow(120):\n got %q\nwant %q", got, want)
 	}
@@ -187,13 +201,13 @@ func TestContextRowClampsAbove100(t *testing.T) {
 func TestExtraBadge(t *testing.T) {
 	// Actively over a limit and burning credits: loud badge.
 	got := ExtraBadge(Usage{U5: 100, ExtraEnabled: true, CreditsMinor: 150, CreditsExp: 2})
-	want := "  \x1b[41m\x1b[37m\x1b[1m ⚠ EXTRA USAGE $1.50 \x1b[0m"
+	want := "  \x1b[1;37;41m ⚠ EXTRA USAGE $1.50 \x1b[m"
 	if got != want {
 		t.Errorf("ExtraBadge loud:\n got %q\nwant %q", got, want)
 	}
 	// Enabled with spend but within limits: dim tally.
 	got = ExtraBadge(Usage{U5: 20, ExtraEnabled: true, CreditsMinor: 150, CreditsExp: 2})
-	want = "\x1b[2m · extra $1.50\x1b[0m"
+	want = "\x1b[2m · extra $1.50\x1b[m"
 	if got != want {
 		t.Errorf("ExtraBadge dim:\n got %q\nwant %q", got, want)
 	}

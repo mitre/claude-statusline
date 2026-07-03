@@ -1,26 +1,35 @@
 // Package render builds the statusline's ANSI rows. The golden tests in this
 // package are the display spec of record.
+//
+// Styling goes through lipgloss v2, which emits ANSI unconditionally — no
+// tty detection, no NO_COLOR/TERM sniffing (a statusline is always piped;
+// the host interprets the sequences). Downsampling via colorprofile.Writer
+// is deliberately not used.
 package render
 
 import (
 	"fmt"
 	"math"
 	"strings"
+
+	lg "charm.land/lipgloss/v2"
 )
 
-// ANSI sequences (names match the reference script).
-const (
-	rst   = "\x1b[0m"
-	bold  = "\x1b[1m"
-	dim   = "\x1b[2m"
-	red   = "\x1b[31m"
-	grn   = "\x1b[32m"
-	ylw   = "\x1b[33m"
-	blu   = "\x1b[34m"
-	cyn   = "\x1b[36m"
-	wht   = "\x1b[37m"
-	bgRed = "\x1b[41m"
+// Styles (ANSI 16-color palette, matching the original escape constants).
+var (
+	dimS   = lg.NewStyle().Faint(true)
+	boldS  = lg.NewStyle().Bold(true)
+	nameS  = lg.NewStyle().Bold(true).Foreground(lg.Color("6")) // bold cyan
+	redS   = lg.NewStyle().Foreground(lg.Color("1"))
+	grnS   = lg.NewStyle().Foreground(lg.Color("2"))
+	ylwS   = lg.NewStyle().Foreground(lg.Color("3"))
+	bluS   = lg.NewStyle().Foreground(lg.Color("4"))
+	hotS   = lg.NewStyle().Bold(true).Foreground(lg.Color("1"))                           // loud percentage
+	alarmS = lg.NewStyle().Bold(true).Foreground(lg.Color("7")).Background(lg.Color("1")) // white-on-red badge
 )
+
+// sepDot is the dim mid-dot row separator with outer spaces.
+var sepDot = " " + dimS.Render("·") + " "
 
 // Usage holds account-limit data extracted by the usage package.
 type Usage struct {
@@ -84,7 +93,7 @@ func DefaultOptions() Options {
 
 // lbl renders the dim, 9-column left label (printf "%-9s" in the reference).
 func lbl(name string) string {
-	return fmt.Sprintf("%s%-9s%s", dim, name, rst)
+	return dimS.Render(fmt.Sprintf("%-9s", name))
 }
 
 // ModelRow renders the model name (+context size), auth badge, session id,
@@ -98,13 +107,13 @@ func ModelRow(model string, ctxSize int, auth, sessionID, extraBadge string, api
 			name += fmt.Sprintf(" %dk", ctxSize/1000)
 		}
 	}
-	row := lbl("model") + bold + cyn + name + rst
+	row := lbl("model") + nameS.Render(name)
 	if o.Model.ShowAuth {
 		switch auth {
 		case "Sub":
-			row += dim + " · " + rst + grn + "Sub" + rst
+			row += dimS.Render(" · ") + grnS.Render("Sub")
 		case "API":
-			row += dim + " · " + rst + ylw + "API" + rst
+			row += dimS.Render(" · ") + ylwS.Render("API")
 		}
 	}
 	if o.Model.ShowSession && sessionID != "" {
@@ -112,11 +121,11 @@ func ModelRow(model string, ctxSize int, auth, sessionID, extraBadge string, api
 		if len(short) > 8 {
 			short = short[:8]
 		}
-		row += dim + " · session " + short + rst
+		row += dimS.Render(" · session " + short)
 	}
 	row += extraBadge
 	if apiKeySet {
-		row += " " + bgRed + wht + bold + " ⚠ API KEY SET — METERED BILLING " + rst
+		row += " " + alarmS.Render(" ⚠ API KEY SET — METERED BILLING ")
 	}
 	return row
 }
@@ -127,12 +136,12 @@ func ProjectRow(cwd, home, branch string, dirty int, o Options) string {
 	if o.Project.TildeHome && home != "" && strings.HasPrefix(path, home) {
 		path = "~" + strings.TrimPrefix(path, home)
 	}
-	row := lbl("project") + bold + path + rst
+	row := lbl("project") + boldS.Render(path)
 	if o.Project.ShowBranch && branch != "" {
-		row += " " + dim + "·" + rst + " " + blu + "⎇ " + branch + rst
+		row += sepDot + bluS.Render("⎇ "+branch)
 	}
 	if o.Project.ShowDirty && dirty > 0 {
-		row += fmt.Sprintf(" %s~%d%s", ylw, dirty, rst)
+		row += " " + ylwS.Render(fmt.Sprintf("~%d", dirty))
 	}
 	return row
 }
@@ -143,39 +152,37 @@ func ContextRow(pct int) string {
 	filled := min(pct/10, 10)
 	bar := strings.Repeat("▓", filled) + strings.Repeat("░", 10-filled)
 
-	var color, label string
+	barS, labelS := grnS, grnS
 	switch {
 	case pct >= 80:
-		color, label = red, red+bold+fmt.Sprintf("%d%%", pct)+rst
+		barS, labelS = redS, hotS
 	case pct >= 50:
-		color, label = ylw, ylw+fmt.Sprintf("%d%%", pct)+rst
-	default:
-		color, label = grn, grn+fmt.Sprintf("%d%%", pct)+rst
+		barS, labelS = ylwS, ylwS
 	}
 
-	row := lbl("context") + color + bar + rst + " " + label
+	row := lbl("context") + barS.Render(bar) + " " + labelS.Render(fmt.Sprintf("%d%%", pct))
 	if pct >= 85 {
-		row += " " + bgRed + wht + bold + " /compact " + rst
+		row += " " + alarmS.Render(" /compact ")
 	}
 	return row
 }
 
-func limitColor(pct int) string {
+func limitStyle(pct int) lg.Style {
 	switch {
 	case pct >= 80:
-		return red
+		return redS
 	case pct >= 50:
-		return ylw
+		return ylwS
 	default:
-		return grn
+		return grnS
 	}
 }
 
 // meter renders one account meter with its optional reset label.
 func meter(text string, pct int, reset string, alwaysShowReset bool) string {
-	s := limitColor(pct) + text + rst
+	s := limitStyle(pct).Render(text)
 	if reset != "" && (alwaysShowReset || pct >= 80) {
-		s += " " + dim + "(resets " + reset + ")" + rst
+		s += " " + dimS.Render("(resets "+reset+")")
 	}
 	return s
 }
@@ -195,7 +202,7 @@ func AccountRow(u Usage, o Options) string {
 	if u.ModelFamily != "" {
 		parts = append(parts, meter(fmt.Sprintf("%s/wk %d%%", u.ModelFamily, u.ModelPct), u.ModelPct, u.ModelReset, always))
 	}
-	return lbl("account") + strings.Join(parts, " "+dim+"·"+rst+" ")
+	return lbl("account") + strings.Join(parts, sepDot)
 }
 
 // ActivityRow renders session duration and code churn; collapses when idle.
@@ -204,19 +211,18 @@ func ActivityRow(durationMS int64, added, removed int) string {
 	if durationMS > 60000 {
 		ts := durationMS / 1000
 		if ts >= 3600 {
-			parts = append(parts, fmt.Sprintf("%s%dh%dm%s", dim, ts/3600, (ts%3600)/60, rst))
+			parts = append(parts, dimS.Render(fmt.Sprintf("%dh%dm", ts/3600, (ts%3600)/60)))
 		} else {
-			parts = append(parts, fmt.Sprintf("%s%dm%ds%s", dim, ts/60, ts%60, rst))
+			parts = append(parts, dimS.Render(fmt.Sprintf("%dm%ds", ts/60, ts%60)))
 		}
 	}
 	if added > 0 || removed > 0 {
-		parts = append(parts, fmt.Sprintf("%s+%s%s/%s-%s%s %slines%s",
-			grn, comma(added), rst, red, comma(removed), rst, dim, rst))
+		parts = append(parts, grnS.Render("+"+comma(added))+"/"+redS.Render("-"+comma(removed))+" "+dimS.Render("lines"))
 	}
 	if len(parts) == 0 {
 		return ""
 	}
-	return lbl("activity") + strings.Join(parts, " "+dim+"·"+rst+" ")
+	return lbl("activity") + strings.Join(parts, sepDot)
 }
 
 // ExtraBadge renders the extra-usage indicator for the model row: a loud
@@ -229,9 +235,9 @@ func ExtraBadge(u Usage) string {
 	cred := fmt.Sprintf("%.2f", float64(u.CreditsMinor)/math.Pow10(u.CreditsExp))
 	switch {
 	case u.U5 >= 100 || u.U7 >= 100 || u.MaxActive >= 100:
-		return "  " + bgRed + wht + bold + " ⚠ EXTRA USAGE $" + cred + " " + rst
+		return "  " + alarmS.Render(" ⚠ EXTRA USAGE $"+cred+" ")
 	case u.CreditsMinor > 0:
-		return dim + " · extra $" + cred + rst
+		return dimS.Render(" · extra $" + cred)
 	}
 	return ""
 }

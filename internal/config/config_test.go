@@ -158,6 +158,31 @@ func TestLoadProjectGitTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadProjectGitEngine(t *testing.T) {
+	dir := t.TempDir()
+	write := func(body string) string {
+		p := filepath.Join(dir, "c.toml")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	cfg, err := Load(write("[project]\nshow_dirty = true\n"))
+	if err != nil || cfg.GitEngine != "auto" {
+		t.Errorf("absent git_engine must default to auto: err=%v got=%q", err, cfg.GitEngine)
+	}
+	for _, v := range []string{"auto", "gogit", "cli"} {
+		cfg, err = Load(write("[project]\ngit_engine = \"" + v + "\"\n"))
+		if err != nil || cfg.GitEngine != v {
+			t.Errorf("git_engine=%s: err=%v got=%q", v, err, cfg.GitEngine)
+		}
+	}
+	if _, err = Load(write("[project]\ngit_engine = \"fast\"\n")); err == nil {
+		t.Error("invalid git_engine value must surface an error")
+	}
+}
+
 func TestLoadRejectsMalformedTOML(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "bad.toml")
 	if err := os.WriteFile(p, []byte("rows = [unclosed"), 0o600); err != nil {

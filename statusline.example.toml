@@ -30,10 +30,15 @@ show_context_size = true # append "1M"/"200k" to the model name
 show_branch = true # "· ⎇ main"
 show_dirty = true  # " ~2" changed-file count (yellow)
 tilde_home = true  # shorten $HOME prefix to ~
-# Deadline per git call, in milliseconds; a call that overruns is killed and
-# the cached value is served instead. 0 disables the bound entirely. On very
-# large repos also see the README note on `git config core.fsmonitor true`.
+# Deadline per git read, in milliseconds (governs both engines); a read that
+# overruns is abandoned and the cached value is served instead. 0 disables
+# the bound entirely.
 git_timeout_ms = 150
+# Git reader: "auto" (default) reads in-process via go-git — no git binary
+# needed — and escalates a repo to the git CLI when the in-process read
+# overruns git_timeout_ms (the CLI's fsmonitor daemon stays fast on huge
+# repos; see the README design notes). "gogit" or "cli" force one engine.
+git_engine = "auto"
 
 # Account-scope meters row (Sub auth only).
 [account]

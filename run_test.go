@@ -24,7 +24,12 @@ func e2eDeps(t *testing.T, stdinFixture string) deps {
 	t.Helper()
 	cacheDir := t.TempDir()
 	cfgPath := filepath.Join(t.TempDir(), "statusline.toml")
-	if err := os.WriteFile(cfgPath, []byte("[cache]\ndir = \""+cacheDir+"\"\n"), 0o600); err != nil {
+	// The fake runners below are CLI runners — pin the CLI engine. This also
+	// proves the config→engine wiring: if cfg.GitEngine never reached
+	// gitinfo, these renders would take the go-git path, the fakes would go
+	// unused, and every golden would fail.
+	cfg := "[cache]\ndir = \"" + cacheDir + "\"\n[project]\ngit_engine = \"cli\"\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join("testdata", stdinFixture))
@@ -56,11 +61,11 @@ func e2eDeps(t *testing.T, stdinFixture string) deps {
 func TestRunEndToEndGolden(t *testing.T) {
 	out, errOut := run(e2eDeps(t, "full.json"))
 	want := strings.Join([]string{
-		"\x1b[2mmodel    \x1b[0m\x1b[1m\x1b[36mFable 5 1M\x1b[0m\x1b[2m · \x1b[0m\x1b[32mSub\x1b[0m\x1b[2m · session 0a1b2c3d\x1b[0m",
-		"\x1b[2mproject  \x1b[0m\x1b[1m~/projects/demo-app\x1b[0m \x1b[2m·\x1b[0m \x1b[34m⎇ main\x1b[0m \x1b[33m~2\x1b[0m",
-		"\x1b[2mcontext  \x1b[0m\x1b[32m▓▓▓░░░░░░░\x1b[0m \x1b[32m30%\x1b[0m",
-		"\x1b[2maccount  \x1b[0m\x1b[32m5h 5%\x1b[0m \x1b[2m·\x1b[0m \x1b[32mweek 13%\x1b[0m",
-		"\x1b[2mactivity \x1b[0m\x1b[2m17h23m\x1b[0m \x1b[2m·\x1b[0m \x1b[32m+1,598\x1b[0m/\x1b[31m-8\x1b[0m \x1b[2mlines\x1b[0m",
+		"\x1b[2mmodel    \x1b[m\x1b[1;36mFable 5 1M\x1b[m\x1b[2m · \x1b[m\x1b[32mSub\x1b[m\x1b[2m · session 0a1b2c3d\x1b[m",
+		"\x1b[2mproject  \x1b[m\x1b[1m~/projects/demo-app\x1b[m \x1b[2m·\x1b[m \x1b[34m⎇ main\x1b[m \x1b[33m~2\x1b[m",
+		"\x1b[2mcontext  \x1b[m\x1b[32m▓▓▓░░░░░░░\x1b[m \x1b[32m30%\x1b[m",
+		"\x1b[2maccount  \x1b[m\x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m",
+		"\x1b[2mactivity \x1b[m\x1b[2m17h23m\x1b[m \x1b[2m·\x1b[m \x1b[32m+1,598\x1b[m/\x1b[31m-8\x1b[m \x1b[2mlines\x1b[m",
 	}, "\n")
 	if out != want {
 		t.Errorf("run() output:\n got %q\nwant %q", out, want)
@@ -115,7 +120,7 @@ func appendConfig(t *testing.T, d deps, body string) {
 
 func TestRunGitDeadlineServesStaleCacheWithinBudget(t *testing.T) {
 	d := e2eDeps(t, "full.json")
-	appendConfig(t, d, "[project]\ngit_timeout_ms = 50\n")
+	appendConfig(t, d, "git_timeout_ms = 50\n")
 	fix, err := os.ReadFile(filepath.Join("testdata", "full.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +197,7 @@ func TestRunGitRealRunnerBoundedByDeadline(t *testing.T) {
 
 func TestRunGitTimeoutZeroDisablesDeadline(t *testing.T) {
 	d := e2eDeps(t, "full.json")
-	appendConfig(t, d, "[project]\ngit_timeout_ms = 0\n")
+	appendConfig(t, d, "git_timeout_ms = 0\n")
 
 	// The status call outlasts the 150ms default deadline. With 0 wired
 	// through (unbounded), the live value must arrive; if the default were

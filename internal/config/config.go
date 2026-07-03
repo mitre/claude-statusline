@@ -20,10 +20,13 @@ type Config struct {
 		Enabled    bool
 		TTLSeconds int
 	}
-	// GitTimeoutMS bounds each git subprocess call (Starship's
-	// command_timeout pattern); 0 disables the deadline entirely.
+	// GitTimeoutMS bounds each git read (Starship's command_timeout
+	// pattern) on both engines; 0 disables the bound entirely.
 	GitTimeoutMS int
-	CacheDir     string
+	// GitEngine selects the git reader: "auto" (in-process go-git with
+	// measured per-repo escalation to the CLI), "gogit", or "cli".
+	GitEngine string
+	CacheDir  string
 }
 
 // fileSchema mirrors the TOML layout. Decoding into a pre-filled value gives
@@ -43,10 +46,11 @@ type fileSchema struct {
 		ShowContextSize *bool `toml:"show_context_size"`
 	} `toml:"model"`
 	Project struct {
-		ShowBranch   *bool `toml:"show_branch"`
-		ShowDirty    *bool `toml:"show_dirty"`
-		TildeHome    *bool `toml:"tilde_home"`
-		GitTimeoutMS *int  `toml:"git_timeout_ms"` // 0 = unbounded
+		ShowBranch   *bool   `toml:"show_branch"`
+		ShowDirty    *bool   `toml:"show_dirty"`
+		TildeHome    *bool   `toml:"tilde_home"`
+		GitTimeoutMS *int    `toml:"git_timeout_ms"` // 0 = unbounded
+		GitEngine    *string `toml:"git_engine"`     // auto | gogit | cli
 	} `toml:"project"`
 	Account struct {
 		ShowResets *string `toml:"show_resets"` // "always" (default) | "quiet"
@@ -66,6 +70,7 @@ func Default() Config {
 	cfg.Usage.Enabled = true
 	cfg.Usage.TTLSeconds = 180
 	cfg.GitTimeoutMS = 150
+	cfg.GitEngine = "auto"
 	cfg.CacheDir = defaultCacheDir()
 	return cfg
 }
@@ -122,6 +127,14 @@ func Load(path string) (Config, error) {
 			return cfg, fmt.Errorf("project.git_timeout_ms: %d is not valid (>= 1 bounds each git call, 0 disables the deadline)", *f.Project.GitTimeoutMS)
 		}
 		cfg.GitTimeoutMS = *f.Project.GitTimeoutMS
+	}
+	if f.Project.GitEngine != nil {
+		switch *f.Project.GitEngine {
+		case "auto", "gogit", "cli":
+			cfg.GitEngine = *f.Project.GitEngine
+		default:
+			return cfg, fmt.Errorf("project.git_engine: %q is not valid (use \"auto\", \"gogit\", or \"cli\")", *f.Project.GitEngine)
+		}
 	}
 	if f.Account.ShowResets != nil {
 		switch *f.Account.ShowResets {
