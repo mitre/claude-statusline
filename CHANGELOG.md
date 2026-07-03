@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **The bash-compat contract is gone — this is a Go program, full stop.**
+  The frozen reference script (`reference/statusline.sh`) is deleted (git
+  history preserves it), cache files are no longer shared with or readable by
+  the bash implementation, and every bash-ism written to honor that contract
+  is removed: md5-of-cwd cache keys (now FNV-1a, deleting both gosec
+  exclusions kept solely for the interop), command-substitution trailing-
+  newline stripping in cache reads (now byte-exact), and the stale
+  "first line only" branch-cache rule.
+
 ### Changed
+
+- Default cache location moved from the world-shared
+  `/tmp/.claude-statusline-cache` to the platform user-cache dir
+  (`~/Library/Caches/claude-statusline` on macOS), auto-created on first
+  render. Old `/tmp` caches are simply abandoned — caches are disposable
+  and rebuild in one render.
 
 - The `limits` row is now the **`account`** row — the label names the scope
   (all its meters are account-wide pools shared by every session). The

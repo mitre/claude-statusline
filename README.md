@@ -6,7 +6,7 @@ script it replaces (~90 ms vs ~950 ms per render).
 
 ```
 model    Fable 5 1M · Sub · session 0a1b2c3d
-project  ~/github/mitre/ts-inspec-profile-parser · ⎇ main ~2
+project  ~/projects/demo-app · ⎇ main ~2
 context  ▓▓▓░░░░░░░ 30%
 account  5h 28% (resets 1:30p) · week 18% (resets Mon 10a) · opus/wk 41% (resets Tue 3p)
 activity 17h23m · +1,598/-8 lines
@@ -76,14 +76,17 @@ the hot-only (≥80%) behavior.
 
 ## Design notes
 
-- **Provenance:** port of `reference/statusline.sh`, verified byte-identical
-  on the fixture corpus before any divergence. The byte-parity gate served
-  through the port and local rollout, then retired with the first intentional
-  display change (the `account` row, 2026-07-03); the Go golden tests are the
-  display spec of record, and the reference script is frozen in-repo as the
-  port-era spec and functional rollback.
-- **Shared caches:** uses the same `/tmp/.claude-statusline-cache` files and
-  md5-of-cwd keys as the bash reference, so the two can be swapped freely.
+- **Provenance:** began as a port of a bash statusline, verified
+  byte-identical on the fixture corpus before any divergence. The byte-parity
+  gate served through the port and local rollout, then retired with the first
+  intentional display change (the `account` row, 2026-07-03). The Go golden
+  tests are the display spec of record; the original script and its
+  compatibility era are preserved in git history. Rollback is the previous
+  binary.
+- **Caches:** small TTL files under the platform user-cache dir
+  (`~/Library/Caches/claude-statusline` on macOS; `[cache] dir` overrides),
+  keyed per working directory by FNV-1a hash. Caches are disposable —
+  deleting the directory costs one cold render.
 - **Bounded git latency** (Starship's `command_timeout` pattern): every git
   call runs under a deadline — `[project] git_timeout_ms`, default 150 ms,
   `0` disables — with the child process killed on expiry, and the cached

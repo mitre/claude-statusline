@@ -2,10 +2,10 @@
 #
 # Copy to ~/.claude/statusline.toml (or point $CLAUDE_STATUSLINE_CONFIG at it).
 # Every key is optional — a missing file or missing key keeps the default
-# shown below. Zero config renders exactly the reference layout:
+# shown below. Zero config renders the default layout:
 #
 #   model    Fable 5 1M · Sub · session 0a1b2c3d
-#   project  ~/github/mitre/ts-inspec-profile-parser · ⎇ main ~2
+#   project  ~/projects/demo-app · ⎇ main ~2
 #   context  ▓▓▓░░░░░░░ 30%
 #   account  5h 5% · week 13%
 #   activity 17h23m · +1,598/-8 lines
@@ -47,7 +47,9 @@ show_resets = "always"
 enabled = true     # set false to skip the usage endpoint entirely
 ttl_seconds = 180  # how long a fetched payload is served before re-fetching
 
-# Cache location — shared with the bash reference implementation, so the Go
-# binary is a drop-in replacement.
+# Cache location. Defaults to the platform user-cache dir (on macOS:
+# /Users/you/Library/Caches/claude-statusline); set an ABSOLUTE path to
+# override — "~" is not expanded. Caches are disposable: deleting the
+# directory costs one cold render.
 [cache]
-dir = "/tmp/.claude-statusline-cache"
+# dir = "/absolute/path/to/cache"
