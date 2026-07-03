@@ -1,0 +1,47 @@
+# CI mirrors local development exactly: every gate is a make target, so the
+# command CI runs is the command a developer runs. No duplicated shell here.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: lint + vuln + race + cover + cross-build (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # Pinned to the same version the repo is linted with locally.
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.3
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: make lint
+      - run: make vuln
+      - run: make race
+      - run: make cover
+      # Cross-compile matrix doubles as a multi-platform compile check.
+      - run: make release
+
+  parity:
+    name: parity vs bash reference (macOS)
+    # The reference script needs darwin userland (BSD md5, security(1)).
+    # Byte-parity is only meaningful where the reference actually runs.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make parity

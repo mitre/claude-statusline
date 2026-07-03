@@ -1,0 +1,47 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - gocritic
+    - gosec
+    - misspell
+    - revive
+  exclusions:
+    rules:
+      # md5 is NOT used cryptographically here: it generates cache-file names
+      # that MUST match the bash reference's `md5 -qs "$CWD"` keys so the Go
+      # binary and reference/statusline.sh share caches (drop-in contract,
+      # pinned by TestCacheFilesUseBashCompatibleMD5Keys). No code change can
+      # satisfy G401/G501 without breaking that interop.
+      - path: internal/gitinfo/
+        linters: [gosec]
+        text: "G(401|501)"
+      # Test infrastructure reads files by t.TempDir()-derived variable paths;
+      # reading by variable path IS the tests' purpose. Production code paths
+      # remain fully checked.
+      - path: _test\.go
+        linters: [gosec]
+        text: "G304"
+      # The cache package's purpose is file IO at variable paths inside the
+      # configured cache dir; paths are cacheDir + constant basenames + md5
+      # hex — never request/user-controlled content.
+      - path: internal/cache/
+        linters: [gosec]
+        text: "G304"
+      # Loading the user's OWN config file at a user-chosen path (env var or
+      # ~/.claude/statusline.toml) is the feature; the path author and the
+      # file reader are the same local user.
+      - path: internal/config/
+        linters: [gosec]
+        text: "G304"
+      # runGit's purpose is executing git with a variable working directory.
+      # Arguments are compile-time constants from internal/gitinfo; the dir is
+      # the host-provided workspace path. No shell is involved (direct exec).
+      - path: main\.go
+        linters: [gosec]
+        text: "G204"
+
+formatters:
+  enable:
+    - gofumpt
