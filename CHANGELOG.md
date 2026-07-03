@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The `limits` row is now the **`account`** row — the label names the scope
+  (all its meters are account-wide pools shared by every session). The
+  `[rows] limits` config key remains honored as a deprecated alias.
+- Reset times now show on **every** account meter by default;
+  `[account] show_resets = "quiet"` restores the previous hot-only (≥80%)
+  behavior (quiet ≠ never — hot windows still surface their reset time).
+- The byte-parity gate against the bash reference is retired: this is the
+  first intentional display divergence. `reference/statusline.sh` is frozen
+  as the port-era spec; the Go golden tests are the display spec of record.
+
 ### Added
+
+- **Per-model weekly meter** on the account row: `opus/wk 41%` — the rolling
+  7-day pool for the session's model family (opus/sonnet/haiku), parsed from
+  the payload's `seven_day_<family>` window. A parallel weekly cap, not a
+  slice of `week`; omitted entirely when the payload carries no window for
+  the session's model (never a fabricated 0%).
 
 - Go port of the bash statusline (`reference/statusline.sh`), verified
   **byte-identical** on the fixture corpus before any divergence; ~90 ms per

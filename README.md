@@ -8,7 +8,7 @@ script it replaces (~90 ms vs ~950 ms per render).
 model    Fable 5 1M · Sub · session 0a1b2c3d
 project  ~/github/mitre/ts-inspec-profile-parser · ⎇ main ~2
 context  ▓▓▓░░░░░░░ 30%
-limits   5h 5% · week 13%
+account  5h 28% (resets 1:30p) · week 18% (resets Mon 10a) · opus/wk 41% (resets Tue 3p)
 activity 17h23m · +1,598/-8 lines
 ```
 
@@ -58,14 +58,30 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | `model` | Model name + context-window size, auth mode (`Sub`/`API`), short session id (distinguishes concurrent sessions in one repo) |
 | `project` | Current directory (`~`-shortened), git branch (`@sha` when detached), changed-file count |
 | `context` | Context-window usage bar; green <50%, yellow <80%, red ≥80%, `/compact` badge ≥85% |
-| `limits` | Subscription 5-hour / 7-day utilization (Sub auth only); reset time shown once ≥80% |
+| `account` | ACCOUNT-scope subscription meters (Sub auth only) — see meter table below |
 | `activity` | Session duration and lines added/removed |
+
+The `account` row's meters are all **account-wide percent-of-plan-allotment**
+as reported by the usage API (shared by every session under your
+subscription — two concurrent sessions correctly show the same pools):
+
+| Meter | Window |
+|---|---|
+| `5h N%` | rolling 5-hour, all models |
+| `week N%` | rolling 7-day, all models |
+| `<model>/wk N%` | rolling 7-day pool for **this session's** model family (opus/sonnet/haiku) — a parallel weekly cap, not a slice of `week`; omitted when the payload has no window for the session's model |
+
+Reset times show on every meter by default; `show_resets = "quiet"` restores
+the hot-only (≥80%) behavior.
 
 ## Design notes
 
 - **Provenance:** port of `reference/statusline.sh`, verified byte-identical
-  on the fixture corpus in `testdata/` before the swap. The reference script
-  is kept in-repo as the behavioral spec.
+  on the fixture corpus before any divergence. The byte-parity gate served
+  through the port and local rollout, then retired with the first intentional
+  display change (the `account` row, 2026-07-03); the Go golden tests are the
+  display spec of record, and the reference script is frozen in-repo as the
+  port-era spec and functional rollback.
 - **Shared caches:** uses the same `/tmp/.claude-statusline-cache` files and
   md5-of-cwd keys as the bash reference, so the two can be swapped freely.
 - **Atomic cache writes** (temp file + rename): a bare `>` redirect truncates
@@ -87,13 +103,12 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 ## Develop
 
 ```sh
-make check    # the one gate: lint + vuln + race + cover + build + parity
+make check    # the one gate: lint + vuln + race + cover + build
 make test     # unit tests (all logic is exec/HTTP-injected — no network)
 make lint     # golangci-lint: config schema verify + full run (zero-issue gate)
 make vuln     # govulncheck
 make race     # full suite under the race detector
 make cover    # coverage with an 85% floor (override: COVER_MIN=90 make cover)
-make parity   # byte-identical diff vs reference/statusline.sh on every fixture
 make build    # local binary
 make release  # cross-compile darwin/linux × arm64/amd64 into dist/
 ```
