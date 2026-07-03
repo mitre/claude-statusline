@@ -5,8 +5,9 @@ import (
 	"testing"
 )
 
-// Golden strings in this file are byte-for-byte captures of the reference
-// bash implementation (reference/statusline.sh) verified on 2026-07-03.
+// Golden strings in this file ARE the display spec. Provenance: captured
+// byte-for-byte from the original bash implementation (git history) on
+// 2026-07-03, evolved deliberately since.
 
 const home = "/Users/dev"
 
@@ -44,8 +45,8 @@ func TestModelRowAPIKeyWarning(t *testing.T) {
 }
 
 func TestProjectRow(t *testing.T) {
-	got := ProjectRow("/Users/dev/github/mitre/ts-inspec-profile-parser", home, "main", 2, DefaultOptions())
-	want := "\x1b[2mproject  \x1b[0m\x1b[1m~/github/mitre/ts-inspec-profile-parser\x1b[0m \x1b[2m·\x1b[0m \x1b[34m⎇ main\x1b[0m \x1b[33m~2\x1b[0m"
+	got := ProjectRow("/Users/dev/projects/demo-app", home, "main", 2, DefaultOptions())
+	want := "\x1b[2mproject  \x1b[0m\x1b[1m~/projects/demo-app\x1b[0m \x1b[2m·\x1b[0m \x1b[34m⎇ main\x1b[0m \x1b[33m~2\x1b[0m"
 	if got != want {
 		t.Errorf("ProjectRow:\n got %q\nwant %q", got, want)
 	}
@@ -206,7 +207,7 @@ func TestBuildAssemblesAndCollapses(t *testing.T) {
 	st := State{
 		Model: "Fable 5", CtxSize: 1000000, Auth: "Sub",
 		SessionID: "0a1b2c3d-0000-4000-8000-000000000000",
-		CWD:       "/Users/dev/github/mitre/ts-inspec-profile-parser",
+		CWD:       "/Users/dev/projects/demo-app",
 		Home:      home, Branch: "main", Dirty: 2, CtxPct: 30,
 		Usage:      &Usage{U5: 5, U7: 13},
 		DurationMS: 62580000, LinesAdded: 1598, LinesRemoved: 8,

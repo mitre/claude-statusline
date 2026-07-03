@@ -29,7 +29,7 @@ func TestParseFullSession(t *testing.T) {
 	if s.ModelName != "Fable 5" {
 		t.Errorf("ModelName = %q", s.ModelName)
 	}
-	if s.CWD != "/Users/dev/github/mitre/ts-inspec-profile-parser" {
+	if s.CWD != "/Users/dev/projects/demo-app" {
 		t.Errorf("CWD = %q", s.CWD)
 	}
 	if s.CtxPct != 30 {
