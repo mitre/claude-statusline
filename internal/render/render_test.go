@@ -105,6 +105,40 @@ func TestAccountRow(t *testing.T) {
 	}
 }
 
+func TestAccountRowEmailScopeLabel(t *testing.T) {
+	// The email names WHOSE pools these are — first segment, dimmed, so the
+	// meters keep the visual focus.
+	in := Usage{Email: "dev@example.com", U5: 5, U7: 13}
+	got := AccountRow(in, DefaultOptions())
+	// Default is normal weight (picked via live A/B, 2026-07-03): plain
+	// text — brighter than furniture, quieter than the colored meters.
+	want := "\x1b[2maccount  \x1b[mdev@example.com \x1b[2m·\x1b[m \x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m"
+	if got != want {
+		t.Errorf("AccountRow email(%+v):\n got %q\nwant %q", in, got, want)
+	}
+
+	// Toggle off: byte-identical to the email-less row.
+	opts := DefaultOptions()
+	opts.Account.ShowEmail = false
+	noEmail := "\x1b[2maccount  \x1b[m\x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m"
+	if got := AccountRow(in, opts); got != noEmail {
+		t.Errorf("show_email=false must omit the segment:\n got %q\nwant %q", got, noEmail)
+	}
+
+	// Empty email: omitted entirely — identity is never fabricated.
+	if got := AccountRow(Usage{U5: 5, U7: 13}, DefaultOptions()); got != noEmail {
+		t.Errorf("empty email must render byte-identical to today:\n got %q\nwant %q", got, noEmail)
+	}
+
+	// email_style = "dim": the quiet variant for meter-focused rows.
+	dimOpt := DefaultOptions()
+	dimOpt.Account.EmailDim = true
+	wantDim := "\x1b[2maccount  \x1b[m\x1b[2mdev@example.com\x1b[m \x1b[2m·\x1b[m \x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m"
+	if got := AccountRow(in, dimOpt); got != wantDim {
+		t.Errorf("email_style=dim:\n got %q\nwant %q", got, wantDim)
+	}
+}
+
 func TestAccountRowAlwaysShowsResetsBelowThreshold(t *testing.T) {
 	in := Usage{U5: 5, R5: "1:30p", U7: 13, R7: "Mon 10a"}
 	got := AccountRow(in, DefaultOptions()) // default show_resets = always

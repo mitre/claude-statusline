@@ -183,6 +183,44 @@ func TestLoadProjectGitEngine(t *testing.T) {
 	}
 }
 
+func TestLoadAccountShowEmail(t *testing.T) {
+	dir := t.TempDir()
+	write := func(body string) string {
+		p := filepath.Join(dir, "c.toml")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	cfg, err := Load(write("[account]\nshow_resets = \"always\"\n"))
+	if err != nil || !cfg.Options.Account.ShowEmail {
+		t.Errorf("absent show_email must default to true: err=%v got=%v", err, cfg.Options.Account.ShowEmail)
+	}
+	cfg, err = Load(write("[account]\nshow_email = false\n"))
+	if err != nil || cfg.Options.Account.ShowEmail {
+		t.Errorf("show_email=false: err=%v got=%v", err, cfg.Options.Account.ShowEmail)
+	}
+
+	// email_style enum, show_resets pattern. Default is "normal" — picked
+	// via live A/B comparison (2026-07-03).
+	cfg, err = Load(write("[account]\nshow_email = true\n"))
+	if err != nil || cfg.Options.Account.EmailDim {
+		t.Errorf("absent email_style must default to normal: err=%v got=%v", err, cfg.Options.Account.EmailDim)
+	}
+	cfg, err = Load(write("[account]\nemail_style = \"normal\"\n"))
+	if err != nil || cfg.Options.Account.EmailDim {
+		t.Errorf("email_style=normal: err=%v dim=%v", err, cfg.Options.Account.EmailDim)
+	}
+	cfg, err = Load(write("[account]\nemail_style = \"dim\"\n"))
+	if err != nil || !cfg.Options.Account.EmailDim {
+		t.Errorf("email_style=dim: err=%v dim=%v", err, cfg.Options.Account.EmailDim)
+	}
+	if _, err = Load(write("[account]\nemail_style = \"bold\"\n")); err == nil {
+		t.Error("invalid email_style value must surface an error")
+	}
+}
+
 func TestLoadRejectsMalformedTOML(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "bad.toml")
 	if err := os.WriteFile(p, []byte("rows = [unclosed"), 0o600); err != nil {

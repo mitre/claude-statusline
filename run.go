@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/mitre/claude-statusline/internal/account"
 	"github.com/mitre/claude-statusline/internal/auth"
 	"github.com/mitre/claude-statusline/internal/config"
 	"github.com/mitre/claude-statusline/internal/gitinfo"
@@ -24,6 +25,7 @@ type deps struct {
 	runGit     runGitCtx
 	keychainOK func() error
 	fetchUsage func() ([]byte, error)
+	readFile   func(string) ([]byte, error)
 }
 
 // runGitCtx executes git under a context so a deadline can actually kill the
@@ -97,6 +99,7 @@ func run(d deps) (string, string) {
 		if raw, ok := usage.Resolve(cfg.CacheDir, ttl, time.Now(), d.fetchUsage); ok {
 			family := usage.FamilyFromModelName(sess.ModelName)
 			if u, uerr := usage.Parse(raw, time.Now(), family); uerr == nil {
+				u.Email = account.Email(d.getenv("HOME"), d.readFile)
 				st.Usage = &u
 			}
 		}

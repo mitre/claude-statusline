@@ -27,6 +27,7 @@ func main() {
 		runGit:     runGit,
 		keychainOK: keychainCheck,
 		fetchUsage: fetchUsage,
+		readFile:   os.ReadFile,
 	})
 	if diag != "" {
 		fmt.Fprint(os.Stderr, diag)

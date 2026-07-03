@@ -55,6 +55,12 @@ func e2eDeps(t *testing.T, stdinFixture string) deps {
 		},
 		keychainOK: func() error { return nil },
 		fetchUsage: func() ([]byte, error) { return []byte(e2eUsagePayload), nil },
+		readFile: func(p string) ([]byte, error) {
+			if want := "/Users/dev/.claude.json"; p != want {
+				return nil, fmt.Errorf("unexpected readFile path %q, want %q", p, want)
+			}
+			return []byte(`{"oauthAccount":{"emailAddress":"dev@example.com"}}`), nil
+		},
 	}
 }
 
@@ -64,7 +70,7 @@ func TestRunEndToEndGolden(t *testing.T) {
 		"\x1b[2mmodel    \x1b[m\x1b[1;36mFable 5 1M\x1b[m\x1b[2m · \x1b[m\x1b[32mSub\x1b[m\x1b[2m · session 0a1b2c3d\x1b[m",
 		"\x1b[2mproject  \x1b[m\x1b[1m~/projects/demo-app\x1b[m \x1b[2m·\x1b[m \x1b[34m⎇ main\x1b[m \x1b[33m~2\x1b[m",
 		"\x1b[2mcontext  \x1b[m\x1b[32m▓▓▓░░░░░░░\x1b[m \x1b[32m30%\x1b[m",
-		"\x1b[2maccount  \x1b[m\x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m",
+		"\x1b[2maccount  \x1b[mdev@example.com \x1b[2m·\x1b[m \x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m",
 		"\x1b[2mactivity \x1b[m\x1b[2m17h23m\x1b[m \x1b[2m·\x1b[m \x1b[32m+1,598\x1b[m/\x1b[31m-8\x1b[m \x1b[2mlines\x1b[m",
 	}, "\n")
 	if out != want {
@@ -85,6 +91,11 @@ func TestRunUnparseableStdinRendersNothing(t *testing.T) {
 }
 
 func TestRunMalformedConfigFallsBackToDefaults(t *testing.T) {
+	// The default-config fallback resolves CacheDir via the PROCESS env
+	// (os.UserCacheDir) — sandbox HOME or this test writes fixture data into
+	// the developer's real ~/Library/Caches/claude-statusline (caught live
+	// 2026-07-03: the fixture email surfaced in the real statusline).
+	t.Setenv("HOME", t.TempDir())
 	d := e2eDeps(t, "full.json")
 	bad := filepath.Join(t.TempDir(), "bad.toml")
 	if err := os.WriteFile(bad, []byte("rows = [unclosed"), 0o600); err != nil {

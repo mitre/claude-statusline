@@ -54,6 +54,8 @@ type fileSchema struct {
 	} `toml:"project"`
 	Account struct {
 		ShowResets *string `toml:"show_resets"` // "always" (default) | "quiet"
+		ShowEmail  *bool   `toml:"show_email"`
+		EmailStyle *string `toml:"email_style"` // "normal" (default) | "dim"
 	} `toml:"account"`
 	Usage struct {
 		Enabled    *bool `toml:"enabled"`
@@ -144,6 +146,17 @@ func Load(path string) (Config, error) {
 			cfg.Options.Account.AlwaysShowResets = false
 		default:
 			return cfg, fmt.Errorf("account.show_resets: %q is not valid (use \"always\" or \"quiet\")", *f.Account.ShowResets)
+		}
+	}
+	setB(&cfg.Options.Account.ShowEmail, f.Account.ShowEmail)
+	if f.Account.EmailStyle != nil {
+		switch *f.Account.EmailStyle {
+		case "dim":
+			cfg.Options.Account.EmailDim = true
+		case "normal":
+			cfg.Options.Account.EmailDim = false
+		default:
+			return cfg, fmt.Errorf("account.email_style: %q is not valid (use \"dim\" or \"normal\")", *f.Account.EmailStyle)
 		}
 	}
 	setB(&cfg.Usage.Enabled, f.Usage.Enabled)

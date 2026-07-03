@@ -31,8 +31,10 @@ var (
 // sepDot is the dim mid-dot row separator with outer spaces.
 var sepDot = " " + dimS.Render("·") + " "
 
-// Usage holds account-limit data extracted by the usage package.
+// Usage holds the account row's view data: limit windows extracted by the
+// usage package, plus the account email resolved by the account package.
 type Usage struct {
+	Email        string // logged-in account email, "" = segment omitted
 	U5, U7       int    // five-hour / seven-day utilization percent
 	R5, R7       string // local-time reset labels, "" when absent
 	ModelFamily  string // session model's family (opus/sonnet/haiku), "" = no window
@@ -78,6 +80,13 @@ type Options struct {
 		// "always", the default); false = only once a window runs hot >=80%
 		// (config "quiet" — quiet is not never).
 		AlwaysShowResets bool
+		// ShowEmail renders the account email as the row's first segment —
+		// it names whose pools the meters describe.
+		ShowEmail bool
+		// EmailDim: true = dim identity label (config "dim"); false = plain
+		// terminal-default weight (config "normal", the default — picked via
+		// live A/B, 2026-07-03).
+		EmailDim bool
 	}
 }
 
@@ -88,6 +97,8 @@ func DefaultOptions() Options {
 	o.Model.ShowAuth, o.Model.ShowSession, o.Model.ShowContextSize = true, true, true
 	o.Project.ShowBranch, o.Project.ShowDirty, o.Project.TildeHome = true, true, true
 	o.Account.AlwaysShowResets = true
+	o.Account.ShowEmail = true
+	o.Account.EmailDim = false
 	return o
 }
 
@@ -195,10 +206,18 @@ func meter(text string, pct int, reset string, alwaysShowReset bool) string {
 // not a subset of the week meter.
 func AccountRow(u Usage, o Options) string {
 	always := o.Account.AlwaysShowResets
-	parts := []string{
+	var parts []string
+	if o.Account.ShowEmail && u.Email != "" {
+		e := u.Email
+		if o.Account.EmailDim {
+			e = dimS.Render(e)
+		}
+		parts = append(parts, e)
+	}
+	parts = append(parts,
 		meter(fmt.Sprintf("5h %d%%", u.U5), u.U5, u.R5, always),
 		meter(fmt.Sprintf("week %d%%", u.U7), u.U7, u.R7, always),
-	}
+	)
 	if u.ModelFamily != "" {
 		parts = append(parts, meter(fmt.Sprintf("%s/wk %d%%", u.ModelFamily, u.ModelPct), u.ModelPct, u.ModelReset, always))
 	}

@@ -7,7 +7,7 @@
 #   model    Fable 5 1M · Sub · session 0a1b2c3d
 #   project  ~/projects/demo-app · ⎇ main ~2
 #   context  ▓▓▓░░░░░░░ 30%
-#   account  5h 5% · week 13%
+#   account  dev@example.com · 5h 5% · week 13%
 #   activity 17h23m · +1,598/-8 lines
 
 # Whole rows. A disabled row disappears entirely.
@@ -42,6 +42,12 @@ git_engine = "auto"
 
 # Account-scope meters row (Sub auth only).
 [account]
+# Logged-in account email as the row's first segment — names whose pools
+# the meters describe. Read from ~/.claude.json; omitted when absent.
+show_email = true
+# "normal" (default): regular weight. "dim": fade it into the furniture
+# tier with the session id and reset labels.
+email_style = "normal"
 # "always" (default): reset times shown on every meter.
 # "quiet": reset times appear only once a window is running hot (>=80%) —
 #          quiet is NOT never.
