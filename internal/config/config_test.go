@@ -221,6 +221,26 @@ func TestLoadAccountShowEmail(t *testing.T) {
 	}
 }
 
+func TestLoadAccountShowStaleAge(t *testing.T) {
+	dir := t.TempDir()
+	write := func(body string) string {
+		p := filepath.Join(dir, "c.toml")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	cfg, err := Load(write("[account]\nshow_resets = \"always\"\n"))
+	if err != nil || !cfg.Options.Account.ShowStaleAge {
+		t.Errorf("absent show_stale_age must default to true: err=%v got=%v", err, cfg.Options.Account.ShowStaleAge)
+	}
+	cfg, err = Load(write("[account]\nshow_stale_age = false\n"))
+	if err != nil || cfg.Options.Account.ShowStaleAge {
+		t.Errorf("show_stale_age=false: err=%v got=%v", err, cfg.Options.Account.ShowStaleAge)
+	}
+}
+
 func TestLoadRejectsMalformedTOML(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "bad.toml")
 	if err := os.WriteFile(p, []byte("rows = [unclosed"), 0o600); err != nil {

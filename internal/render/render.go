@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	lg "charm.land/lipgloss/v2"
 )
@@ -44,6 +45,11 @@ type Usage struct {
 	CreditsMinor int // spend in minor units
 	CreditsExp   int // exponent for minor units (2 → cents)
 	MaxActive    int // max percent among active plan limits
+	// DataAge is the served payload's age when the stale-good fallback is
+	// engaged (fetches failing, old data served); zero on the fresh paths.
+	// Non-zero renders the trailing dim age marker — the meters keep their
+	// true (old) values, the marker qualifies them.
+	DataAge time.Duration
 }
 
 // State is everything the renderer needs for one frame.
@@ -87,6 +93,10 @@ type Options struct {
 		// terminal-default weight (config "normal", the default — picked via
 		// live A/B, 2026-07-03).
 		EmailDim bool
+		// ShowStaleAge renders the dim data-age marker when the stale-good
+		// fallback is serving (default on — it only appears in a degraded
+		// state worth knowing about).
+		ShowStaleAge bool
 	}
 }
 
@@ -99,6 +109,7 @@ func DefaultOptions() Options {
 	o.Account.AlwaysShowResets = true
 	o.Account.ShowEmail = true
 	o.Account.EmailDim = false
+	o.Account.ShowStaleAge = true
 	return o
 }
 
@@ -221,7 +232,29 @@ func AccountRow(u Usage, o Options) string {
 	if u.ModelFamily != "" {
 		parts = append(parts, meter(fmt.Sprintf("%s/wk %d%%", u.ModelFamily, u.ModelPct), u.ModelPct, u.ModelReset, always))
 	}
+	if u.DataAge > 0 && o.Account.ShowStaleAge {
+		// Stale-good fallback engaged: qualify the meters with a factual,
+		// dim age — informational tier, never alarm styling (red stays
+		// reserved for billing/API alarms).
+		parts = append(parts, dimS.Render("(data "+ageLabel(u.DataAge)+" old)"))
+	}
 	return lbl("account") + strings.Join(parts, sepDot)
+}
+
+// ageLabel formats a data age at minute granularity in the activity row's
+// compact unit style ("1h6m", "6m"; sub-minute ages stay factual as "45s").
+// Seconds are deliberately dropped above a minute — an age marker must not
+// tick on every render, and "how stale" is a minutes-scale question.
+func ageLabel(age time.Duration) string {
+	ts := int64(age.Seconds())
+	switch {
+	case ts >= 3600:
+		return fmt.Sprintf("%dh%dm", ts/3600, (ts%3600)/60)
+	case ts >= 60:
+		return fmt.Sprintf("%dm", ts/60)
+	default:
+		return fmt.Sprintf("%ds", ts)
+	}
 }
 
 // ActivityRow renders session duration and code churn; collapses when idle.

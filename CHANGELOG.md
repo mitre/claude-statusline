@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Stale-data age marker on the account row** — when the usage fetch fails
+  and the last known-good payload is served instead, the row now says so: a
+  trailing dim `(data 6m old)` shows the served payload's factual age
+  (minute granularity, in the activity row's compact unit style). The meters
+  keep their true — old — values; nothing is zeroed or hidden, and the
+  marker never uses alarm styling. It disappears on the first successful
+  fetch; `[account] show_stale_age = false` hides it. Previously this state
+  was indistinguishable from fresh data without reading cache file mtimes.
 - **Account email on the account row** — the row now opens with the
   logged-in email as a scope label (regular weight; `email_style = "dim"` available) (`account dev@example.com · 5h 5% …`),
   naming whose pools the meters describe. Sourced from Claude Code's local

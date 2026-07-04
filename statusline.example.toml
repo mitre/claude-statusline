@@ -52,6 +52,11 @@ email_style = "normal"
 # "quiet": reset times appear only once a window is running hot (>=80%) —
 #          quiet is NOT never.
 show_resets = "always"
+# When the usage endpoint can't be reached and the last known-good payload
+# is served instead, a trailing dim "(data 6m old)" marks the served
+# payload's age. false hides the marker (the meters still show the stale
+# values either way — the marker only names their age).
+show_stale_age = true
 
 # Usage-endpoint fetching for the account row.
 [usage]

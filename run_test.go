@@ -239,3 +239,69 @@ func TestRunFetchFailureCollapsesLimitsRow(t *testing.T) {
 		t.Errorf("account row rendered without data (fabricated zeros?): %q", out)
 	}
 }
+
+// e2eCacheDir reads the [cache] dir back out of the config file e2eDeps
+// wrote — the same file run() resolves, so a test can seed the exact cache
+// the render will read.
+func e2eCacheDir(t *testing.T, d deps) string {
+	t.Helper()
+	b, err := os.ReadFile(d.getenv("CLAUDE_STATUSLINE_CONFIG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if rest, ok := strings.CutPrefix(line, `dir = "`); ok {
+			return strings.TrimSuffix(rest, `"`)
+		}
+	}
+	t.Fatal("no cache dir in e2e config")
+	return ""
+}
+
+func TestRunStaleUsageDataShowsDimAgeMarker(t *testing.T) {
+	// Fetches failing + an expired good payload in the cache: the stale-good
+	// fallback serves it, and the account row must say so — a trailing dim,
+	// factual age. The meters keep their true (old) values. Before this
+	// marker, this state was indistinguishable from fresh data without
+	// reading cache mtimes (the 2:00p diagnosis, 2026-07-03).
+	d := e2eDeps(t, "full.json")
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+
+	p := filepath.Join(e2eCacheDir(t, d), "usage")
+	if err := os.WriteFile(p, []byte(e2eUsagePayload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-6 * time.Minute) // past the default 180s TTL
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _ := run(d)
+	want := "\x1b[2maccount  \x1b[mdev@example.com \x1b[2m·\x1b[m \x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m \x1b[2m·\x1b[m \x1b[2m(data 6m old)\x1b[m"
+	if !strings.Contains(out, want) {
+		t.Errorf("stale-good serve must carry the dim age marker:\n got %q\nwant row %q", out, want)
+	}
+}
+
+func TestRunStaleAgeMarkerToggleOff(t *testing.T) {
+	// [account] show_stale_age = false: same stale-good serve, no marker —
+	// proves the config→render wiring, not just the Options field.
+	d := e2eDeps(t, "full.json")
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+	appendConfig(t, d, "[account]\nshow_stale_age = false\n")
+
+	p := filepath.Join(e2eCacheDir(t, d), "usage")
+	if err := os.WriteFile(p, []byte(e2eUsagePayload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-6 * time.Minute)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _ := run(d)
+	want := "\x1b[2maccount  \x1b[mdev@example.com \x1b[2m·\x1b[m \x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m"
+	if !strings.Contains(out, want) || strings.Contains(out, "old)") {
+		t.Errorf("show_stale_age=false must serve stale meters without the marker:\n got %q\nwant row %q", out, want)
+	}
+}

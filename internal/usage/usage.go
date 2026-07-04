@@ -133,22 +133,40 @@ func resetLabel(iso string, now time.Time) string {
 
 // Resolve returns a usage payload: fresh cache if young enough, else a live
 // fetch (cached only when shape-valid), else the last good cache regardless
-// of age. ok=false means no usable data — the limits row must collapse.
-func Resolve(cacheDir string, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) ([]byte, bool) {
+// of age. staleFor is the served payload's age when that last stale-good
+// fallback is engaged — the fetch failed (or returned an error body) and old
+// data is being served — and zero on the fresh paths; the render layer keys
+// its dim age marker on it. ok=false means no usable data — the limits row
+// must collapse.
+func Resolve(cacheDir string, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) (raw []byte, staleFor time.Duration, ok bool) {
 	p := filepath.Join(cacheDir, "usage")
 	if s, ok := cache.ReadFresh(p, ttl); ok && !boundaryExpired(p, []byte(s), now) {
-		return []byte(s), true
+		return []byte(s), 0, true
 	}
 	if b, err := fetch(); err == nil {
 		if _, perr := Parse(b, now, ""); perr == nil {
 			_ = cache.Write(p, string(b))
-			return b, true
+			return b, 0, true
 		}
 	}
 	if s, ok := cache.ReadStale(p); ok {
-		return []byte(s), true
+		return []byte(s), staleAge(p, now), true
 	}
-	return nil, false
+	return nil, 0, false
+}
+
+// staleAge is the age of a fallback-served cache file: now minus its mtime,
+// clamped at zero — an unstat-able file or a future mtime (clock skew)
+// reports no age rather than a fabricated one, so no marker renders.
+func staleAge(path string, now time.Time) time.Duration {
+	st, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	if age := now.Sub(st.ModTime()); age > 0 {
+		return age
+	}
+	return 0
 }
 
 // boundaryExpired reports whether a TTL-fresh cached payload is provably

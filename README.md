@@ -79,6 +79,12 @@ subscription — two concurrent sessions correctly show the same pools):
 Reset times show on every meter by default; `show_resets = "quiet"` restores
 the hot-only (≥80%) behavior.
 
+When the usage endpoint can't be reached, the row serves the last
+known-good payload and says so: a trailing dim `(data 6m old)` marker shows
+the served payload's age, clearing on the first successful fetch. The
+meters keep their true (old) values — the marker qualifies the data, it
+never censors it. `show_stale_age = false` hides the marker.
+
 ## Design notes
 
 - **Provenance:** began as a port of a bash statusline, verified
@@ -111,7 +117,9 @@ the hot-only (≥80%) behavior.
   that silently ate the dirty badge in the bash version.
 - **No fabricated zeros:** the usage endpoint's rate-limit error bodies are
   valid JSON; they are rejected by shape, never cached, and a failed fetch
-  serves the last *good* payload instead of rendering `0%`.
+  serves the last *good* payload instead of rendering `0%` — marked with a
+  dim factual age (`(data 6m old)`) so stale-but-true is never mistaken for
+  fresh.
 - **Styling** goes through lipgloss v2 (`charm.land/lipgloss/v2`) with the
   ANSI 16-color palette, and the output is deliberately
   environment-independent: a statusline is always piped and the host

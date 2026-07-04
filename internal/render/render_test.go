@@ -3,6 +3,7 @@ package render
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // Golden strings in this file ARE the display spec. Provenance: captured
@@ -186,6 +187,57 @@ func TestAccountRowOmitsUnknownModelFamily(t *testing.T) {
 	got := AccountRow(Usage{U5: 28, U7: 18, ModelFamily: ""}, DefaultOptions())
 	if strings.Contains(got, "/wk") || strings.Contains(got, "0%") && strings.Count(got, "%") > 2 {
 		t.Errorf("model segment rendered without data: %q", got)
+	}
+}
+
+func TestAccountRowStaleDataAgeMarker(t *testing.T) {
+	// Stale-good fallback engaged (fetches failing, old payload served): a
+	// trailing dim, factual age qualifies the meters. The meters keep their
+	// true (old) values — the marker informs, it never censors.
+	in := Usage{U5: 55, R5: "3:00p", U7: 18, DataAge: 6 * time.Minute}
+	got := AccountRow(in, DefaultOptions())
+	want := "\x1b[2maccount  \x1b[m\x1b[33m5h 55%\x1b[m \x1b[2m(resets 3:00p)\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 18%\x1b[m \x1b[2m·\x1b[m \x1b[2m(data 6m old)\x1b[m"
+	if got != want {
+		t.Errorf("AccountRow stale(%+v):\n got %q\nwant %q", in, got, want)
+	}
+
+	// Fresh payload (DataAge zero): byte-identical to today — zero visual
+	// change in the healthy path.
+	in.DataAge = 0
+	fresh := "\x1b[2maccount  \x1b[m\x1b[33m5h 55%\x1b[m \x1b[2m(resets 3:00p)\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 18%\x1b[m"
+	if got := AccountRow(in, DefaultOptions()); got != fresh {
+		t.Errorf("fresh payload must render byte-identical to today:\n got %q\nwant %q", got, fresh)
+	}
+
+	// show_stale_age = false: marker suppressed even while stale — the row
+	// renders byte-identical to the fresh form (owner-requested toggle,
+	// 2026-07-03; default stays on).
+	off := DefaultOptions()
+	off.Account.ShowStaleAge = false
+	in.DataAge = 6 * time.Minute
+	if got := AccountRow(in, off); got != fresh {
+		t.Errorf("show_stale_age=false must suppress the marker:\n got %q\nwant %q", got, fresh)
+	}
+}
+
+func TestAgeLabel(t *testing.T) {
+	// Minute granularity in the activity row's compact unit style — an age
+	// marker must not tick seconds across renders; sub-minute ages stay
+	// factual instead of a false "0m".
+	cases := []struct {
+		age  time.Duration
+		want string
+	}{
+		{45 * time.Second, "45s"},
+		{6 * time.Minute, "6m"},
+		{6*time.Minute + 32*time.Second, "6m"},
+		{66 * time.Minute, "1h6m"},
+		{3 * time.Hour, "3h0m"},
+	}
+	for _, c := range cases {
+		if got := ageLabel(c.age); got != c.want {
+			t.Errorf("ageLabel(%v) = %q, want %q", c.age, got, c.want)
+		}
 	}
 }
 

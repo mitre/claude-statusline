@@ -53,9 +53,10 @@ type fileSchema struct {
 		GitEngine    *string `toml:"git_engine"`     // auto | gogit | cli
 	} `toml:"project"`
 	Account struct {
-		ShowResets *string `toml:"show_resets"` // "always" (default) | "quiet"
-		ShowEmail  *bool   `toml:"show_email"`
-		EmailStyle *string `toml:"email_style"` // "normal" (default) | "dim"
+		ShowResets   *string `toml:"show_resets"` // "always" (default) | "quiet"
+		ShowEmail    *bool   `toml:"show_email"`
+		EmailStyle   *string `toml:"email_style"` // "normal" (default) | "dim"
+		ShowStaleAge *bool   `toml:"show_stale_age"`
 	} `toml:"account"`
 	Usage struct {
 		Enabled    *bool `toml:"enabled"`
@@ -149,6 +150,7 @@ func Load(path string) (Config, error) {
 		}
 	}
 	setB(&cfg.Options.Account.ShowEmail, f.Account.ShowEmail)
+	setB(&cfg.Options.Account.ShowStaleAge, f.Account.ShowStaleAge)
 	if f.Account.EmailStyle != nil {
 		switch *f.Account.EmailStyle {
 		case "dim":

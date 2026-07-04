@@ -96,10 +96,11 @@ func run(d deps) (string, string) {
 
 	if cfg.Usage.Enabled && badge == "Sub" {
 		ttl := time.Duration(cfg.Usage.TTLSeconds) * time.Second
-		if raw, ok := usage.Resolve(cfg.CacheDir, ttl, time.Now(), d.fetchUsage); ok {
+		if raw, staleFor, ok := usage.Resolve(cfg.CacheDir, ttl, time.Now(), d.fetchUsage); ok {
 			family := usage.FamilyFromModelName(sess.ModelName)
 			if u, uerr := usage.Parse(raw, time.Now(), family); uerr == nil {
 				u.Email = account.Email(d.getenv("HOME"), d.readFile)
+				u.DataAge = staleFor
 				st.Usage = &u
 			}
 		}
