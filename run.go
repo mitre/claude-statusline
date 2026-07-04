@@ -84,11 +84,13 @@ func run(d deps) (string, string) {
 
 	if sess.CWD != "" {
 		deadline := time.Duration(cfg.GitTimeoutMS) * time.Millisecond
-		st.Branch, st.Dirty = gitinfo.Get(gitinfo.Options{
-			CacheDir: cfg.CacheDir,
-			Run:      withGitDeadline(d.runGit, deadline),
-			Engine:   cfg.GitEngine,
-			Budget:   deadline,
+		st.Branch, st.Dirty, st.LockAge = gitinfo.Get(gitinfo.Options{
+			CacheDir:       cfg.CacheDir,
+			Run:            withGitDeadline(d.runGit, deadline),
+			Engine:         cfg.GitEngine,
+			Budget:         deadline,
+			LockBadge:      cfg.LockBadge,
+			LockBadgeAfter: time.Duration(cfg.LockBadgeAfterS) * time.Second,
 		}, sess.CWD)
 	} else {
 		st.Branch = "?"

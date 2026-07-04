@@ -221,6 +221,36 @@ func TestLoadAccountShowEmail(t *testing.T) {
 	}
 }
 
+func TestLoadProjectLockBadge(t *testing.T) {
+	dir := t.TempDir()
+	write := func(body string) string {
+		p := filepath.Join(dir, "c.toml")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	// Defaults: badge on, threshold 300 s (research 2026-07-03: no
+	// established age convention exists in other tooling — git never
+	// auto-expires index.lock — so the conservative proposal stands).
+	cfg, err := Load(write("[project]\ntilde_home = true\n"))
+	if err != nil || !cfg.LockBadge || cfg.LockBadgeAfterS != 300 {
+		t.Errorf("defaults: err=%v badge=%v after=%d; want true, 300", err, cfg.LockBadge, cfg.LockBadgeAfterS)
+	}
+	cfg, err = Load(write("[project]\nlock_badge = false\n"))
+	if err != nil || cfg.LockBadge {
+		t.Errorf("lock_badge=false: err=%v got=%v", err, cfg.LockBadge)
+	}
+	cfg, err = Load(write("[project]\nlock_badge_after_s = 60\n"))
+	if err != nil || cfg.LockBadgeAfterS != 60 {
+		t.Errorf("lock_badge_after_s=60: err=%v got=%d", err, cfg.LockBadgeAfterS)
+	}
+	if _, err = Load(write("[project]\nlock_badge_after_s = -1\n")); err == nil {
+		t.Error("negative lock_badge_after_s must surface an error")
+	}
+}
+
 func TestLoadAccountShowStaleAge(t *testing.T) {
 	dir := t.TempDir()
 	write := func(body string) string {

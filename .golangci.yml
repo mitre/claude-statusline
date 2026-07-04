@@ -27,6 +27,14 @@ linters:
       - path: internal/config/
         linters: [gosec]
         text: "G304"
+      # gitinfo's lock-badge discovery opens the repo-layout ".git" pointer
+      # file — a fixed basename joined to ancestors of the host-provided
+      # workspace path, read bounded to 8 KiB. Resolving its "gitdir:"
+      # indirection IS the feature; the content is never executed or
+      # emitted, it only selects which index.lock gets stat()ed.
+      - path: internal/gitinfo/
+        linters: [gosec]
+        text: "G304"
       # runGit's purpose is executing git with a variable working directory.
       # Arguments are compile-time constants from internal/gitinfo; the dir is
       # the host-provided workspace path. No shell is involved (direct exec).

@@ -12,6 +12,8 @@ package gitinfo
 import (
 	"fmt"
 	"hash/fnv"
+	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -40,13 +42,23 @@ type Options struct {
 	Engine   string        // "auto" (default), "gogit", "cli"
 	Budget   time.Duration // in-process read budget; <= 0 disables the bound
 
+	// LockBadge enables the index.lock age check (one os.Stat, both
+	// engines); LockBadgeAfter is the strictly-greater-than age threshold
+	// below which a present lock stays silent — a lock is often legitimate
+	// (any index write; an editor-open commit holds it for minutes).
+	LockBadge      bool
+	LockBadgeAfter time.Duration
+
 	// inproc is the in-process reader seam for tests; nil means go-git.
 	inproc func(cwd string) (string, int, error)
+	// now is the clock seam for tests; nil means time.Now.
+	now func() time.Time
 }
 
-// Get returns the branch label ("?" when unknown, "@<sha>" when detached)
-// and the dirty-file count for cwd, maintaining the per-directory caches.
-func Get(o Options, cwd string) (string, int) {
+// Get returns the branch label ("?" when unknown, "@<sha>" when detached),
+// the dirty-file count, and — when enabled and strictly past the threshold —
+// the age of a held .git/index.lock, maintaining the per-directory caches.
+func Get(o Options, cwd string) (string, int, time.Duration) {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(cwd)) // hash.Hash.Write never returns an error
 	key := fmt.Sprintf("%x", h.Sum64())
@@ -62,10 +74,77 @@ func Get(o Options, cwd string) (string, int) {
 			engine = "gogit"
 		}
 	}
+	var branch string
+	var dirty int
 	if engine == "cli" {
-		return cliGet(o.Run, cwd, branchPath, dirtyPath)
+		branch, dirty = cliGet(o.Run, cwd, branchPath, dirtyPath)
+	} else {
+		branch, dirty = inprocGet(o, cwd, branchPath, dirtyPath, markerPath)
 	}
-	return inprocGet(o, cwd, branchPath, dirtyPath, markerPath)
+	return branch, dirty, lockAge(o, cwd)
+}
+
+// lockAge reports how long .git/index.lock has been held once strictly past
+// the threshold; zero otherwise (absent, young, disabled, or non-repo cwd).
+// Engine-independent by design: an escalated huge repo is the most likely
+// home of a long operation. Pure filesystem — never a subprocess, never a
+// lock taken, exactly one os.Stat of index.lock itself.
+func lockAge(o Options, cwd string) time.Duration {
+	if !o.LockBadge {
+		return 0
+	}
+	gitdir := discoverGitDir(cwd)
+	if gitdir == "" {
+		return 0
+	}
+	st, err := os.Stat(filepath.Join(gitdir, "index.lock"))
+	if err != nil {
+		return 0
+	}
+	now := time.Now
+	if o.now != nil {
+		now = o.now
+	}
+	if age := now().Sub(st.ModTime()); age > o.LockBadgeAfter {
+		return age
+	}
+	return 0
+}
+
+// discoverGitDir resolves the git dir governing cwd per
+// gitrepository-layout(5): walk ancestors for ".git"; a directory IS the git
+// dir, a file names it ("gitdir: <path>", absolute or relative to the file's
+// own directory — the linked-worktree and submodule form, whose private git
+// dir is where that worktree's index and index.lock live). Empty when cwd is
+// outside any repository or the pointer file is malformed.
+func discoverGitDir(cwd string) string {
+	for dir := cwd; ; dir = filepath.Dir(dir) {
+		p := filepath.Join(dir, ".git")
+		if st, err := os.Stat(p); err == nil {
+			if st.IsDir() {
+				return p
+			}
+			b, err := readPointerFile(p)
+			if err != nil {
+				return ""
+			}
+			target, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir:")
+			if !ok {
+				return ""
+			}
+			target = strings.TrimSpace(target)
+			if target == "" {
+				return ""
+			}
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(dir, target)
+			}
+			return target
+		}
+		if filepath.Dir(dir) == dir {
+			return ""
+		}
+	}
 }
 
 // inprocGet reads via the in-process engine under the budget. On overrun it
@@ -193,6 +272,21 @@ func liveBranch(cwd string, run RunGit) string {
 		return ""
 	}
 	return "@" + strings.TrimSpace(sha)
+}
+
+// readPointerFile reads a ".git" pointer file, bounded to 8 KiB — one
+// "gitdir: <path>" line tops out at PATH_MAX scale, and the workspace path
+// is untrusted input: a planted oversized file must not balloon a render.
+func readPointerFile(p string) ([]byte, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 8192))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return b, err
 }
 
 func staleBranch(branchPath string) string {

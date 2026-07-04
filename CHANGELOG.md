@@ -38,6 +38,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Long-held `index.lock` badge on the project row** — when
+  `.git/index.lock` has been held longer than `[project]
+  lock_badge_after_s` (default 300 s; research found no established age
+  convention in other tooling — git itself never expires the lock), the
+  project row shows a yellow factual badge: `⚠ index.lock 14m`. Facts only,
+  by design: a present lock is often legitimate (an editor-open `git
+  commit` holds it for minutes), so there is no "stale" verdict, no removal
+  command, and nothing is ever deleted. Detection is engine-independent and
+  pure filesystem — an ancestor walk to the repository's git dir (following
+  worktree/submodule `gitdir:` pointer files to the worktree's private git
+  dir, where its own index.lock lives) plus one `stat`; no subprocess, no
+  lock taken. `lock_badge = false` disables it. Motivated by a live
+  incident: a concurrent session's SIGKILLed `git status` stranded a
+  zero-byte lock that silently blocked commits.
 - **Stale-data age marker on the account row** — when the usage fetch fails
   and the last known-good payload is served instead, the row now says so: a
   trailing dim `(data 6m old)` shows the served payload's factual age

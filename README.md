@@ -56,10 +56,20 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | Row | Content |
 |-----|---------|
 | `model` | Model name + context-window size, auth mode (`Sub`/`API`), short session id (distinguishes concurrent sessions in one repo) |
-| `project` | Current directory (`~`-shortened), git branch (`@sha` when detached), changed-file count |
+| `project` | Current directory (`~`-shortened), git branch (`@sha` when detached), changed-file count, long-held `index.lock` age badge |
 | `context` | Context-window usage bar; green <50%, yellow <80%, red ≥80%, `/compact` badge ≥85% |
 | `account` | ACCOUNT-scope subscription meters (Sub auth only) — see meter table below |
 | `activity` | Session duration and lines added/removed |
+
+When `.git/index.lock` has been held longer than `[project]
+lock_badge_after_s` (default 300 s), the project row shows a yellow factual
+badge — `⚠ index.lock 14m`. It reports the observable age only: a present
+lock is often **legitimate** (any index write takes it; a `git commit` with
+an editor open holds it for minutes, a large rebase longer), so the badge is
+information, never an instruction — no "stale" verdict, no removal command,
+and nothing is ever deleted automatically. Detection is one `stat` of the
+repository's own git dir (worktrees resolve to their private git dir), no
+subprocess, no lock taken. `lock_badge = false` hides it.
 
 The `account` row opens with the logged-in **account email** — it names
 whose pools the meters describe, which matters when you run multiple

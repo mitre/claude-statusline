@@ -283,6 +283,55 @@ func TestRunStaleUsageDataShowsDimAgeMarker(t *testing.T) {
 	}
 }
 
+func TestRunIndexLockBadgeWiring(t *testing.T) {
+	// A repo cwd holding a 14-minute index.lock (past the 300 s default)
+	// must surface the yellow factual badge on the project row — proves the
+	// config default → gitinfo threshold → render wiring end-to-end.
+	d := e2eDeps(t, "full.json")
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(repo, ".git", "index.lock")
+	if err := os.WriteFile(lock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	held := time.Now().Add(-14 * time.Minute)
+	if err := os.Chtimes(lock, held, held); err != nil {
+		t.Fatal(err)
+	}
+	d.stdin = strings.NewReader(`{"session_id":"0a1b2c3d-0000-4000-8000-000000000000",` +
+		`"model":{"display_name":"Fable 5"},"workspace":{"current_dir":"` + repo + `"},` +
+		`"context_window":{"used_percentage":30,"context_window_size":1000000},` +
+		`"cost":{"total_lines_added":0,"total_lines_removed":0,"total_duration_ms":0}}`)
+
+	out, errOut := run(d)
+	if errOut != "" {
+		t.Fatalf("config must parse cleanly (a fallback would silently test defaults against the REAL cache): %q", errOut)
+	}
+	badge := " \x1b[33m⚠ index.lock 14m\x1b[m"
+	if !strings.Contains(out, badge) {
+		t.Errorf("project row must carry the lock badge:\n got %q\nwant fragment %q", out, badge)
+	}
+
+	// lock_badge = false: same lock, badge gone — the toggle reaches gitinfo.
+	// The e2e config already holds an open [project] table — append the bare
+	// key (a second [project] header is a TOML duplicate-table error).
+	d2 := e2eDeps(t, "full.json")
+	appendConfig(t, d2, "lock_badge = false\n")
+	d2.stdin = strings.NewReader(`{"session_id":"0a1b2c3d-0000-4000-8000-000000000000",` +
+		`"model":{"display_name":"Fable 5"},"workspace":{"current_dir":"` + repo + `"},` +
+		`"context_window":{"used_percentage":30,"context_window_size":1000000},` +
+		`"cost":{"total_lines_added":0,"total_lines_removed":0,"total_duration_ms":0}}`)
+	out, errOut = run(d2)
+	if errOut != "" {
+		t.Fatalf("config must parse cleanly: %q", errOut)
+	}
+	if strings.Contains(out, "index.lock") {
+		t.Errorf("lock_badge=false must suppress the badge: %q", out)
+	}
+}
+
 func TestRunStaleAgeMarkerToggleOff(t *testing.T) {
 	// [account] show_stale_age = false: same stale-good serve, no marker —
 	// proves the config→render wiring, not just the Options field.

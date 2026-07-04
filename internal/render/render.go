@@ -54,14 +54,17 @@ type Usage struct {
 
 // State is everything the renderer needs for one frame.
 type State struct {
-	Model        string
-	CtxSize      int
-	Auth         string // "Sub", "API", "?"
-	SessionID    string
-	CWD          string
-	Home         string
-	Branch       string
-	Dirty        int
+	Model     string
+	CtxSize   int
+	Auth      string // "Sub", "API", "?"
+	SessionID string
+	CWD       string
+	Home      string
+	Branch    string
+	Dirty     int
+	// LockAge is how long .git/index.lock has been held, already past the
+	// configured threshold (gitinfo applies it); zero renders no badge.
+	LockAge      time.Duration
 	CtxPct       int
 	Usage        *Usage // nil → limits row collapses
 	DurationMS   int64
@@ -152,8 +155,9 @@ func ModelRow(model string, ctxSize int, auth, sessionID, extraBadge string, api
 	return row
 }
 
-// ProjectRow renders the tilde-shortened cwd, branch glyph, and dirty count.
-func ProjectRow(cwd, home, branch string, dirty int, o Options) string {
+// ProjectRow renders the tilde-shortened cwd, branch glyph, dirty count, and
+// the long-held index.lock badge.
+func ProjectRow(cwd, home, branch string, dirty int, lockAge time.Duration, o Options) string {
 	path := cwd
 	if o.Project.TildeHome && home != "" && strings.HasPrefix(path, home) {
 		path = "~" + strings.TrimPrefix(path, home)
@@ -164,6 +168,13 @@ func ProjectRow(cwd, home, branch string, dirty int, o Options) string {
 	}
 	if o.Project.ShowDirty && dirty > 0 {
 		row += " " + ylwS.Render(fmt.Sprintf("~%d", dirty))
+	}
+	if lockAge > 0 {
+		// Factual age of a long-held .git/index.lock — information, never an
+		// instruction: the lock may be legitimately held (editor-open commit,
+		// live rebase), so no "stale" verdict and no removal command, and
+		// yellow rather than the alarm tier.
+		row += " " + ylwS.Render("⚠ index.lock "+ageLabel(lockAge))
 	}
 	return row
 }
@@ -330,7 +341,7 @@ func Build(st State, o Options) string {
 		extra = ExtraBadge(*st.Usage)
 	}
 	add(o.Rows.Model, ModelRow(st.Model, st.CtxSize, st.Auth, st.SessionID, extra, st.APIKeySet, o))
-	add(o.Rows.Project, ProjectRow(st.CWD, st.Home, st.Branch, st.Dirty, o))
+	add(o.Rows.Project, ProjectRow(st.CWD, st.Home, st.Branch, st.Dirty, st.LockAge, o))
 	add(o.Rows.Context, ContextRow(st.CtxPct))
 	if st.Usage != nil {
 		add(o.Rows.Account, AccountRow(*st.Usage, o))

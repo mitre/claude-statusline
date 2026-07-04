@@ -56,7 +56,7 @@ func TestDefaultEngineReadsInProcessWithoutSubprocess(t *testing.T) {
 		t.Error("CLI git invoked on the default in-process path")
 		return "", errors.New("unreachable")
 	}
-	branch, dirty := Get(Options{CacheDir: t.TempDir(), Run: fatalRun, Budget: time.Second}, repoDir)
+	branch, dirty, _ := Get(Options{CacheDir: t.TempDir(), Run: fatalRun, Budget: time.Second}, repoDir)
 	if branch != "master" || dirty != 1 {
 		t.Errorf("in-process Get = %q, %d; want master, 1", branch, dirty)
 	}
@@ -94,7 +94,7 @@ func TestInProcessDirtyCountMatchesPorcelainSemantics(t *testing.T) {
 		t.Error("CLI git invoked on the in-process parity test")
 		return "", errors.New("unreachable")
 	}
-	branch, dirty := Get(Options{CacheDir: t.TempDir(), Run: fatalRun, Budget: time.Second}, repoDir)
+	branch, dirty, _ := Get(Options{CacheDir: t.TempDir(), Run: fatalRun, Budget: time.Second}, repoDir)
 	// `git status --porcelain` prints exactly three lines here:
 	//   " M modified.txt", "M  staged.txt", "?? untracked.txt"
 	// — ignored.log is excluded by the committed .gitignore.
@@ -124,7 +124,7 @@ func TestOverrunWritesMarkerAndEscalatesNextRender(t *testing.T) {
 
 	// Render 1: the budget is already burned — no CLI call THIS render,
 	// marker written, degraded values served (no stale caches seeded).
-	branch, dirty := Get(opts, cwd)
+	branch, dirty, _ := Get(opts, cwd)
 	if cliCalls != 0 {
 		t.Errorf("CLI invoked %d times on the overrun render itself", cliCalls)
 	}
@@ -136,7 +136,7 @@ func TestOverrunWritesMarkerAndEscalatesNextRender(t *testing.T) {
 	}
 
 	// Render 2: marker fresh — this repo now uses the CLI engine.
-	branch, dirty = Get(opts, cwd)
+	branch, dirty, _ = Get(opts, cwd)
 	if cliCalls == 0 || branch != "cli-branch" || dirty != 1 {
 		t.Errorf("marked repo render = %q, %d (cli calls %d); want cli-branch, 1 via CLI", branch, dirty, cliCalls)
 	}
@@ -153,7 +153,7 @@ func TestForcedEnginesOverrideAutoSelection(t *testing.T) {
 		return "", errors.New("unreachable")
 	}
 	inproc := func(string) (string, int, error) { return "forced-inproc", 2, nil }
-	branch, dirty := Get(Options{CacheDir: cacheDir, Run: fatalRun, Engine: "gogit", Budget: time.Second, inproc: inproc}, cwd)
+	branch, dirty, _ := Get(Options{CacheDir: cacheDir, Run: fatalRun, Engine: "gogit", Budget: time.Second, inproc: inproc}, cwd)
 	if branch != "forced-inproc" || dirty != 2 {
 		t.Errorf("forced gogit = %q, %d; want forced-inproc, 2", branch, dirty)
 	}
@@ -167,7 +167,7 @@ func TestForcedEnginesOverrideAutoSelection(t *testing.T) {
 		"[branch --show-current]":                  "cli-branch\n",
 		"[--no-optional-locks status --porcelain]": "",
 	})
-	branch, dirty = Get(Options{CacheDir: t.TempDir(), Run: cli, Engine: "cli", inproc: fatalInproc}, cwd)
+	branch, dirty, _ = Get(Options{CacheDir: t.TempDir(), Run: cli, Engine: "cli", inproc: fatalInproc}, cwd)
 	if branch != "cli-branch" || dirty != 0 {
 		t.Errorf("forced cli = %q, %d; want cli-branch, 0", branch, dirty)
 	}
@@ -190,7 +190,7 @@ func TestBranchAndDirty(t *testing.T) {
 		"[branch --show-current]":                  "main\n",
 		"[--no-optional-locks status --porcelain]": "?? SESSION-KICKOFF.md\n?? docs/\n",
 	})
-	branch, dirty := Get(Options{CacheDir: dir, Run: run, Engine: "cli"}, cwd)
+	branch, dirty, _ := Get(Options{CacheDir: dir, Run: run, Engine: "cli"}, cwd)
 	if branch != "main" || dirty != 2 {
 		t.Errorf("Get = %q, %d; want main, 2", branch, dirty)
 	}
@@ -203,7 +203,7 @@ func TestDetachedHeadShowsShortSHA(t *testing.T) {
 		"[rev-parse --short HEAD]":                 "abc1234\n",
 		"[--no-optional-locks status --porcelain]": "",
 	})
-	branch, _ := Get(Options{CacheDir: dir, Run: run, Engine: "cli"}, cwd)
+	branch, _, _ := Get(Options{CacheDir: dir, Run: run, Engine: "cli"}, cwd)
 	if branch != "@abc1234" {
 		t.Errorf("branch = %q, want @abc1234", branch)
 	}
@@ -211,7 +211,7 @@ func TestDetachedHeadShowsShortSHA(t *testing.T) {
 
 func TestGitFailureFallsBack(t *testing.T) {
 	dir := t.TempDir()
-	branch, dirty := Get(Options{CacheDir: dir, Run: runnerFor(nil), Engine: "cli"}, cwd)
+	branch, dirty, _ := Get(Options{CacheDir: dir, Run: runnerFor(nil), Engine: "cli"}, cwd)
 	if branch != "?" || dirty != 0 {
 		t.Errorf("Get on failure = %q, %d; want \"?\", 0", branch, dirty)
 	}
@@ -223,7 +223,7 @@ func TestCleanTreeDirtyZero(t *testing.T) {
 		"[branch --show-current]":                  "main\n",
 		"[--no-optional-locks status --porcelain]": "",
 	})
-	_, dirty := Get(Options{CacheDir: dir, Run: run, Engine: "cli"}, cwd)
+	_, dirty, _ := Get(Options{CacheDir: dir, Run: run, Engine: "cli"}, cwd)
 	if dirty != 0 {
 		t.Errorf("dirty = %d, want 0 for clean tree", dirty)
 	}
@@ -245,7 +245,7 @@ func TestStaleCachesServedWhenGitFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	branch, dirty := Get(Options{CacheDir: dir, Run: runnerFor(nil), Engine: "cli"}, cwd) // every git call fails
+	branch, dirty, _ := Get(Options{CacheDir: dir, Run: runnerFor(nil), Engine: "cli"}, cwd) // every git call fails
 	if branch != "feature-x" || dirty != 4 {
 		t.Errorf("Get(git down, stale caches present) = %q, %d; want \"feature-x\", 4", branch, dirty)
 	}
@@ -289,5 +289,175 @@ func TestCacheFilesUseFNVKeys(t *testing.T) {
 	}
 	if b, err := os.ReadFile(filepath.Join(dir, "dirty-"+key)); err != nil || string(b) != "1" {
 		t.Errorf("dirty cache = %q, %v; want \"1\"", b, err)
+	}
+}
+
+// writeLock creates an index.lock inside gitdir with its mtime set age back
+// from the fixed test clock.
+func writeLock(t *testing.T, gitdir string, fixed time.Time, age time.Duration) {
+	t.Helper()
+	p := filepath.Join(gitdir, "index.lock")
+	if err := os.WriteFile(p, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	held := fixed.Add(-age)
+	if err := os.Chtimes(p, held, held); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIndexLockAgeReportedPastThreshold(t *testing.T) {
+	// The badge reports the OBSERVABLE fact — lock age — only once it is
+	// strictly past the threshold: a present lock is often legitimate (any
+	// index write; an editor-open commit holds it for minutes).
+	repoDir, _ := initRepo(t)
+	fixed := time.Unix(1700000000, 0)
+	lockOpts := func() Options {
+		return Options{
+			CacheDir: t.TempDir(), Budget: time.Second,
+			LockBadge: true, LockBadgeAfter: 5 * time.Minute,
+			now: func() time.Time { return fixed },
+		}
+	}
+
+	writeLock(t, filepath.Join(repoDir, ".git"), fixed, 14*time.Minute)
+	if _, _, lockAge := Get(lockOpts(), repoDir); lockAge != 14*time.Minute {
+		t.Errorf("aged lock: lockAge = %v, want exactly 14m", lockAge)
+	}
+
+	// Below threshold: silent — a 2-minute hold is normal git behavior.
+	writeLock(t, filepath.Join(repoDir, ".git"), fixed, 2*time.Minute)
+	if _, _, lockAge := Get(lockOpts(), repoDir); lockAge != 0 {
+		t.Errorf("young lock: lockAge = %v, want 0", lockAge)
+	}
+
+	// Exactly at threshold: still silent — the contract is strictly greater.
+	writeLock(t, filepath.Join(repoDir, ".git"), fixed, 5*time.Minute)
+	if _, _, lockAge := Get(lockOpts(), repoDir); lockAge != 0 {
+		t.Errorf("threshold-exact lock: lockAge = %v, want 0", lockAge)
+	}
+
+	// Absent lock: silent.
+	if err := os.Remove(filepath.Join(repoDir, ".git", "index.lock")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, lockAge := Get(lockOpts(), repoDir); lockAge != 0 {
+		t.Errorf("no lock: lockAge = %v, want 0", lockAge)
+	}
+
+	// Toggle off: no detection at all, even with an ancient lock.
+	writeLock(t, filepath.Join(repoDir, ".git"), fixed, 3*time.Hour)
+	off := lockOpts()
+	off.LockBadge = false
+	if _, _, lockAge := Get(off, repoDir); lockAge != 0 {
+		t.Errorf("lock_badge=false: lockAge = %v, want 0", lockAge)
+	}
+}
+
+func TestIndexLockFoundFromSubdirectoryCwd(t *testing.T) {
+	repoDir, _ := initRepo(t)
+	sub := filepath.Join(repoDir, "cmd", "deep")
+	if err := os.MkdirAll(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fixed := time.Unix(1700000000, 0)
+	writeLock(t, filepath.Join(repoDir, ".git"), fixed, 14*time.Minute)
+
+	_, _, lockAge := Get(Options{
+		CacheDir: t.TempDir(), Budget: time.Second,
+		LockBadge: true, LockBadgeAfter: 5 * time.Minute,
+		now: func() time.Time { return fixed },
+	}, sub)
+	if lockAge != 14*time.Minute {
+		t.Errorf("subdirectory cwd: lockAge = %v, want 14m", lockAge)
+	}
+}
+
+func TestIndexLockWorktreeGitdirIndirection(t *testing.T) {
+	// A linked worktree's .git is a FILE naming its private git dir
+	// (gitrepository-layout: "gitdir: <path>"), and each worktree has its
+	// OWN index and index.lock in that dir — the badge must follow the
+	// indirection. Layout hand-crafted exactly as `git worktree add` lays
+	// it out; the branch/dirty engines may fail on it, the lock check is
+	// engine-independent.
+	base := t.TempDir()
+	wtGitdir := filepath.Join(base, "main", ".git", "worktrees", "wt")
+	if err := os.MkdirAll(wtGitdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fixed := time.Unix(1700000000, 0)
+	writeLock(t, wtGitdir, fixed, 14*time.Minute)
+
+	opts := Options{
+		CacheDir: t.TempDir(), Budget: time.Second,
+		LockBadge: true, LockBadgeAfter: 5 * time.Minute,
+		now: func() time.Time { return fixed },
+	}
+
+	// Absolute gitdir target.
+	wtAbs := filepath.Join(base, "wt-abs")
+	if err := os.MkdirAll(wtAbs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wtAbs, ".git"), []byte("gitdir: "+wtGitdir+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, lockAge := Get(opts, wtAbs); lockAge != 14*time.Minute {
+		t.Errorf("absolute gitdir file: lockAge = %v, want 14m", lockAge)
+	}
+
+	// Relative gitdir target (resolved against the dir holding the .git file).
+	wtRel := filepath.Join(base, "wt-rel")
+	if err := os.MkdirAll(wtRel, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wtRel, ".git"), []byte("gitdir: ../main/.git/worktrees/wt\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, lockAge := Get(opts, wtRel); lockAge != 14*time.Minute {
+		t.Errorf("relative gitdir file: lockAge = %v, want 14m", lockAge)
+	}
+}
+
+func TestPointerFileReadIsBounded(t *testing.T) {
+	// The workspace path is untrusted input: a planted oversized ".git"
+	// file must not be slurped whole into a render. Pins the 8 KiB cap
+	// directly — an unbounded read (os.ReadFile) fails this immediately.
+	p := filepath.Join(t.TempDir(), ".git")
+	if err := os.WriteFile(p, []byte(strings.Repeat("x", 1<<20)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b, err := readPointerFile(p)
+	if err != nil {
+		t.Fatalf("bounded read errored: %v", err)
+	}
+	if len(b) != 8192 {
+		t.Errorf("read %d bytes of a 1 MiB pointer file, want exactly the 8192 cap", len(b))
+	}
+}
+
+func TestIndexLockOversizedPointerFileIsSilent(t *testing.T) {
+	// A hostile oversized ".git" pointer file degrades to silence — no
+	// badge, no error, and (per the bound above) no 1 MiB read.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte(strings.Repeat("x", 1<<20)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, lockAge := Get(Options{
+		CacheDir: t.TempDir(), Budget: time.Second,
+		LockBadge: true, LockBadgeAfter: 5 * time.Minute,
+	}, dir)
+	if lockAge != 0 {
+		t.Errorf("oversized pointer file: lockAge = %v, want 0", lockAge)
+	}
+}
+
+func TestIndexLockNonRepoCwdIsSilent(t *testing.T) {
+	_, _, lockAge := Get(Options{
+		CacheDir: t.TempDir(), Budget: time.Second,
+		LockBadge: true, LockBadgeAfter: 5 * time.Minute,
+	}, t.TempDir())
+	if lockAge != 0 {
+		t.Errorf("non-repo cwd: lockAge = %v, want 0", lockAge)
 	}
 }

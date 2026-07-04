@@ -60,7 +60,7 @@ func TestModelRowAPIKeyWarning(t *testing.T) {
 }
 
 func TestProjectRow(t *testing.T) {
-	got := ProjectRow("/Users/dev/projects/demo-app", home, "main", 2, DefaultOptions())
+	got := ProjectRow("/Users/dev/projects/demo-app", home, "main", 2, 0, DefaultOptions())
 	want := "\x1b[2mproject  \x1b[m\x1b[1m~/projects/demo-app\x1b[m \x1b[2m·\x1b[m \x1b[34m⎇ main\x1b[m \x1b[33m~2\x1b[m"
 	if got != want {
 		t.Errorf("ProjectRow:\n got %q\nwant %q", got, want)
@@ -68,16 +68,36 @@ func TestProjectRow(t *testing.T) {
 }
 
 func TestProjectRowCleanTreeHidesDirty(t *testing.T) {
-	got := ProjectRow("/Users/dev/x", home, "main", 0, DefaultOptions())
+	got := ProjectRow("/Users/dev/x", home, "main", 0, 0, DefaultOptions())
 	if strings.Contains(got, "~0") || strings.Contains(got, "\x1b[33m") {
 		t.Errorf("dirty badge rendered for clean tree: %q", got)
 	}
 }
 
 func TestProjectRowOutsideHomeKeepsFullPath(t *testing.T) {
-	got := ProjectRow("/opt/work", home, "main", 0, DefaultOptions())
+	got := ProjectRow("/opt/work", home, "main", 0, 0, DefaultOptions())
 	if !strings.Contains(got, "\x1b[1m/opt/work\x1b[m") {
 		t.Errorf("path outside home was altered: %q", got)
+	}
+}
+
+func TestProjectRowIndexLockBadge(t *testing.T) {
+	// A long-held .git/index.lock surfaces as a factual yellow age badge —
+	// the observable fact ONLY: no "stale" verdict, no removal command (the
+	// lock may be legitimately held; a wrong instruction can corrupt a live
+	// rebase). gitinfo applies the threshold — render shows any non-zero age.
+	got := ProjectRow("/Users/dev/projects/demo-app", home, "main", 2, 14*time.Minute, DefaultOptions())
+	want := "\x1b[2mproject  \x1b[m\x1b[1m~/projects/demo-app\x1b[m \x1b[2m·\x1b[m \x1b[34m⎇ main\x1b[m \x1b[33m~2\x1b[m \x1b[33m⚠ index.lock 14m\x1b[m"
+	if got != want {
+		t.Errorf("ProjectRow lock badge:\n got %q\nwant %q", got, want)
+	}
+
+	// Zero age (absent / young / below-threshold lock): byte-identical to
+	// today — the badge never renders in the healthy path.
+	got = ProjectRow("/Users/dev/projects/demo-app", home, "main", 2, 0, DefaultOptions())
+	fresh := "\x1b[2mproject  \x1b[m\x1b[1m~/projects/demo-app\x1b[m \x1b[2m·\x1b[m \x1b[34m⎇ main\x1b[m \x1b[33m~2\x1b[m"
+	if got != fresh {
+		t.Errorf("no lock must render byte-identical to today:\n got %q\nwant %q", got, fresh)
 	}
 }
 

@@ -39,6 +39,14 @@ git_timeout_ms = 150
 # overruns git_timeout_ms (the CLI's fsmonitor daemon stays fast on huge
 # repos; see the README design notes). "gogit" or "cli" force one engine.
 git_engine = "auto"
+# Surface a long-held .git/index.lock as a yellow factual age badge
+# ("⚠ index.lock 14m") on the project row, only once the lock is older
+# than lock_badge_after_s seconds. A present lock is often legitimate
+# (any index write; a commit with an editor open holds it for minutes) —
+# the badge is information, never an instruction, and nothing is ever
+# removed automatically.
+lock_badge = true
+lock_badge_after_s = 300
 
 # Account-scope meters row (Sub auth only).
 [account]

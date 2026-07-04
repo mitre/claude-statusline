@@ -26,7 +26,12 @@ type Config struct {
 	// GitEngine selects the git reader: "auto" (in-process go-git with
 	// measured per-repo escalation to the CLI), "gogit", or "cli".
 	GitEngine string
-	CacheDir  string
+	// LockBadge surfaces a long-held .git/index.lock as a factual age badge
+	// on the project row; LockBadgeAfterS is the age threshold in seconds
+	// (a present lock younger than this is normal git behavior).
+	LockBadge       bool
+	LockBadgeAfterS int
+	CacheDir        string
 }
 
 // fileSchema mirrors the TOML layout. Decoding into a pre-filled value gives
@@ -46,11 +51,13 @@ type fileSchema struct {
 		ShowContextSize *bool `toml:"show_context_size"`
 	} `toml:"model"`
 	Project struct {
-		ShowBranch   *bool   `toml:"show_branch"`
-		ShowDirty    *bool   `toml:"show_dirty"`
-		TildeHome    *bool   `toml:"tilde_home"`
-		GitTimeoutMS *int    `toml:"git_timeout_ms"` // 0 = unbounded
-		GitEngine    *string `toml:"git_engine"`     // auto | gogit | cli
+		ShowBranch     *bool   `toml:"show_branch"`
+		ShowDirty      *bool   `toml:"show_dirty"`
+		TildeHome      *bool   `toml:"tilde_home"`
+		GitTimeoutMS   *int    `toml:"git_timeout_ms"` // 0 = unbounded
+		GitEngine      *string `toml:"git_engine"`     // auto | gogit | cli
+		LockBadge      *bool   `toml:"lock_badge"`
+		LockBadgeAfter *int    `toml:"lock_badge_after_s"`
 	} `toml:"project"`
 	Account struct {
 		ShowResets   *string `toml:"show_resets"` // "always" (default) | "quiet"
@@ -74,6 +81,12 @@ func Default() Config {
 	cfg.Usage.TTLSeconds = 180
 	cfg.GitTimeoutMS = 150
 	cfg.GitEngine = "auto"
+	cfg.LockBadge = true
+	// 300 s: research (2026-07-03) found no established staleness-age
+	// convention in other tooling — git itself never expires index.lock —
+	// so the threshold just needs to clear legitimate interactive holds
+	// (an editor-open `git commit` is minutes-scale). Configurable.
+	cfg.LockBadgeAfterS = 300
 	cfg.CacheDir = defaultCacheDir()
 	return cfg
 }
@@ -138,6 +151,13 @@ func Load(path string) (Config, error) {
 		default:
 			return cfg, fmt.Errorf("project.git_engine: %q is not valid (use \"auto\", \"gogit\", or \"cli\")", *f.Project.GitEngine)
 		}
+	}
+	setB(&cfg.LockBadge, f.Project.LockBadge)
+	if f.Project.LockBadgeAfter != nil {
+		if *f.Project.LockBadgeAfter < 0 {
+			return cfg, fmt.Errorf("project.lock_badge_after_s: %d is not valid (seconds a lock must be held before the badge shows; 0 badges any lock)", *f.Project.LockBadgeAfter)
+		}
+		cfg.LockBadgeAfterS = *f.Project.LockBadgeAfter
 	}
 	if f.Account.ShowResets != nil {
 		switch *f.Account.ShowResets {
