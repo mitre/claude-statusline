@@ -2,6 +2,17 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
 
+## Project Guidance (full architecture in CLAUDE.md)
+
+- **This repo IS the owner's live statusline.** The binary at `~/.claude/claude-statusline` is a HEAD build. Every behavior change ends with the live gate: `make check` → back up the installed binary (timestamped `.backup-*`) → atomic swap (`cp` to `.new` + `mv`) → sha verify → owner eyeball. Live verification is non-negotiable.
+- **`make check` is the one gate** (lint + vuln + race + cover + build) — must pass before any commit or card close. CI runs exactly the make targets; never add CI-only shell.
+- **Golden tests are the display spec.** Display changes = golden changes, intentional, same commit.
+- **Neutral fixture identity, always**: `/Users/dev`, `~/projects/demo-app`, `dev@example.com`, session `0a1b2c3d-0000-4000-8000-000000000000` — never real paths, emails, or session ids. Attribution metadata (git author, `Authored by:` trailers) is standard and stays.
+- **Test-hygiene traps**: tests exercising `config.Default()` must sandbox HOME (`t.Setenv`) or they touch the developer's REAL user cache; config-appending e2e tests must assert empty stderr (a TOML error silently falls back to defaults against the real cache).
+- **Config keys land in three places in one commit**: `fileSchema`, `statusline.example.toml`, README — 1:1 parity, defaults and invalid-value errors tested.
+- Session state: `.beads/recovery-context.md` (archives in `.beads/archive/`). Cards run via `/project-tdd lite <card-id>`.
+- Commit authorship: `Authored by: Aaron Lippold<lippold@gmail.com>` — no AI attribution. The user controls all commits and pushes.
+
 > **Architecture in one line:** Issues live in a local Dolt database
 > (`.beads/dolt/`); cross-machine sync uses `bd dolt push/pull` (a
 > git-compatible protocol), stored under `refs/dolt/data` on your git
