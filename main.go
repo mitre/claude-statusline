@@ -14,19 +14,23 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"strings"
 	"time"
-
-	"github.com/mitre/claude-statusline/internal/usage"
 )
 
 func main() {
+	// Subscription credentials resolve through Claude Code's own store
+	// precedence (credentials file, then macOS keychain) — see credentials.go.
+	creds := credentialSource{
+		getenv:   os.Getenv,
+		readFile: os.ReadFile,
+		keychain: keychainCredentialJSON,
+	}
 	out, diag := run(deps{
 		stdin:      os.Stdin,
 		getenv:     os.Getenv,
 		runGit:     runGit,
-		keychainOK: keychainCheck,
-		fetchUsage: fetchUsage,
+		keychainOK: creds.ok,
+		fetchUsage: func() ([]byte, error) { return fetchUsage(creds) },
 		readFile:   os.ReadFile,
 	})
 	if diag != "" {
@@ -49,20 +53,23 @@ func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 	return string(out), err
 }
 
-func keychainCheck() error {
-	return exec.Command("security", "find-generic-password",
-		"-s", "Claude Code-credentials").Run()
+// keychainCredentialJSON reads Claude Code's credential JSON from the macOS
+// keychain item. On hosts without the `security` binary (Linux, containers)
+// the exec fails cleanly and the credential chain treats it as a miss.
+func keychainCredentialJSON() (string, error) {
+	out, err := exec.Command("security", "find-generic-password",
+		"-s", "Claude Code-credentials", "-w").Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // fetchUsage pulls the subscription-limits payload from the OAuth usage
-// endpoint using the keychain access token.
-func fetchUsage() ([]byte, error) {
-	credRaw, err := exec.Command("security", "find-generic-password",
-		"-s", "Claude Code-credentials", "-w").Output()
-	if err != nil {
-		return nil, err
-	}
-	token, err := usage.TokenFromKeychain(strings.TrimSpace(string(credRaw)))
+// endpoint, resolving the access token through the credential chain per
+// fetch — never cached, never logged.
+func fetchUsage(creds credentialSource) ([]byte, error) {
+	token, err := creds.token()
 	if err != nil {
 		return nil, err
 	}

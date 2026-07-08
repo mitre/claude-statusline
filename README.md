@@ -58,7 +58,7 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | `model` | Model name + context-window size, auth mode (`Sub`/`API`), short session id (distinguishes concurrent sessions in one repo) |
 | `project` | Current directory (`~`-shortened), git branch (`@sha` when detached), changed-file count, long-held `index.lock` age badge |
 | `context` | Context-window usage bar; green <50%, yellow <80%, red ≥80%, `/compact` badge ≥85% |
-| `account` | ACCOUNT-scope subscription meters (Sub auth only) — see meter table below |
+| `account` | ACCOUNT-scope subscription meters (Sub auth only, macOS and Linux; Windows uses the same credentials-file mechanism and is expected to work — unverified) — see meter table below |
 | `activity` | Session duration and lines added/removed |
 
 When `.git/index.lock` has been held longer than `[project]
@@ -142,7 +142,10 @@ never censors it. `show_stale_age = false` hides the marker.
   bad JSON renders nothing, and the path is only ever passed to direct `exec`
   as a directory argument (no shell anywhere; every subprocess argument is a
   compile-time constant). The usage fetch is bounded (2 s timeout, 1 MB body
-  cap) and the OAuth token is read from the keychain per fetch, sent only in
+  cap) and the OAuth token is resolved per fetch through Claude Code's own
+  credential stores — the `.credentials.json` file when present (honoring
+  `CLAUDE_CONFIG_DIR`), else the macOS keychain — mirroring Claude Code's
+  documented precedence. Only the access token is read; it is sent only in
   the Authorization header, never logged and never cached. `make vuln`
   (govulncheck) and gosec (inside `make lint`) gate every change.
 

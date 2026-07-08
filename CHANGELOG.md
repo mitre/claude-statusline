@@ -38,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cross-platform credential resolution** — the auth badge and usage
+  meters now work on Linux, not just macOS. The subscription token resolves
+  through Claude Code's own documented store precedence: the
+  `.credentials.json` file when present (`$CLAUDE_CONFIG_DIR` honored, else
+  `~/.claude/`) — which is the Linux/container store and the macOS fallback
+  Claude Code itself honors — falling back to the macOS keychain item. An
+  unusable file falls through rather than failing, mirroring Claude Code;
+  no source at all degrades exactly as before (badge `?`, account row
+  collapses). One parser serves both stores (identical `claudeAiOauth`
+  JSON); the token is read per use, never cached, never logged.
 - **Long-held `index.lock` badge on the project row** — when
   `.git/index.lock` has been held longer than `[project]
   lock_badge_after_s` (default 300 s; research found no established age

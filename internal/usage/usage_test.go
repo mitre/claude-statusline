@@ -350,19 +350,19 @@ func TestParseMalformedResetTimestampYieldsEmptyLabel(t *testing.T) {
 	}
 }
 
-func TestTokenFromKeychainRejectsNonJSON(t *testing.T) {
+func TestTokenFromCredentialJSONRejectsNonJSON(t *testing.T) {
 	in := "keychain: locked"
-	if tok, err := TokenFromKeychain(in); err == nil {
-		t.Errorf("TokenFromKeychain(%q) = %q, nil; want error for non-JSON", in, tok)
+	if tok, err := TokenFromCredentialJSON(in); err == nil {
+		t.Errorf("TokenFromCredentialJSON(%q) = %q, nil; want error for non-JSON", in, tok)
 	}
 }
 
-func TestTokenFromKeychain(t *testing.T) {
-	tok, err := TokenFromKeychain(`{"claudeAiOauth":{"accessToken":"tok-123"}}`)
+func TestTokenFromCredentialJSON(t *testing.T) {
+	tok, err := TokenFromCredentialJSON(`{"claudeAiOauth":{"accessToken":"tok-123"}}`)
 	if err != nil || tok != "tok-123" {
-		t.Errorf("TokenFromKeychain = %q, %v", tok, err)
+		t.Errorf("TokenFromCredentialJSON = %q, %v", tok, err)
 	}
-	if _, err := TokenFromKeychain(`{}`); err == nil {
+	if _, err := TokenFromCredentialJSON(`{}`); err == nil {
 		t.Error("missing token must error")
 	}
 }

@@ -200,9 +200,10 @@ func boundaryExpired(path string, raw []byte, now time.Time) bool {
 	return false
 }
 
-// TokenFromKeychain extracts the OAuth access token from the keychain
-// credential JSON.
-func TokenFromKeychain(raw string) (string, error) {
+// TokenFromCredentialJSON extracts the OAuth access token from Claude Code's
+// credential JSON — the same claudeAiOauth shape whether it came from the
+// macOS keychain item or a .credentials.json file.
+func TokenFromCredentialJSON(raw string) (string, error) {
 	var cred struct {
 		ClaudeAiOauth struct {
 			AccessToken string `json:"accessToken"`
