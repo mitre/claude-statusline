@@ -29,7 +29,9 @@ vulnerability in claude-statusline, please report it responsibly.
   untrusted — unparseable JSON renders nothing, and the path is only ever
   passed as a directory argument to direct `exec` (no shell anywhere; every
   subprocess argument is a compile-time constant)
-- **Credentials**: the OAuth token is read from the macOS keychain per fetch,
+- **Credentials**: the OAuth token is resolved per fetch from Claude Code's
+  credential stores — the credentials file (`$CLAUDE_CONFIG_DIR/.credentials.json`,
+  else `~/.claude/.credentials.json`), falling back to the macOS keychain —
   sent only in the `Authorization` header, and never logged or cached
 - **Bounded network**: the single outbound request (usage endpoint) has a 2 s
   timeout and a 1 MB response cap; error payloads are never cached
