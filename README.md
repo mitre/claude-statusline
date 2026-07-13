@@ -51,6 +51,27 @@ Optional. Copy [`statusline.example.toml`](statusline.example.toml) to
 `~/.claude/statusline.toml` and flip what you want; every key defaults to the
 behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 
+| Key | Default | Effect |
+|---|---|---|
+| `[rows]` `model`/`project`/`context`/`account`/`activity` | all `true` | Show or hide whole rows (`limits` is accepted as a deprecated alias for `account`) |
+| `[model] show_auth` | `true` | `Sub`/`API` auth badge |
+| `[model] show_session` | `true` | Short session-id segment |
+| `[model] show_context_size` | `true` | `1M`/`200k` context-window size after the model name |
+| `[project] show_branch` | `true` | Git branch (`@sha` when detached) |
+| `[project] show_dirty` | `true` | Changed-file count |
+| `[project] tilde_home` | `true` | Shorten the `$HOME` prefix to `~` |
+| `[project] git_timeout_ms` | `150` | Per-read git deadline; `0` disables the bound |
+| `[project] git_engine` | `"auto"` | `"auto"`, `"gogit"`, or `"cli"` |
+| `[project] lock_badge` | `true` | Long-held `index.lock` age badge |
+| `[project] lock_badge_after_s` | `300` | Lock age before the badge appears |
+| `[account] show_email` | `true` | Account email scope label |
+| `[account] email_style` | `"normal"` | `"dim"` quiets the email to the furniture tier |
+| `[account] show_resets` | `"always"` | `"quiet"` shows reset times only on hot (≥80%) meters |
+| `[account] show_stale_age` | `true` | Dim age marker when stale known-good data is served |
+| `[usage] enabled` | `true` | `false` skips the usage endpoint entirely |
+| `[usage] ttl_seconds` | `180` | How long a fetched payload is served before re-fetching |
+| `[cache] dir` | platform user-cache dir | Cache location override |
+
 ## What each row means
 
 | Row | Content |
