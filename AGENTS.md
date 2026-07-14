@@ -2,7 +2,7 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
 
-## Project Guidance (full architecture in CLAUDE.md)
+## Project Guidance (quick reference — full detail in the sections below)
 
 - **This repo IS the owner's live statusline.** The binary at `~/.claude/claude-statusline` is a HEAD build. Every behavior change ends with the live gate: `make check` → back up the installed binary (timestamped `.backup-*`) → atomic swap (`cp` to `.new` + `mv`) → sha verify → owner eyeball. Live verification is non-negotiable.
 - **`make check` is the one gate** (lint + vuln + race + cover + build) — must pass before any commit or card close. CI runs exactly the make targets; never add CI-only shell.
@@ -122,7 +122,7 @@ Unparseable stdin renders nothing (empty stdout, empty stderr). A malformed conf
 - Session state for Claude sessions lives in `.beads/recovery-context.md` (archives under `.beads/archive/`); cards are worked via `/project-tdd lite <card-id>`.
 - Security posture: stdin JSON and the workspace path are untrusted. Subprocess arguments are compile-time constants; the workspace path is only ever passed as a directory argument via direct `exec` (no shell). The OAuth token is resolved per fetch from Claude Code's credential stores (credentials file, then macOS keychain), sent only in the Authorization header, never logged or cached.
 - gosec/lint suppressions live in `.golangci.yml` as narrow per-path exclusions with a written justification each — follow that pattern; no inline `//nolint` without the same treatment.
-- `AGENTS.md` and `CLAUDE.md` are independent files — mirror substantive edits across both.
+- `AGENTS.md` is the single source of truth for agent guidance; `CLAUDE.md` is a symlink to it — edit `AGENTS.md` only, never a separate CLAUDE.md.
 - Commit authorship: `Authored by: Aaron Lippold<lippold@gmail.com>` — no AI attribution.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
