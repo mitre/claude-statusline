@@ -152,3 +152,10 @@ regression tests:
 - Trailing newlines in bash-written cache files broke value comparisons in the
   port (`"Sub\n" != "Sub"` killed the auth badge and limits row) — cache reads
   now mirror bash command-substitution semantics
+
+### Security
+
+- Go toolchain bumped 1.26.4 → 1.26.5 for GO-2026-5856 (crypto/tls Encrypted
+  Client Hello privacy leak, fixed upstream in 1.26.5). Our code reaches the
+  affected path through the usage-endpoint HTTPS fetch; govulncheck flagged it
+  in CI the day the advisory landed, exactly as the `make vuln` gate intends.
