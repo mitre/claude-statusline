@@ -159,3 +159,15 @@ regression tests:
   Client Hello privacy leak, fixed upstream in 1.26.5). Our code reaches the
   affected path through the usage-endpoint HTTPS fetch; govulncheck flagged it
   in CI the day the advisory landed, exactly as the `make vuln` gate intends.
+
+### Testing
+
+- The real edges are now under test: `fetchUsage` against an in-process HTTP
+  server (auth headers, credential-miss short circuit, 1 MiB body cap, client
+  timeout), the keychain reader and git runner through PATH-shim executables
+  (including the deadline actually killing a hung child). Root package
+  coverage 63% → 89.5%, total 91.4% → 95.2%.
+- Coverage gates ratcheted: the total floor rises 85% → 90% and a new
+  per-package 85% floor stops a weak package hiding behind the average
+  (`COVER_MIN` / `PKG_COVER_MIN` override both; a package without test files
+  fails outright).

@@ -178,7 +178,7 @@ make test     # unit tests (all logic is exec/HTTP-injected — no network)
 make lint     # golangci-lint: config schema verify + full run (zero-issue gate)
 make vuln     # govulncheck
 make race     # full suite under the race detector
-make cover    # coverage with an 85% floor (override: COVER_MIN=90 make cover)
+make cover    # coverage floors: 90% total, 85% per package (override: COVER_MIN / PKG_COVER_MIN)
 make build    # local binary
 make release  # cross-compile darwin/linux × arm64/amd64 into dist/
 ```
