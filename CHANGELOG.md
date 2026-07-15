@@ -171,3 +171,8 @@ regression tests:
   per-package 85% floor stops a weak package hiding behind the average
   (`COVER_MIN` / `PKG_COVER_MIN` override both; a package without test files
   fails outright).
+- The two untrusted-JSON parsers (stdin session payload, usage-endpoint
+  bodies) now carry native Go fuzz targets with seed corpora covering the
+  fixtures, rate-limit error bodies, and mangled/truncated variants. Every
+  `go test` run replays the seeds as regression tests; `make fuzz` explores
+  further (`FUZZTIME` overrides the default 30s per parser).

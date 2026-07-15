@@ -1,10 +1,11 @@
 BINARY := claude-statusline
 DIST   := dist
 
-.PHONY: build test vet lint vuln race cover check release clean
+.PHONY: build test vet lint vuln race cover fuzz check release clean
 
 COVER_MIN ?= 90
 PKG_COVER_MIN ?= 85
+FUZZTIME ?= 30s
 
 # The one gate: everything a card close (and CI) must prove, in one command.
 # (race runs the full suite under the race detector; cover re-runs for the
@@ -31,6 +32,13 @@ cover:
 	awk -v t="$$total" -v m="$(COVER_MIN)" -v pm="$(PKG_COVER_MIN)" 'BEGIN { \
 	  if (t+0 < m+0) { printf "FAIL: total coverage %.1f%% is below the %s%% floor\n", t, m; exit 1 } \
 	  else           { printf "OK: total coverage %.1f%% meets the %s%% floor; every package meets the %s%% floor\n", t, m, pm } }'
+
+# Extended fuzzing of the untrusted-JSON parsers (stdin session payload,
+# usage-endpoint bodies). Plain `go test ./...` already replays the seed
+# corpora as regression tests on every run — this target explores beyond them.
+fuzz:
+	go test -run='^$$' -fuzz=FuzzParse -fuzztime=$(FUZZTIME) ./internal/input
+	go test -run='^$$' -fuzz=FuzzParse -fuzztime=$(FUZZTIME) ./internal/usage
 
 lint:
 	golangci-lint config verify
