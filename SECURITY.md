@@ -8,7 +8,7 @@ vulnerability in claude-statusline, please report it responsibly.
 ### Contact Information
 
 - **Email**: [saf-security@mitre.org](mailto:saf-security@mitre.org)
-- **GitHub**: once published, use the repository's Security tab to report privately
+- **GitHub**: use the repository's [Security tab](https://github.com/mitre/claude-statusline/security) to report privately
 
 ### What to Include
 

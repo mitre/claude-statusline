@@ -21,15 +21,18 @@ the session's accumulated cost (`· $12.34`) once there is any.
 
 ## Install
 
-From a clone (primary path until the repo is published):
+```sh
+go install github.com/mitre/claude-statusline@latest
+```
+
+Or grab a prebuilt binary from the
+[releases page](https://github.com/mitre/claude-statusline/releases), or build
+from a clone:
 
 ```sh
 make build
 cp claude-statusline ~/.claude/claude-statusline
 ```
-
-Once published to GitHub, `go install github.com/mitre/claude-statusline@latest`
-also works.
 
 Point Claude Code at the binary in `~/.claude/settings.json`:
 
