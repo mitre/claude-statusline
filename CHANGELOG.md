@@ -38,6 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **goreleaser release pipeline + `--version` flag**: one artifact pipeline
+  (darwin/linux × arm64/amd64 archives, `checksums.txt`, git changelog)
+  replaces the hand-rolled cross-compile; `make snapshot` proves it locally
+  without publishing, and a `v*` tag workflow runs the same make target on
+  CI. `claude-statusline --version` reports goreleaser-injected build
+  identity (`dev (none, unknown)` on plain `go build` — honest defaults),
+  the seam the Homebrew formula test and the plugin's version-sync hook
+  key off.
+
 - **Session-signal segments from the stdin payload** (fields verified live in
   `docs/stdin-payload-inventory.md`): a dim reasoning-effort level and a
   yellow `⚡ fast` badge on the model row; the session's accumulated cost

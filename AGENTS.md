@@ -60,8 +60,9 @@ make lint     # golangci-lint: config schema verify + full run (zero-issue gate)
 make vuln     # govulncheck
 make race     # full suite under the race detector
 make cover    # coverage floors: 90% total, 85% per package (override: COVER_MIN / PKG_COVER_MIN)
-make build    # local binary
-make release  # cross-compile darwin/linux × arm64/amd64 into dist/
+make build    # local binary (claude-statusline --version reports build identity; "dev" on un-injected builds)
+make snapshot # local no-publish proof of the release pipeline: darwin/linux × arm64/amd64 archives + checksums into dist/
+make release  # publish via goreleaser — tag + GITHUB_TOKEN required (the v* tag workflow's job, gated by the publish card)
 
 go test ./internal/render/                    # single package
 go test -run TestName ./internal/gitinfo/     # single test

@@ -18,6 +18,13 @@ import (
 )
 
 func main() {
+	// --version prints build identity and exits without touching stdin —
+	// the statusline contract (JSON in, ANSI out) applies only to the
+	// argless invocation Claude Code performs.
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		fmt.Println(versionString())
+		return
+	}
 	// Subscription credentials resolve through Claude Code's own store
 	// precedence (credentials file, then macOS keychain) — see credentials.go.
 	creds := credentialSource{

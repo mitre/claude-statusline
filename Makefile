@@ -1,7 +1,7 @@
 BINARY := claude-statusline
 DIST   := dist
 
-.PHONY: build test vet lint vuln race cover fuzz bench check release clean
+.PHONY: build test vet lint vuln race cover fuzz bench check release snapshot clean
 
 COVER_MIN ?= 90
 PKG_COVER_MIN ?= 85
@@ -62,12 +62,14 @@ test:
 vet:
 	go vet ./...
 
+# One artifact pipeline: goreleaser owns cross-compilation, archives, and
+# checksums. `release` publishes (tag + GITHUB_TOKEN required — the v* tag
+# workflow's job); `snapshot` is the local no-publish proof.
 release: vet test
-	@mkdir -p $(DIST)
-	GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o $(DIST)/$(BINARY)-darwin-arm64 .
-	GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o $(DIST)/$(BINARY)-darwin-amd64 .
-	GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o $(DIST)/$(BINARY)-linux-arm64 .
-	GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o $(DIST)/$(BINARY)-linux-amd64 .
+	goreleaser release --clean
+
+snapshot: vet test
+	goreleaser release --snapshot --clean
 	@ls -la $(DIST)
 
 clean:

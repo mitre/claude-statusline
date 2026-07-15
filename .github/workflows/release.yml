@@ -1,0 +1,30 @@
+# Fires ONLY on version tags. Runs the same make target a developer runs —
+# no CI-only shell (repo convention, same as ci.yml). The first real run
+# happens when the publish card (claude-statusline-60g.9) pushes v0.1.0.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: goreleaser (archives + checksums)
+    runs-on: ubuntu-latest
+    steps:
+      # goreleaser derives versions/changelog from git history — full clone.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # Pinned to the version the repo is proven against locally.
+      - name: Install goreleaser
+        run: go install github.com/goreleaser/goreleaser/v2@v2.17.0
+      - run: make release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

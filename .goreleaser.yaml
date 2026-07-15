@@ -1,0 +1,41 @@
+# goreleaser is the single artifact pipeline: GitHub Releases (archives +
+# checksums), and later the Homebrew tap and the plugin's binary source all
+# consume its output. Local proof: `make snapshot` (never publishes);
+# the real release fires from the v* tag workflow (.github/workflows/
+# release.yml) once the repo publish card (60g.9) walks its approvals.
+version: 2
+
+project_name: claude-statusline
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - arm64
+      - amd64
+    flags:
+      - -trimpath
+    # Mirrors the Makefile's -s -w plus the version.go identity seam.
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{.CommitDate}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  # CHANGELOG.md (Keep a Changelog) is the human release-notes source of
+  # record; the generated git log is supplementary.
+  use: git
+  filters:
+    exclude:
+      - "^chore: beads"
