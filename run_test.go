@@ -20,7 +20,7 @@ const e2eUsagePayload = `{
   "limits": []
 }`
 
-func e2eDeps(t *testing.T, stdinFixture string) deps {
+func e2eDeps(t testing.TB, stdinFixture string) deps {
 	t.Helper()
 	cacheDir := t.TempDir()
 	cfgPath := filepath.Join(t.TempDir(), "statusline.toml")

@@ -1,7 +1,7 @@
 BINARY := claude-statusline
 DIST   := dist
 
-.PHONY: build test vet lint vuln race cover fuzz check release clean
+.PHONY: build test vet lint vuln race cover fuzz bench check release clean
 
 COVER_MIN ?= 90
 PKG_COVER_MIN ?= 85
@@ -39,6 +39,12 @@ cover:
 fuzz:
 	go test -run='^$$' -fuzz=FuzzParse -fuzztime=$(FUZZTIME) ./internal/input
 	go test -run='^$$' -fuzz=FuzzParse -fuzztime=$(FUZZTIME) ./internal/usage
+
+# Observe-only compute-path benchmarks (render.Build + full run() frame over
+# fakes). No thresholds — shared runners flake; baselines live in the
+# CHANGELOG/card notes and regressions surface in review.
+bench:
+	go test -run='^$$' -bench=. -benchmem ./...
 
 lint:
 	golangci-lint config verify

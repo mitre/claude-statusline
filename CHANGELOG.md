@@ -176,3 +176,7 @@ regression tests:
   fixtures, rate-limit error bodies, and mangled/truncated variants. Every
   `go test` run replays the seeds as regression tests; `make fuzz` explores
   further (`FUZZTIME` overrides the default 30s per parser).
+- `make bench` measures the in-process compute path (heaviest-frame
+  `render.Build` and the full `run()` frame over fakes, per fixture) —
+  observe-only guards for the ~90 ms wall budget, which itself includes
+  real IO the benchmarks deliberately exclude.
