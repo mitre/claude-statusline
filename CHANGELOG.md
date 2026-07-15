@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-15
+
 ### Removed
 
 - **The bash-compat contract is gone — this is a Go program, full stop.**
