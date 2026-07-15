@@ -88,3 +88,35 @@ func TestParseFractionalPercentageFloors(t *testing.T) {
 		t.Errorf("CtxPct = %d, want floor(42.9)=42", s.CtxPct)
 	}
 }
+
+func TestParseSegmentFields(t *testing.T) {
+	j := `{"model":{"display_name":"Fable 5"},` +
+		`"cost":{"total_cost_usd":87.3046},` +
+		`"effort":{"level":"xhigh"},"fast_mode":true,"exceeds_200k_tokens":true}`
+	s, err := Parse(strings.NewReader(j))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if s.CostUSD != 87.3046 {
+		t.Errorf("CostUSD = %v, want 87.3046", s.CostUSD)
+	}
+	if s.Effort != "xhigh" {
+		t.Errorf("Effort = %q, want \"xhigh\"", s.Effort)
+	}
+	if !s.FastMode {
+		t.Error("FastMode = false, want true")
+	}
+	if !s.Exceeds200k {
+		t.Error("Exceeds200k = false, want true")
+	}
+}
+
+func TestParseSegmentFieldsAbsentStayZero(t *testing.T) {
+	s, err := Parse(strings.NewReader(`{"model":{"display_name":"Fable 5"}}`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if s.CostUSD != 0 || s.Effort != "" || s.FastMode || s.Exceeds200k {
+		t.Errorf("absent segment fields must stay zero: %+v", s)
+	}
+}

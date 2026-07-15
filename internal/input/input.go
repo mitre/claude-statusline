@@ -18,6 +18,14 @@ type Session struct {
 	LinesAdded   int
 	LinesRemoved int
 	DurationMS   int64
+	// CostUSD is the session's accumulated API cost; rendered only while an
+	// API-key override is active (metered billing), 0 renders nothing.
+	CostUSD float64
+	// Effort is the session's reasoning-effort level ("low"…"xhigh"),
+	// "" when the host doesn't send one — segment omitted.
+	Effort      string
+	FastMode    bool
+	Exceeds200k bool
 }
 
 type payload struct {
@@ -34,10 +42,16 @@ type payload struct {
 		ContextWindowSize int     `json:"context_window_size"`
 	} `json:"context_window"`
 	Cost struct {
-		TotalLinesAdded   int   `json:"total_lines_added"`
-		TotalLinesRemoved int   `json:"total_lines_removed"`
-		TotalDurationMS   int64 `json:"total_duration_ms"`
+		TotalLinesAdded   int     `json:"total_lines_added"`
+		TotalLinesRemoved int     `json:"total_lines_removed"`
+		TotalDurationMS   int64   `json:"total_duration_ms"`
+		TotalCostUSD      float64 `json:"total_cost_usd"`
 	} `json:"cost"`
+	Effort struct {
+		Level string `json:"level"`
+	} `json:"effort"`
+	FastMode    bool `json:"fast_mode"`
+	Exceeds200k bool `json:"exceeds_200k_tokens"`
 }
 
 // Parse reads the stdin JSON and applies the reference defaults
@@ -57,6 +71,10 @@ func Parse(r io.Reader) (Session, error) {
 		LinesAdded:   p.Cost.TotalLinesAdded,
 		LinesRemoved: p.Cost.TotalLinesRemoved,
 		DurationMS:   p.Cost.TotalDurationMS,
+		CostUSD:      p.Cost.TotalCostUSD,
+		Effort:       p.Effort.Level,
+		FastMode:     p.FastMode,
+		Exceeds200k:  p.Exceeds200k,
 	}
 	if s.ModelName == "" {
 		s.ModelName = "?"

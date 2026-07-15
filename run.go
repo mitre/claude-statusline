@@ -80,6 +80,10 @@ func run(d deps) (string, string) {
 		LinesAdded:   sess.LinesAdded,
 		LinesRemoved: sess.LinesRemoved,
 		APIKeySet:    apiKeySet,
+		Effort:       sess.Effort,
+		FastMode:     sess.FastMode,
+		CostUSD:      sess.CostUSD,
+		Exceeds200k:  sess.Exceeds200k,
 	}
 
 	if sess.CWD != "" {

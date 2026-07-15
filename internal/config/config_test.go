@@ -280,3 +280,43 @@ func TestLoadRejectsMalformedTOML(t *testing.T) {
 		t.Error("malformed TOML must surface an error, not silently default")
 	}
 }
+
+func TestSegmentTogglesOverlay(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	p := filepath.Join(t.TempDir(), "s.toml")
+	body := "[model]\nshow_effort = false\nshow_fast_mode = false\nshow_metered_cost = false\n" +
+		"[context]\nexceeds_200k_marker = false\n"
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Options.Model.ShowEffort || cfg.Options.Model.ShowFastMode || cfg.Options.Model.ShowMeteredCost {
+		t.Errorf("model segment toggles not overlaid: %+v", cfg.Options.Model)
+	}
+	if cfg.Options.Context.Exceeds200kMarker {
+		t.Errorf("context.exceeds_200k_marker not overlaid: %+v", cfg.Options.Context)
+	}
+}
+
+func TestSegmentToggleDefaultsOn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := Default()
+	if !cfg.Options.Model.ShowEffort || !cfg.Options.Model.ShowFastMode ||
+		!cfg.Options.Model.ShowMeteredCost || !cfg.Options.Context.Exceeds200kMarker {
+		t.Errorf("segment toggles must default on: %+v", cfg.Options)
+	}
+}
+
+func TestSegmentToggleInvalidTypeErrors(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	p := filepath.Join(t.TempDir(), "s.toml")
+	if err := os.WriteFile(p, []byte("[model]\nshow_effort = \"loud\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err == nil {
+		t.Error("a non-bool show_effort must surface a config error, not fall through silently")
+	}
+}

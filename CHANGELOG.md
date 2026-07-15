@@ -38,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Session-signal segments from the stdin payload** (fields verified live in
+  `docs/stdin-payload-inventory.md`): a dim reasoning-effort level and a
+  yellow `⚡ fast` badge on the model row; the session's accumulated cost
+  inside the `METERED BILLING` alarm (only while an API-key override is
+  active — a zero/absent cost renders nothing); and a dim `>200k` marker on
+  the context row once absolute tokens cross the long-context tier (distinct
+  from the `/compact` pressure badge). Each segment has a config toggle
+  (`[model] show_effort` / `show_fast_mode` / `show_metered_cost`,
+  `[context] exceeds_200k_marker`), all defaulting on.
+
 - **Cross-platform credential resolution** — the auth badge and usage
   meters now work on Linux, not just macOS. The subscription token resolves
   through Claude Code's own documented store precedence: the

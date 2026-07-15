@@ -24,6 +24,12 @@ activity = true
 show_auth = true         # "· Sub" / "· API" badge
 show_session = true      # "· session 0a1b2c3d" (first 8 chars of session id)
 show_context_size = true # append "1M"/"200k" to the model name
+show_effort = true       # "· xhigh" reasoning-effort level (dim; omitted when the host sends none)
+show_fast_mode = true    # "· ⚡ fast" while fast mode is active
+show_metered_cost = true # "· $12.34" inside the METERED BILLING alarm (only while it shows)
+
+[context]
+exceeds_200k_marker = true # dim ">200k" once the session crosses the 200k-token tier
 
 # Segments within the project row.
 [project]

@@ -17,17 +17,17 @@ func TestRenderIsEnvironmentIndependent(t *testing.T) {
 	// must never vary with tty-ness or color env vars (NO_COLOR is
 	// deliberately not honored — documented in the README). This guard must
 	// survive any styling-engine change.
-	baseline := ModelRow("Fable 5", 1000000, "Sub", "0a1b2c3d", "", false, DefaultOptions())
+	baseline := ModelRow(State{Model: "Fable 5", CtxSize: 1000000, Auth: "Sub", SessionID: "0a1b2c3d"}, "", DefaultOptions())
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("TERM", "dumb")
 	t.Setenv("CLICOLOR_FORCE", "0")
-	if got := ModelRow("Fable 5", 1000000, "Sub", "0a1b2c3d", "", false, DefaultOptions()); got != baseline {
+	if got := ModelRow(State{Model: "Fable 5", CtxSize: 1000000, Auth: "Sub", SessionID: "0a1b2c3d"}, "", DefaultOptions()); got != baseline {
 		t.Errorf("output varies with environment:\n got %q\nbase %q", got, baseline)
 	}
 }
 
 func TestModelRowFullState(t *testing.T) {
-	got := ModelRow("Fable 5", 1000000, "Sub", "0a1b2c3d-0000-4000-8000-000000000000", "", false, DefaultOptions())
+	got := ModelRow(State{Model: "Fable 5", CtxSize: 1000000, Auth: "Sub", SessionID: "0a1b2c3d-0000-4000-8000-000000000000"}, "", DefaultOptions())
 	want := "\x1b[2mmodel    \x1b[m\x1b[1;36mFable 5 1M\x1b[m\x1b[2m · \x1b[m\x1b[32mSub\x1b[m\x1b[2m · session 0a1b2c3d\x1b[m"
 	if got != want {
 		t.Errorf("ModelRow full:\n got %q\nwant %q", got, want)
@@ -35,20 +35,20 @@ func TestModelRowFullState(t *testing.T) {
 }
 
 func TestModelRowContextSizeLabel(t *testing.T) {
-	got := ModelRow("Fable 5", 200000, "Sub", "", "", false, DefaultOptions())
+	got := ModelRow(State{Model: "Fable 5", CtxSize: 200000, Auth: "Sub"}, "", DefaultOptions())
 	want := "\x1b[2mmodel    \x1b[m\x1b[1;36mFable 5 200k\x1b[m\x1b[2m · \x1b[m\x1b[32mSub\x1b[m"
 	if got != want {
 		t.Errorf("ModelRow 200k:\n got %q\nwant %q", got, want)
 	}
 	// Name already stating context: no size appended (mirrors *ontext* glob).
-	got = ModelRow("Opus 4.8 (1M context)", 1000000, "?", "", "", false, DefaultOptions())
+	got = ModelRow(State{Model: "Opus 4.8 (1M context)", CtxSize: 1000000, Auth: "?"}, "", DefaultOptions())
 	if strings.Contains(got, "context) 1M") {
 		t.Errorf("size appended despite name stating context: %q", got)
 	}
 }
 
 func TestModelRowAPIKeyWarning(t *testing.T) {
-	got := ModelRow("Fable 5", 200000, "API", "", "", true, DefaultOptions())
+	got := ModelRow(State{Model: "Fable 5", CtxSize: 200000, Auth: "API", APIKeySet: true}, "", DefaultOptions())
 	wantAuth := "\x1b[2m · \x1b[m\x1b[33mAPI\x1b[m"
 	wantWarn := " \x1b[1;37;41m ⚠ API KEY SET — METERED BILLING \x1b[m"
 	if !strings.Contains(got, wantAuth) {
@@ -111,7 +111,7 @@ func TestContextRowThresholds(t *testing.T) {
 		{88, "\x1b[2mcontext  \x1b[m\x1b[31m▓▓▓▓▓▓▓▓░░\x1b[m \x1b[1;31m88%\x1b[m \x1b[1;37;41m /compact \x1b[m"},
 	}
 	for _, c := range cases {
-		if got := ContextRow(c.pct); got != c.want {
+		if got := ContextRow(c.pct, false, DefaultOptions()); got != c.want {
 			t.Errorf("ContextRow(%d):\n got %q\nwant %q", c.pct, got, c.want)
 		}
 	}
@@ -297,10 +297,10 @@ func TestExtraBadgeEnabledNoSpendIsSilent(t *testing.T) {
 }
 
 func TestContextRowClampsAbove100(t *testing.T) {
-	got := ContextRow(120)
+	got := ContextRow(120, false, DefaultOptions())
 	want := "\x1b[2mcontext  \x1b[m\x1b[31m▓▓▓▓▓▓▓▓▓▓\x1b[m \x1b[1;31m120%\x1b[m \x1b[1;37;41m /compact \x1b[m"
 	if got != want {
-		t.Errorf("ContextRow(120):\n got %q\nwant %q", got, want)
+		t.Errorf("ContextRow(120, false, DefaultOptions()):\n got %q\nwant %q", got, want)
 	}
 }
 
@@ -376,5 +376,72 @@ func TestOptionsToggles(t *testing.T) {
 	got = Build(st, opts)
 	if strings.Contains(got, "⎇") {
 		t.Errorf("project row shown despite row toggle off: %q", got)
+	}
+}
+
+func TestModelRowEffortAndFastBadges(t *testing.T) {
+	st := State{Model: "Fable 5", CtxSize: 1000000, Auth: "Sub", Effort: "xhigh", FastMode: true}
+	got := ModelRow(st, "", DefaultOptions())
+	if !strings.Contains(got, "\x1b[2m · xhigh\x1b[m") {
+		t.Errorf("effort badge missing (dim furniture tier): %q", got)
+	}
+	if !strings.Contains(got, "\x1b[33m⚡ fast\x1b[m") {
+		t.Errorf("fast badge missing (yellow attention tier): %q", got)
+	}
+
+	o := DefaultOptions()
+	o.Model.ShowEffort, o.Model.ShowFastMode = false, false
+	got = ModelRow(st, "", o)
+	if strings.Contains(got, "xhigh") || strings.Contains(got, "⚡") {
+		t.Errorf("toggles off must suppress both badges: %q", got)
+	}
+
+	got = ModelRow(State{Model: "Fable 5", CtxSize: 1000000, Auth: "Sub"}, "", DefaultOptions())
+	if strings.Contains(got, "xhigh") || strings.Contains(got, "⚡") {
+		t.Errorf("absent effort/fast must render nothing: %q", got)
+	}
+}
+
+func TestModelRowMeteredCostReadout(t *testing.T) {
+	st := State{Model: "Fable 5", CtxSize: 1000000, Auth: "API", APIKeySet: true, CostUSD: 87.3046}
+	got := ModelRow(st, "", DefaultOptions())
+	if !strings.Contains(got, " ⚠ API KEY SET — METERED BILLING · $87.30 ") {
+		t.Errorf("alarm must carry the session cost: %q", got)
+	}
+
+	st.APIKeySet = false
+	if got := ModelRow(st, "", DefaultOptions()); strings.Contains(got, "$") {
+		t.Errorf("cost must render ONLY under the metered alarm: %q", got)
+	}
+
+	st.APIKeySet, st.CostUSD = true, 0
+	got = ModelRow(st, "", DefaultOptions())
+	if !strings.Contains(got, " ⚠ API KEY SET — METERED BILLING ") || strings.Contains(got, "$") {
+		t.Errorf("zero/absent cost must leave the alarm plain (no fabricated $0.00): %q", got)
+	}
+
+	o := DefaultOptions()
+	o.Model.ShowMeteredCost = false
+	st.CostUSD = 87.3046
+	if got := ModelRow(st, "", o); strings.Contains(got, "$") {
+		t.Errorf("show_metered_cost=false must suppress the readout: %q", got)
+	}
+}
+
+func TestContextRow200kMarker(t *testing.T) {
+	if got := ContextRow(30, true, DefaultOptions()); !strings.Contains(got, "\x1b[2m>200k\x1b[m") {
+		t.Errorf("dim >200k marker missing: %q", got)
+	}
+	if got := ContextRow(30, false, DefaultOptions()); strings.Contains(got, ">200k") {
+		t.Errorf(">200k marker must not render when flag is false: %q", got)
+	}
+	o := DefaultOptions()
+	o.Context.Exceeds200kMarker = false
+	if got := ContextRow(30, true, o); strings.Contains(got, ">200k") {
+		t.Errorf("exceeds_200k_marker=false must suppress the marker: %q", got)
+	}
+	got := ContextRow(87, true, DefaultOptions())
+	if !strings.Contains(got, ">200k") || !strings.Contains(got, "/compact") {
+		t.Errorf("marker and /compact badge must coexist at 87%%: %q", got)
 	}
 }

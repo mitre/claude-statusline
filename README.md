@@ -16,7 +16,8 @@ Rows collapse when they have nothing to say. Alarms are loud only when
 abnormal: a `/compact` badge at ≥85% context, reset times once a usage window
 runs hot (≥80%), an `⚠ EXTRA USAGE` badge while extra-usage credits are
 actively billing, and an `⚠ API KEY SET — METERED BILLING` alarm whenever an
-`ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` override is exported.
+`ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` override is exported — carrying
+the session's accumulated cost (`· $12.34`) once there is any.
 
 ## Install
 
@@ -57,6 +58,10 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | `[model] show_auth` | `true` | `Sub`/`API` auth badge |
 | `[model] show_session` | `true` | Short session-id segment |
 | `[model] show_context_size` | `true` | `1M`/`200k` context-window size after the model name |
+| `[model] show_effort` | `true` | Dim reasoning-effort level (`xhigh`, …); omitted when the host sends none |
+| `[model] show_fast_mode` | `true` | `⚡ fast` badge while fast mode is active |
+| `[model] show_metered_cost` | `true` | Session cost inside the metered-billing alarm (only while the alarm shows) |
+| `[context] exceeds_200k_marker` | `true` | Dim `>200k` once the session crosses the 200k-token tier |
 | `[project] show_branch` | `true` | Git branch (`@sha` when detached) |
 | `[project] show_dirty` | `true` | Changed-file count |
 | `[project] tilde_home` | `true` | Shorten the `$HOME` prefix to `~` |
@@ -76,9 +81,9 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 
 | Row | Content |
 |-----|---------|
-| `model` | Model name + context-window size, auth mode (`Sub`/`API`), short session id (distinguishes concurrent sessions in one repo) |
+| `model` | Model name + context-window size, auth mode (`Sub`/`API`), reasoning-effort level, `⚡ fast` badge when fast mode is active, short session id (distinguishes concurrent sessions in one repo) |
 | `project` | Current directory (`~`-shortened), git branch (`@sha` when detached), changed-file count, long-held `index.lock` age badge |
-| `context` | Context-window usage bar; green <50%, yellow <80%, red ≥80%, `/compact` badge ≥85% |
+| `context` | Context-window usage bar; green <50%, yellow <80%, red ≥80%, dim `>200k` once absolute tokens cross the long-context tier, `/compact` badge ≥85% |
 | `account` | ACCOUNT-scope subscription meters (Sub auth only, macOS and Linux; Windows uses the same credentials-file mechanism and is expected to work — unverified) — see meter table below |
 | `activity` | Session duration and lines added/removed |
 

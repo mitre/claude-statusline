@@ -49,7 +49,13 @@ type fileSchema struct {
 		ShowAuth        *bool `toml:"show_auth"`
 		ShowSession     *bool `toml:"show_session"`
 		ShowContextSize *bool `toml:"show_context_size"`
+		ShowEffort      *bool `toml:"show_effort"`
+		ShowFastMode    *bool `toml:"show_fast_mode"`
+		ShowMeteredCost *bool `toml:"show_metered_cost"`
 	} `toml:"model"`
+	Context struct {
+		Exceeds200kMarker *bool `toml:"exceeds_200k_marker"`
+	} `toml:"context"`
 	Project struct {
 		ShowBranch     *bool   `toml:"show_branch"`
 		ShowDirty      *bool   `toml:"show_dirty"`
@@ -135,6 +141,10 @@ func Load(path string) (Config, error) {
 	setB(&cfg.Options.Model.ShowAuth, f.Model.ShowAuth)
 	setB(&cfg.Options.Model.ShowSession, f.Model.ShowSession)
 	setB(&cfg.Options.Model.ShowContextSize, f.Model.ShowContextSize)
+	setB(&cfg.Options.Model.ShowEffort, f.Model.ShowEffort)
+	setB(&cfg.Options.Model.ShowFastMode, f.Model.ShowFastMode)
+	setB(&cfg.Options.Model.ShowMeteredCost, f.Model.ShowMeteredCost)
+	setB(&cfg.Options.Context.Exceeds200kMarker, f.Context.Exceeds200kMarker)
 	setB(&cfg.Options.Project.ShowBranch, f.Project.ShowBranch)
 	setB(&cfg.Options.Project.ShowDirty, f.Project.ShowDirty)
 	setB(&cfg.Options.Project.TildeHome, f.Project.TildeHome)

@@ -71,6 +71,18 @@ type State struct {
 	LinesAdded   int
 	LinesRemoved int
 	APIKeySet    bool
+	// Effort is the session's reasoning-effort level ("" = segment omitted).
+	Effort string
+	// FastMode renders the ⚡ fast badge when true.
+	FastMode bool
+	// CostUSD is the session's accumulated API cost; rendered only inside
+	// the metered-billing alarm (APIKeySet), and only when > 0 — a zero is
+	// indistinguishable from an absent field and must not be fabricated.
+	CostUSD float64
+	// Exceeds200k marks the session crossing the absolute 200k-token
+	// threshold (long-context tier on 1M windows) — independent of window
+	// pressure, which the /compact badge tracks.
+	Exceeds200k bool
 }
 
 // Options are the user-configurable display toggles (config maps TOML here).
@@ -80,9 +92,17 @@ type Options struct {
 	}
 	Model struct {
 		ShowAuth, ShowSession, ShowContextSize bool
+		// ShowEffort/ShowFastMode gate the reasoning-effort and ⚡ fast
+		// badges; ShowMeteredCost gates the $ readout inside the
+		// metered-billing alarm.
+		ShowEffort, ShowFastMode, ShowMeteredCost bool
 	}
 	Project struct {
 		ShowBranch, ShowDirty, TildeHome bool
+	}
+	Context struct {
+		// Exceeds200kMarker gates the dim >200k long-context marker.
+		Exceeds200kMarker bool
 	}
 	Account struct {
 		// AlwaysShowResets: true = show (resets …) on every meter (config
@@ -108,7 +128,9 @@ func DefaultOptions() Options {
 	var o Options
 	o.Rows.Model, o.Rows.Project, o.Rows.Context, o.Rows.Account, o.Rows.Activity = true, true, true, true, true
 	o.Model.ShowAuth, o.Model.ShowSession, o.Model.ShowContextSize = true, true, true
+	o.Model.ShowEffort, o.Model.ShowFastMode, o.Model.ShowMeteredCost = true, true, true
 	o.Project.ShowBranch, o.Project.ShowDirty, o.Project.TildeHome = true, true, true
+	o.Context.Exceeds200kMarker = true
 	o.Account.AlwaysShowResets = true
 	o.Account.ShowEmail = true
 	o.Account.EmailDim = false
@@ -121,36 +143,52 @@ func lbl(name string) string {
 	return dimS.Render(fmt.Sprintf("%-9s", name))
 }
 
-// ModelRow renders the model name (+context size), auth badge, session id,
-// extra-usage badge, and the metered-billing alarm.
-func ModelRow(model string, ctxSize int, auth, sessionID, extraBadge string, apiKeySet bool, o Options) string {
-	name := model
+// ModelRow renders the model name (+context size), auth badge, effort and
+// fast-mode badges, session id, extra-usage badge, and the metered-billing
+// alarm (carrying the session's accumulated cost when known).
+func ModelRow(st State, extraBadge string, o Options) string {
+	name := st.Model
 	if o.Model.ShowContextSize && !strings.Contains(name, "ontext") {
-		if ctxSize >= 1000000 {
-			name += fmt.Sprintf(" %dM", ctxSize/1000000)
+		if st.CtxSize >= 1000000 {
+			name += fmt.Sprintf(" %dM", st.CtxSize/1000000)
 		} else {
-			name += fmt.Sprintf(" %dk", ctxSize/1000)
+			name += fmt.Sprintf(" %dk", st.CtxSize/1000)
 		}
 	}
 	row := lbl("model") + nameS.Render(name)
 	if o.Model.ShowAuth {
-		switch auth {
+		switch st.Auth {
 		case "Sub":
 			row += dimS.Render(" · ") + grnS.Render("Sub")
 		case "API":
 			row += dimS.Render(" · ") + ylwS.Render("API")
 		}
 	}
-	if o.Model.ShowSession && sessionID != "" {
-		short := sessionID
+	if o.Model.ShowEffort && st.Effort != "" {
+		// Furniture tier: effort is standing information, not an alert.
+		row += dimS.Render(" · " + st.Effort)
+	}
+	if o.Model.ShowFastMode && st.FastMode {
+		// Attention tier: fast mode changes the session's cost profile.
+		row += dimS.Render(" · ") + ylwS.Render("⚡ fast")
+	}
+	if o.Model.ShowSession && st.SessionID != "" {
+		short := st.SessionID
 		if len(short) > 8 {
 			short = short[:8]
 		}
 		row += dimS.Render(" · session " + short)
 	}
 	row += extraBadge
-	if apiKeySet {
-		row += " " + alarmS.Render(" ⚠ API KEY SET — METERED BILLING ")
+	if st.APIKeySet {
+		alarm := " ⚠ API KEY SET — METERED BILLING "
+		if o.Model.ShowMeteredCost && st.CostUSD > 0 {
+			// The readout exists only inside the alarm: cost is rendered
+			// exactly when it is being incurred; zero stays silent (an
+			// absent field decodes to 0 — never fabricate $0.00).
+			alarm = fmt.Sprintf(" ⚠ API KEY SET — METERED BILLING · $%.2f ", st.CostUSD)
+		}
+		row += " " + alarmS.Render(alarm)
 	}
 	return row
 }
@@ -180,8 +218,10 @@ func ProjectRow(cwd, home, branch string, dirty int, lockAge time.Duration, o Op
 }
 
 // ContextRow renders the 10-segment context bar with green/yellow/red
-// thresholds and the /compact alarm at >= 85%.
-func ContextRow(pct int) string {
+// thresholds, the dim >200k long-context marker, and the /compact alarm at
+// >= 85%. The marker and the alarm answer different questions: absolute
+// tokens past the 200k tier boundary vs pressure on the window.
+func ContextRow(pct int, exceeds200k bool, o Options) string {
 	filled := min(pct/10, 10)
 	bar := strings.Repeat("▓", filled) + strings.Repeat("░", 10-filled)
 
@@ -194,6 +234,9 @@ func ContextRow(pct int) string {
 	}
 
 	row := lbl("context") + barS.Render(bar) + " " + labelS.Render(fmt.Sprintf("%d%%", pct))
+	if exceeds200k && o.Context.Exceeds200kMarker {
+		row += " " + dimS.Render(">200k")
+	}
 	if pct >= 85 {
 		row += " " + alarmS.Render(" /compact ")
 	}
@@ -340,9 +383,9 @@ func Build(st State, o Options) string {
 	if st.Usage != nil {
 		extra = ExtraBadge(*st.Usage)
 	}
-	add(o.Rows.Model, ModelRow(st.Model, st.CtxSize, st.Auth, st.SessionID, extra, st.APIKeySet, o))
+	add(o.Rows.Model, ModelRow(st, extra, o))
 	add(o.Rows.Project, ProjectRow(st.CWD, st.Home, st.Branch, st.Dirty, st.LockAge, o))
-	add(o.Rows.Context, ContextRow(st.CtxPct))
+	add(o.Rows.Context, ContextRow(st.CtxPct, st.Exceeds200k, o))
 	if st.Usage != nil {
 		add(o.Rows.Account, AccountRow(*st.Usage, o))
 	}

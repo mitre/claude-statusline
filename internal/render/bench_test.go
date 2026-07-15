@@ -21,6 +21,7 @@ func benchState() State {
 		CWD:       "/Users/dev/projects/demo-app",
 		Home:      "/Users/dev", Branch: "main", Dirty: 2,
 		CtxPct: 87, LockAge: 14 * time.Minute, APIKeySet: true,
+		Effort: "xhigh", FastMode: true, CostUSD: 87.3046, Exceeds200k: true,
 		Usage: &Usage{
 			Email: "dev@example.com",
 			U5:    85, R5: "1:30p", U7: 82, R7: "Mon 10:00a",

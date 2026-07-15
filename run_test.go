@@ -67,9 +67,9 @@ func e2eDeps(t testing.TB, stdinFixture string) deps {
 func TestRunEndToEndGolden(t *testing.T) {
 	out, errOut := run(e2eDeps(t, "full.json"))
 	want := strings.Join([]string{
-		"\x1b[2mmodel    \x1b[m\x1b[1;36mFable 5 1M\x1b[m\x1b[2m · \x1b[m\x1b[32mSub\x1b[m\x1b[2m · session 0a1b2c3d\x1b[m",
+		"\x1b[2mmodel    \x1b[m\x1b[1;36mFable 5 1M\x1b[m\x1b[2m · \x1b[m\x1b[32mSub\x1b[m\x1b[2m · xhigh\x1b[m\x1b[2m · \x1b[m\x1b[33m⚡ fast\x1b[m\x1b[2m · session 0a1b2c3d\x1b[m",
 		"\x1b[2mproject  \x1b[m\x1b[1m~/projects/demo-app\x1b[m \x1b[2m·\x1b[m \x1b[34m⎇ main\x1b[m \x1b[33m~2\x1b[m",
-		"\x1b[2mcontext  \x1b[m\x1b[32m▓▓▓░░░░░░░\x1b[m \x1b[32m30%\x1b[m",
+		"\x1b[2mcontext  \x1b[m\x1b[32m▓▓▓░░░░░░░\x1b[m \x1b[32m30%\x1b[m \x1b[2m>200k\x1b[m",
 		"\x1b[2maccount  \x1b[mdev@example.com \x1b[2m·\x1b[m \x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m",
 		"\x1b[2mactivity \x1b[m\x1b[2m17h23m\x1b[m \x1b[2m·\x1b[m \x1b[32m+1,598\x1b[m/\x1b[31m-8\x1b[m \x1b[2mlines\x1b[m",
 	}, "\n")
