@@ -1,0 +1,17 @@
+{
+  "description": "Keeps the installed statusline binary version-pinned to the plugin: SessionStart, background download with sha256 verification, silent, never touches dev builds",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/scripts/sync-binary.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

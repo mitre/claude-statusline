@@ -1,0 +1,16 @@
+{
+  "name": "claude-statusline",
+  "description": "MITRE SAF marketplace for the claude-statusline plugin \u2014 a fast native status line for Claude Code",
+  "owner": {
+    "name": "MITRE Security Automation Framework",
+    "email": "saf@mitre.org"
+  },
+  "plugins": [
+    {
+      "name": "claude-statusline",
+      "source": "./",
+      "description": "A fast, configurable status line for Claude Code \u2014 single static Go binary, zero runtime dependencies",
+      "version": "0.1.0"
+    }
+  ]
+}

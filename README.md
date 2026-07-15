@@ -21,6 +21,18 @@ the session's accumulated cost (`· $12.34`) once there is any.
 
 ## Install
 
+As a Claude Code plugin (installs the release binary, checksum-verified, and
+wires `settings.json` with your consent; a SessionStart hook keeps the binary
+version-pinned to the plugin from then on):
+
+```
+/plugin marketplace add mitre/claude-statusline
+/plugin install claude-statusline@claude-statusline
+/claude-statusline:setup
+```
+
+Or with Go:
+
 ```sh
 go install github.com/mitre/claude-statusline@latest
 ```

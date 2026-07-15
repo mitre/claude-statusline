@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Claude Code plugin**: the repo is its own marketplace
+  (`/plugin marketplace add mitre/claude-statusline`). The setup command
+  installs the release binary for your OS/arch with mandatory sha256
+  verification against the release's `checksums.txt` (any mismatch refuses),
+  backs up and edits `settings.json` only with explicit consent, and an
+  uninstall command reverses both. A silent SessionStart hook keeps the
+  installed binary version-pinned to the plugin — it never touches `dev`
+  builds, so a developer's own HEAD build always wins.
+
 ## [0.1.0] - 2026-07-15
 
 ### Removed

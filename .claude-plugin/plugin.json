@@ -1,0 +1,19 @@
+{
+  "name": "claude-statusline",
+  "version": "0.1.0",
+  "description": "A fast, configurable status line for Claude Code \u2014 single static Go binary, zero runtime dependencies",
+  "author": {
+    "name": "MITRE Security Automation Framework",
+    "url": "https://github.com/mitre"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/mitre/claude-statusline",
+  "repository": "https://github.com/mitre/claude-statusline",
+  "keywords": [
+    "status-line",
+    "statusline",
+    "git",
+    "usage-meters",
+    "telemetry"
+  ]
+}
