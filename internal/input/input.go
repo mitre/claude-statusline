@@ -26,6 +26,20 @@ type Session struct {
 	Effort      string
 	FastMode    bool
 	Exceeds200k bool
+	// RateLimitsOK gates the stdin-sourced meter fallback — true only when
+	// rate_limits carries five_hour.used_percentage (the same strict shape
+	// gate usage.Parse applies to endpoint payloads; never fabricated).
+	RateLimitsOK bool
+	R5Pct, R7Pct int
+	// Reset moments as epoch seconds (the stdin encoding; the endpoint
+	// serves RFC3339). 0 = absent, no label.
+	R5ResetUnix, R7ResetUnix int64
+}
+
+// rlWindow is one stdin rate-limit window; pointers detect absence.
+type rlWindow struct {
+	UsedPercentage *float64 `json:"used_percentage"`
+	ResetsAt       int64    `json:"resets_at"`
 }
 
 type payload struct {
@@ -52,6 +66,10 @@ type payload struct {
 	} `json:"effort"`
 	FastMode    bool `json:"fast_mode"`
 	Exceeds200k bool `json:"exceeds_200k_tokens"`
+	RateLimits  struct {
+		FiveHour *rlWindow `json:"five_hour"`
+		SevenDay *rlWindow `json:"seven_day"`
+	} `json:"rate_limits"`
 }
 
 // Parse reads the stdin JSON and applies the reference defaults
@@ -84,6 +102,15 @@ func Parse(r io.Reader) (Session, error) {
 	}
 	if s.CtxSize == 0 {
 		s.CtxSize = 200000
+	}
+	if fh := p.RateLimits.FiveHour; fh != nil && fh.UsedPercentage != nil {
+		s.RateLimitsOK = true
+		s.R5Pct = int(math.Floor(*fh.UsedPercentage))
+		s.R5ResetUnix = fh.ResetsAt
+		if sd := p.RateLimits.SevenDay; sd != nil && sd.UsedPercentage != nil {
+			s.R7Pct = int(math.Floor(*sd.UsedPercentage))
+			s.R7ResetUnix = sd.ResetsAt
+		}
 	}
 	return s, nil
 }

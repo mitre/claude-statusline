@@ -232,8 +232,13 @@ func TestRunGitTimeoutZeroDisablesDeadline(t *testing.T) {
 }
 
 func TestRunFetchFailureCollapsesLimitsRow(t *testing.T) {
+	// No endpoint data AND no stdin rate_limits: nothing truthful to show,
+	// so the row collapses — never fabricated zeros. (With stdin
+	// rate_limits present, the live-meter fallback renders instead — see
+	// TestRunNoCacheStdinMetersStillRender.)
 	d := e2eDeps(t, "full.json")
 	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("rate limited") }
+	d.stdin = strings.NewReader(e2eStdinNoRateLimits)
 	out, _ := run(d)
 	if strings.Contains(out, "account") {
 		t.Errorf("account row rendered without data (fabricated zeros?): %q", out)
@@ -266,6 +271,9 @@ func TestRunStaleUsageDataShowsDimAgeMarker(t *testing.T) {
 	// reading cache mtimes (the 2:00p diagnosis, 2026-07-03).
 	d := e2eDeps(t, "full.json")
 	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+	// Endpoint-stale semantics require a stdin WITHOUT rate_limits — with
+	// them, the live-meter fallback takes over (its own tests below).
+	d.stdin = strings.NewReader(e2eStdinNoRateLimits)
 
 	p := filepath.Join(e2eCacheDir(t, d), "usage")
 	if err := os.WriteFile(p, []byte(e2eUsagePayload), 0o600); err != nil {
@@ -337,6 +345,7 @@ func TestRunStaleAgeMarkerToggleOff(t *testing.T) {
 	// proves the config→render wiring, not just the Options field.
 	d := e2eDeps(t, "full.json")
 	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+	d.stdin = strings.NewReader(e2eStdinNoRateLimits) // endpoint-stale semantics, no fallback
 	appendConfig(t, d, "[account]\nshow_stale_age = false\n")
 
 	p := filepath.Join(e2eCacheDir(t, d), "usage")
@@ -352,5 +361,50 @@ func TestRunStaleAgeMarkerToggleOff(t *testing.T) {
 	want := "\x1b[2maccount  \x1b[mdev@example.com \x1b[2m·\x1b[m \x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m"
 	if !strings.Contains(out, want) || strings.Contains(out, "old)") {
 		t.Errorf("show_stale_age=false must serve stale meters without the marker:\n got %q\nwant row %q", out, want)
+	}
+}
+
+// e2eStdinNoRateLimits mirrors full.json WITHOUT the rate_limits block —
+// the pre-fallback stdin shape, for tests pinning pure endpoint semantics.
+const e2eStdinNoRateLimits = `{"session_id":"0a1b2c3d-0000-4000-8000-000000000000",` +
+	`"model":{"display_name":"Fable 5"},` +
+	`"workspace":{"current_dir":"/Users/dev/projects/demo-app"},` +
+	`"context_window":{"used_percentage":30,"context_window_size":1000000},` +
+	`"cost":{"total_lines_added":1598,"total_lines_removed":8,"total_duration_ms":62580000}}`
+
+func TestRunStaleFallbackUsesStdinMeters(t *testing.T) {
+	// Fetch failing + stale cache + stdin rate_limits: the live stdin
+	// meters (42/77) replace the stale endpoint values (5/13), and the age
+	// marker disappears — nothing stale remains visible (no model window).
+	d := e2eDeps(t, "full.json")
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+	p := filepath.Join(e2eCacheDir(t, d), "usage")
+	if err := os.WriteFile(p, []byte(e2eUsagePayload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-6 * time.Minute)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _ := run(d)
+	if !strings.Contains(out, "5h 42%") || !strings.Contains(out, "week 77%") {
+		t.Errorf("stdin meters must replace stale endpoint values: %q", out)
+	}
+	if strings.Contains(out, "5h 5%") || strings.Contains(out, "old)") {
+		t.Errorf("stale values/marker must not render with live stdin meters: %q", out)
+	}
+}
+
+func TestRunNoCacheStdinMetersStillRender(t *testing.T) {
+	// Fetch failing + NO cache at all: before the fallback the account row
+	// collapsed; with stdin rate_limits it renders live meters + email.
+	d := e2eDeps(t, "full.json")
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+
+	out, _ := run(d)
+	if !strings.Contains(out, "account") || !strings.Contains(out, "5h 42%") ||
+		!strings.Contains(out, "week 77%") || !strings.Contains(out, "dev@example.com") {
+		t.Errorf("stdin-only account row must render when no cache exists: %q", out)
 	}
 }

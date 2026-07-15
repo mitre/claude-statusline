@@ -445,3 +445,24 @@ func TestContextRow200kMarker(t *testing.T) {
 		t.Errorf("marker and /compact badge must coexist at 87%%: %q", got)
 	}
 }
+
+func TestAccountRowMixedSourceStaleMarker(t *testing.T) {
+	// Mixed mode: live stdin meters + stale endpoint extras. The dim age
+	// marker qualifies only visible stale data — with live meters it renders
+	// exactly when an endpoint-sourced segment (the model window) shows.
+	u := Usage{Email: "dev@example.com", U5: 19, U7: 45, DataAge: 6 * time.Minute, MetersLive: true}
+	if got := AccountRow(u, DefaultOptions()); strings.Contains(got, "old)") {
+		t.Errorf("live meters with no visible stale segment must carry no marker: %q", got)
+	}
+
+	u.ModelFamily, u.ModelPct = "opus", 41
+	if got := AccountRow(u, DefaultOptions()); !strings.Contains(got, "\x1b[2m(data 6m old)\x1b[m") {
+		t.Errorf("visible stale model window must keep the marker: %q", got)
+	}
+
+	// Endpoint-sourced meters (MetersLive false): today's behavior unchanged.
+	u = Usage{Email: "dev@example.com", U5: 5, U7: 13, DataAge: 6 * time.Minute}
+	if got := AccountRow(u, DefaultOptions()); !strings.Contains(got, "(data 6m old)") {
+		t.Errorf("stale endpoint meters must keep the marker: %q", got)
+	}
+}

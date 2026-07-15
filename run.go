@@ -102,13 +102,31 @@ func run(d deps) (string, string) {
 
 	if cfg.Usage.Enabled && badge == "Sub" {
 		ttl := time.Duration(cfg.Usage.TTLSeconds) * time.Second
-		if raw, staleFor, ok := usage.Resolve(cfg.CacheDir, ttl, time.Now(), d.fetchUsage); ok {
+		now := time.Now()
+		var u render.Usage
+		have := false
+		if raw, staleFor, ok := usage.Resolve(cfg.CacheDir, ttl, now, d.fetchUsage); ok {
 			family := usage.FamilyFromModelName(sess.ModelName)
-			if u, uerr := usage.Parse(raw, time.Now(), family); uerr == nil {
-				u.Email = account.Email(d.getenv("HOME"), d.readFile)
+			if p, uerr := usage.Parse(raw, now, family); uerr == nil {
+				u, have = p, true
 				u.DataAge = staleFor
-				st.Usage = &u
 			}
+		}
+		// The stdin payload carries the two all-model meters since v2.1.210.
+		// When the endpoint data is stale — or absent entirely (the row used
+		// to collapse) — this render's live values replace those meters:
+		// fresher by definition. Endpoint-only segments (model window, extra
+		// usage) keep their stale-good semantics, and the render layer scopes
+		// the dim age marker to the stale data that remains visible.
+		if sess.RateLimitsOK && (!have || u.DataAge > 0) {
+			u.U5, u.R5 = sess.R5Pct, usage.ResetLabelUnix(sess.R5ResetUnix, now)
+			u.U7, u.R7 = sess.R7Pct, usage.ResetLabelUnix(sess.R7ResetUnix, now)
+			u.MetersLive = true
+			have = true
+		}
+		if have {
+			u.Email = account.Email(d.getenv("HOME"), d.readFile)
+			st.Usage = &u
 		}
 	}
 

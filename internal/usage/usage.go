@@ -105,8 +105,8 @@ func Parse(raw []byte, now time.Time, family string) (render.Usage, error) {
 	return u, nil
 }
 
-// resetLabel formats a reset timestamp in local time: same-day → "1:30p",
-// other day → "Mon 10:00a" (mirrors the reference's python formatter).
+// resetLabel formats an RFC3339 reset timestamp (the endpoint's encoding).
+// Unparseable or empty input renders no label.
 func resetLabel(iso string, now time.Time) string {
 	if iso == "" {
 		return ""
@@ -115,6 +115,22 @@ func resetLabel(iso string, now time.Time) string {
 	if err != nil {
 		return ""
 	}
+	return labelAt(t, now)
+}
+
+// ResetLabelUnix formats an epoch-seconds reset moment (the stdin payload's
+// encoding). Zero or negative renders no label. Same formatting core as
+// resetLabel — one source of truth for reset labels.
+func ResetLabelUnix(unix int64, now time.Time) string {
+	if unix <= 0 {
+		return ""
+	}
+	return labelAt(time.Unix(unix, 0), now)
+}
+
+// labelAt is the shared reset-label core, in local time: same-day → "1:30p",
+// other day → "Mon 10:00a" (mirrors the reference's python formatter).
+func labelAt(t, now time.Time) string {
 	t = t.In(now.Location())
 	h := t.Hour() % 12
 	if h == 0 {

@@ -115,11 +115,16 @@ subscription — two concurrent sessions correctly show the same pools):
 Reset times show on every meter by default; `show_resets = "quiet"` restores
 the hot-only (≥80%) behavior.
 
-When the usage endpoint can't be reached, the row serves the last
-known-good payload and says so: a trailing dim `(data 6m old)` marker shows
-the served payload's age, clearing on the first successful fetch. The
-meters keep their true (old) values — the marker qualifies the data, it
-never censors it. `show_stale_age = false` hides the marker.
+When the usage endpoint can't be reached, the row degrades in two stages.
+Claude Code v2.1.210+ sends the two all-model meters in the statusline
+payload itself, so `5h`/`week` switch to those **live** values (no network
+needed — even when no cached payload exists at all). Endpoint-only segments
+(the per-model window, the extra-usage badge) keep serving the last
+known-good payload, qualified by a trailing dim `(data 6m old)` age marker
+whenever such stale data is actually visible. On hosts whose payload lacks
+`rate_limits`, the old behavior remains: the whole row serves the stale
+payload with the marker, and collapses only when there is no data at all —
+values are never fabricated. `show_stale_age = false` hides the marker.
 
 ## Design notes
 

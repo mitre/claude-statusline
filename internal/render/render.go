@@ -50,6 +50,11 @@ type Usage struct {
 	// Non-zero renders the trailing dim age marker — the meters keep their
 	// true (old) values, the marker qualifies them.
 	DataAge time.Duration
+	// MetersLive marks the 5h/week meters as stdin-sourced (live this
+	// render) while DataAge still describes the stale endpoint payload
+	// behind the remaining segments. The age marker then qualifies only
+	// visible stale data: it renders solely when the model window shows.
+	MetersLive bool
 }
 
 // State is everything the renderer needs for one frame.
@@ -286,10 +291,12 @@ func AccountRow(u Usage, o Options) string {
 	if u.ModelFamily != "" {
 		parts = append(parts, meter(fmt.Sprintf("%s/wk %d%%", u.ModelFamily, u.ModelPct), u.ModelPct, u.ModelReset, always))
 	}
-	if u.DataAge > 0 && o.Account.ShowStaleAge {
-		// Stale-good fallback engaged: qualify the meters with a factual,
-		// dim age — informational tier, never alarm styling (red stays
-		// reserved for billing/API alarms).
+	if u.DataAge > 0 && o.Account.ShowStaleAge && (!u.MetersLive || u.ModelFamily != "") {
+		// Stale-good fallback engaged: qualify the stale data with a
+		// factual, dim age — informational tier, never alarm styling (red
+		// stays reserved for billing/API alarms). With live stdin meters
+		// the marker applies only to the endpoint-sourced model window, so
+		// it renders only while that segment is visible.
 		parts = append(parts, dimS.Render("(data "+ageLabel(u.DataAge)+" old)"))
 	}
 	return lbl("account") + strings.Join(parts, sepDot)

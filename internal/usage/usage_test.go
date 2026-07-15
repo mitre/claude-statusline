@@ -366,3 +366,22 @@ func TestTokenFromCredentialJSON(t *testing.T) {
 		t.Error("missing token must error")
 	}
 }
+
+func TestResetLabelUnix(t *testing.T) {
+	// One formatting source of truth with resetLabel: same-day → short
+	// form, other-day → weekday prefix, zero → no label. Fixed now for
+	// determinism; locations resolved through now's zone like resetLabel.
+	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	sameDay := time.Date(2026, 7, 3, 13, 30, 0, 0, time.UTC).Unix()
+	otherDay := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC).Unix()
+
+	if got := ResetLabelUnix(sameDay, now); got != "1:30p" {
+		t.Errorf("same-day label = %q, want \"1:30p\"", got)
+	}
+	if got := ResetLabelUnix(otherDay, now); got != "Mon 10:00a" {
+		t.Errorf("other-day label = %q, want \"Mon 10:00a\"", got)
+	}
+	if got := ResetLabelUnix(0, now); got != "" {
+		t.Errorf("zero epoch label = %q, want \"\"", got)
+	}
+}

@@ -120,3 +120,39 @@ func TestParseSegmentFieldsAbsentStayZero(t *testing.T) {
 		t.Errorf("absent segment fields must stay zero: %+v", s)
 	}
 }
+
+func TestParseRateLimits(t *testing.T) {
+	j := `{"model":{"display_name":"Fable 5"},"rate_limits":{` +
+		`"five_hour":{"used_percentage":19.6,"resets_at":1784134800},` +
+		`"seven_day":{"used_percentage":45,"resets_at":1784556000}}}`
+	s, err := Parse(strings.NewReader(j))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !s.RateLimitsOK {
+		t.Fatal("RateLimitsOK = false with a well-formed rate_limits block")
+	}
+	if s.R5Pct != 19 || s.R7Pct != 45 {
+		t.Errorf("percentages = %d/%d, want floor 19/45", s.R5Pct, s.R7Pct)
+	}
+	if s.R5ResetUnix != 1784134800 || s.R7ResetUnix != 1784556000 {
+		t.Errorf("resets = %d/%d, want the epoch values", s.R5ResetUnix, s.R7ResetUnix)
+	}
+}
+
+func TestParseRateLimitsAbsentOrMalformed(t *testing.T) {
+	for _, j := range []string{
+		`{"model":{"display_name":"Fable 5"}}`,
+		`{"rate_limits":{}}`,
+		`{"rate_limits":{"five_hour":{}}}`,
+		`{"rate_limits":{"five_hour":null}}`,
+	} {
+		s, err := Parse(strings.NewReader(j))
+		if err != nil {
+			t.Fatalf("Parse(%s): %v", j, err)
+		}
+		if s.RateLimitsOK {
+			t.Errorf("RateLimitsOK = true for %s — the shape gate requires five_hour.used_percentage", j)
+		}
+	}
+}

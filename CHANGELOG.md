@@ -38,6 +38,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Live stdin fallback for the 5h/week meters**: Claude Code v2.1.210+
+  carries `rate_limits` in the statusline payload, so when the usage
+  endpoint is unreachable the two all-model meters render this render's
+  live values instead of stale cache — and the account row now survives
+  even with no cache at all (it used to collapse). Endpoint-only segments
+  (per-model window, extra-usage badge) keep stale-good semantics, with
+  the dim age marker scoped to stale data that is actually visible. Epoch
+  reset moments share the same label formatting as the endpoint's RFC3339
+  ones. The endpoint stays primary; hosts without `rate_limits` keep the
+  previous behavior exactly.
+
 - **goreleaser release pipeline + `--version` flag**: one artifact pipeline
   (darwin/linux × arm64/amd64 archives, `checksums.txt`, git changelog)
   replaces the hand-rolled cross-compile; `make snapshot` proves it locally
