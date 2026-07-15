@@ -27,12 +27,16 @@ jobs:
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.3
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      # Pinned to the same version the release workflow uses.
+      - name: Install goreleaser
+        run: go install github.com/goreleaser/goreleaser/v2@v2.17.0
       - run: make lint
       - run: make vuln
       - run: make race
       - run: make cover
-      # Cross-compile matrix doubles as a multi-platform compile check.
-      - run: make release
+      # Snapshot build: the multi-platform compile check plus a full dry run
+      # of the release pipeline (archives + checksums) — publishes nothing.
+      - run: make snapshot
 # The macOS byte-parity job was retired 2026-07-03 alongside the parity make
 # target: the first intentional display change (account row) ended the
 # byte-parity era. Go golden tests are the display spec of record.
