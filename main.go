@@ -65,6 +65,15 @@ func keychainCredentialJSON() (string, error) {
 	return string(out), nil
 }
 
+// usageEndpoint and usageHTTPTimeout are test seams: main_test points them
+// at an httptest server with a short deadline. Production wiring never
+// overrides them — injection stays at the var level so fetchUsage keeps a
+// single, branch-free production path.
+var (
+	usageEndpoint    = "https://api.anthropic.com/api/oauth/usage"
+	usageHTTPTimeout = 2 * time.Second
+)
+
 // fetchUsage pulls the subscription-limits payload from the OAuth usage
 // endpoint, resolving the access token through the credential chain per
 // fetch — never cached, never logged.
@@ -74,8 +83,8 @@ func fetchUsage(creds credentialSource) ([]byte, error) {
 		return nil, err
 	}
 
-	client := &http.Client{Timeout: 2 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.anthropic.com/api/oauth/usage", nil)
+	client := &http.Client{Timeout: usageHTTPTimeout}
+	req, err := http.NewRequest(http.MethodGet, usageEndpoint, nil)
 	if err != nil {
 		return nil, err
 	}
