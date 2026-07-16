@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-16
+
 ### Added
+
+- **Homebrew tap publishing**: every release renders its formula from the
+  build's `checksums.txt` and pushes it to
+  [mitre/homebrew-tap](https://github.com/mitre/homebrew-tap) —
+  `brew install mitre/tap/claude-statusline` (macOS and Linux, all four
+  architectures). Publishing authenticates via a short-lived GitHub App
+  installation token minted per release run; the formula scripts are
+  golden-tested, and goreleaser's deprecated `brews`/macOS-only
+  `homebrew_casks` publishers are deliberately not used (see
+  `.goreleaser.yaml` for the rationale).
 
 - **Claude Code plugin**: the repo is its own marketplace
   (`/plugin marketplace add mitre/claude-statusline`). The setup command

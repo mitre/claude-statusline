@@ -15,6 +15,14 @@ linters:
       - path: _test\.go
         linters: [gosec]
         text: "G304"
+      # Script-behavior tests exec repo shell scripts (constant paths) with
+      # t.TempDir()-derived fixture arguments; executing with variable test
+      # paths IS the tests' purpose — same class as the G304 test exclusion.
+      # Production subprocess calls remain fully checked (main.go G204 is a
+      # separate, individually justified entry below).
+      - path: _test\.go
+        linters: [gosec]
+        text: "G204"
       # The cache package's purpose is file IO at variable paths inside the
       # configured cache dir; paths are cacheDir + constant basenames + md5
       # hex — never request/user-controlled content.

@@ -39,3 +39,12 @@ changelog:
   filters:
     exclude:
       - "^chore: beads"
+
+# Homebrew publishing deliberately does NOT use goreleaser's publishers:
+# `brews` is deprecated (fails `goreleaser check`) and its replacement
+# `homebrew_casks` is macOS-only and expects signed binaries (the docs'
+# unsigned workaround strips macOS quarantine — a security bypass this
+# repo won't ship). The formula is instead rendered and pushed by
+# scripts/render-formula.sh + scripts/publish-formula.sh (make
+# publish-formula) from this pipeline's checksums.txt — tested, Linux
+# included, no Gatekeeper games.

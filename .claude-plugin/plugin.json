@@ -1,6 +1,6 @@
 {
   "name": "claude-statusline",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A fast, configurable status line for Claude Code \u2014 single static Go binary, zero runtime dependencies",
   "author": {
     "name": "MITRE Security Automation Framework",

@@ -253,3 +253,30 @@ func TestSyncHookNoOpWhenVersionsMatch(t *testing.T) {
 		t.Error("matching versions must not trigger any download")
 	}
 }
+
+func TestRenderFormulaMatchesGolden(t *testing.T) {
+	out, err := exec.Command("sh", "scripts/render-formula.sh", "9.9.9", "testdata/formula-checksums.txt").Output()
+	if err != nil {
+		t.Fatalf("render-formula.sh: %v", err)
+	}
+	golden, err := os.ReadFile("testdata/formula-golden.rb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != string(golden) {
+		t.Errorf("rendered formula diverges from golden:\n got:\n%s\nwant:\n%s", out, golden)
+	}
+}
+
+func TestRenderFormulaRefusesIncompleteChecksums(t *testing.T) {
+	// A checksums file missing any of the four platform assets must fail
+	// loudly — a partial formula would break installs for that platform.
+	partial := filepath.Join(t.TempDir(), "checksums.txt")
+	line := strings.Repeat("1", 64) + "  claude-statusline-9.9.9-darwin-arm64.tar.gz\n"
+	if err := os.WriteFile(partial, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exec.Command("sh", "scripts/render-formula.sh", "9.9.9", partial).Output(); err == nil {
+		t.Fatal("render-formula.sh must fail when a platform asset is missing")
+	}
+}

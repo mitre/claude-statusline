@@ -72,6 +72,12 @@ snapshot: vet test
 	goreleaser release --snapshot --clean
 	@ls -la $(DIST)
 
+# Renders the formula from this release's checksums and pushes it to
+# mitre/homebrew-tap (requires HOMEBREW_TAP_GITHUB_TOKEN and VERSION —
+# the release workflow's follow-on step after `release`).
+publish-formula:
+	sh scripts/publish-formula.sh "$(VERSION)"
+
 clean:
 	rm -f $(BINARY)
 	rm -rf $(DIST)

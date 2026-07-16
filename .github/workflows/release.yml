@@ -25,6 +25,24 @@ jobs:
       # Pinned to the version the repo is proven against locally.
       - name: Install goreleaser
         run: go install github.com/goreleaser/goreleaser/v2@v2.17.0
+      # Short-lived installation token (1h) from the org's mitre-tap-publisher
+      # app — scoped to Contents-write on mitre/homebrew-tap only. goreleaser
+      # uses it to push the generated formula into the tap.
+      - name: Mint tap token
+        id: tap-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.TAP_PUBLISHER_APP_ID }}
+          private-key: ${{ secrets.TAP_PUBLISHER_APP_PRIVATE_KEY }}
+          owner: mitre
+          repositories: homebrew-tap
       - run: make release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Formula rendered from this release's checksums and pushed to the
+      # tap by our own tested scripts (goreleaser's brews is deprecated and
+      # homebrew_casks is macOS-only + signed-binaries — see .goreleaser.yaml).
+      - run: make publish-formula
+        env:
+          VERSION: ${{ github.ref_name }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
