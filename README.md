@@ -211,4 +211,11 @@ make release  # publish via goreleaser — tag + GITHUB_TOKEN required (the v* t
 
 ## License
 
-Apache-2.0
+Licensed under the Apache License, Version 2.0 — see [LICENSE.md](LICENSE.md).
+
+### NOTICE
+
+© 2026 The MITRE Corporation. Approved for Public Release; Distribution
+Unlimited. Case Number 18-3678.
+
+See [NOTICE.md](NOTICE.md) for full terms.
