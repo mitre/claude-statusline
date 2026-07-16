@@ -14,3 +14,6 @@ coverage.out
 .beads/recovery-context.md
 .beads/recovery-prompt.md
 .beads/archive/
+
+# GitHub App private keys must never be committed
+*.pem
