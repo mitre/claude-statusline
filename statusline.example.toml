@@ -27,6 +27,7 @@ show_context_size = true # append "1M"/"200k" to the model name
 show_effort = true       # "· xhigh" reasoning-effort level (dim; omitted when the host sends none)
 show_fast_mode = true    # "· ⚡ fast" while fast mode is active
 show_metered_cost = true # "· $12.34" inside the METERED BILLING alarm (only while it shows)
+extra_budget_dollars = 5.0 # extra-usage spend you accept: under it a dim "· extra $2.42" tally, at or over it the EXTRA USAGE alarm (0 alarms on any spend)
 
 [context]
 exceeds_200k_marker = true # dim ">200k" once the session crosses the 200k-token tier

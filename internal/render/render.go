@@ -38,13 +38,17 @@ type Usage struct {
 	Email        string // logged-in account email, "" = segment omitted
 	U5, U7       int    // five-hour / seven-day utilization percent
 	R5, R7       string // local-time reset labels, "" when absent
-	ModelFamily  string // session model's family (opus/sonnet/haiku), "" = no window
+	ModelFamily  string // family named by the payload's own window key, "" = none
 	ModelPct     int    // rolling 7-day model-specific pool utilization percent
 	ModelReset   string // reset label for the model window, "" when absent
 	ExtraEnabled bool
 	CreditsMinor int // spend in minor units
 	CreditsExp   int // exponent for minor units (2 → cents)
 	MaxActive    int // max percent among active plan limits
+	// Scoped carries plan limits the payload narrows to a scope (today a
+	// model), one account-row meter each. Labels come from the payload, so
+	// a newly scoped model needs no change here.
+	Scoped []ScopedLimit
 	// DataAge is the served payload's age when the stale-good fallback is
 	// engaged (fetches failing, old data served); zero on the fresh paths.
 	// Non-zero renders the trailing dim age marker — the meters keep their
@@ -55,6 +59,14 @@ type Usage struct {
 	// behind the remaining segments. The age marker then qualifies only
 	// visible stale data: it renders solely when the model window shows.
 	MetersLive bool
+}
+
+// ScopedLimit is one plan limit narrowed to a scope the payload names — a
+// parallel cap alongside the 5-hour and weekly pools, not a subset of them.
+type ScopedLimit struct {
+	Name  string // scope label as the payload gives it, never compiled in
+	Pct   int    // utilization percent of that scoped allowance
+	Reset string // local-time reset label, "" when absent
 }
 
 // State is everything the renderer needs for one frame.
@@ -101,6 +113,10 @@ type Options struct {
 		// badges; ShowMeteredCost gates the $ readout inside the
 		// metered-billing alarm.
 		ShowEffort, ShowFastMode, ShowMeteredCost bool
+		// ExtraBudget is extra-usage spend already accepted, in major
+		// currency units. Below it the badge stays a dim tally; at or above
+		// it the badge alarms. Zero alarms on any spend at all.
+		ExtraBudget float64
 	}
 	Project struct {
 		ShowBranch, ShowDirty, TildeHome bool
@@ -140,6 +156,9 @@ func DefaultOptions() Options {
 	o.Account.ShowEmail = true
 	o.Account.EmailDim = false
 	o.Account.ShowStaleAge = true
+	// Extra-usage spend below this is an allowance already accepted and
+	// stays a dim tally; reaching it is what interrupts.
+	o.Model.ExtraBudget = 5.0
 	return o
 }
 
@@ -288,6 +307,9 @@ func AccountRow(u Usage, o Options) string {
 		meter(fmt.Sprintf("5h %d%%", u.U5), u.U5, u.R5, always),
 		meter(fmt.Sprintf("week %d%%", u.U7), u.U7, u.R7, always),
 	)
+	for _, s := range u.Scoped {
+		parts = append(parts, meter(fmt.Sprintf("%s %d%%", s.Name, s.Pct), s.Pct, s.Reset, always))
+	}
 	if u.ModelFamily != "" {
 		parts = append(parts, meter(fmt.Sprintf("%s/wk %d%%", u.ModelFamily, u.ModelPct), u.ModelPct, u.ModelReset, always))
 	}
@@ -338,21 +360,28 @@ func ActivityRow(durationMS int64, added, removed int) string {
 	return lbl("activity") + strings.Join(parts, sepDot)
 }
 
-// ExtraBadge renders the extra-usage indicator for the model row: a loud
-// alarm while actively billing extra usage, a dim tally when merely enabled
-// with spend, nothing otherwise.
-func ExtraBadge(u Usage) string {
-	if !u.ExtraEnabled {
+// ExtraBadge renders the extra-usage indicator for the model row. It speaks
+// about MONEY only: spend incurred is the entry condition, so a plan limit
+// sitting at 100% with nothing billed renders nothing here — that state is
+// reported by the account row's scoped meter, which names the exhausted
+// allowance and when it resets.
+//
+// Spend under the configured budget is an allowance already accepted, so it
+// stays a dim tally; reaching the budget is what interrupts. Plan limits are
+// deliberately not a second trigger — the account meters already turn red at
+// 100% on their own, and coupling the two is what made this badge shout with
+// a zero amount. The comparison is in minor units so no float rounding
+// decides whether the alarm fires.
+func ExtraBadge(u Usage, o Options) string {
+	if !u.ExtraEnabled || u.CreditsMinor <= 0 {
 		return ""
 	}
 	cred := fmt.Sprintf("%.2f", float64(u.CreditsMinor)/math.Pow10(u.CreditsExp))
-	switch {
-	case u.U5 >= 100 || u.U7 >= 100 || u.MaxActive >= 100:
+	budgetMinor := int(math.Round(o.Model.ExtraBudget * math.Pow10(u.CreditsExp)))
+	if u.CreditsMinor >= budgetMinor {
 		return "  " + alarmS.Render(" ⚠ EXTRA USAGE $"+cred+" ")
-	case u.CreditsMinor > 0:
-		return dimS.Render(" · extra $" + cred)
 	}
-	return ""
+	return dimS.Render(" · extra $" + cred)
 }
 
 // comma formats a non-negative integer with thousands separators
@@ -388,7 +417,7 @@ func Build(st State, o Options) string {
 
 	extra := ""
 	if st.Usage != nil {
-		extra = ExtraBadge(*st.Usage)
+		extra = ExtraBadge(*st.Usage, o)
 	}
 	add(o.Rows.Model, ModelRow(st, extra, o))
 	add(o.Rows.Project, ProjectRow(st.CWD, st.Home, st.Branch, st.Dirty, st.LockAge, o))

@@ -1,6 +1,8 @@
 package usage
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -27,15 +29,27 @@ func FuzzParse(f *testing.F) {
 	f.Add([]byte("{\"five_hour\":\xff}"), "opus")
 
 	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
-	f.Fuzz(func(t *testing.T, raw []byte, family string) {
-		u, err := Parse(raw, now, family)
+	f.Fuzz(func(t *testing.T, raw []byte, modelName string) {
+		u, err := Parse(raw, now, modelName)
 		if err != nil {
 			return
 		}
-		// A model segment may only appear for the requested family — never
-		// fabricated for another or for none.
-		if u.ModelFamily != "" && u.ModelFamily != family {
-			t.Errorf("ModelFamily %q leaked for requested family %q: %q", u.ModelFamily, family, raw)
+		// A model segment is never fabricated: the family it names must be a
+		// window the payload actually carries, and must be implied by the
+		// session model's own name.
+		if u.ModelFamily == "" {
+			return
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Errorf("ModelFamily %q from an unparseable payload: %q", u.ModelFamily, raw)
+			return
+		}
+		if _, ok := fields[sevenDayPrefix+u.ModelFamily]; !ok {
+			t.Errorf("ModelFamily %q has no %s%s key: %q", u.ModelFamily, sevenDayPrefix, u.ModelFamily, raw)
+		}
+		if !strings.Contains(modelToken(modelName), modelToken(u.ModelFamily)) {
+			t.Errorf("ModelFamily %q not implied by model name %q: %q", u.ModelFamily, modelName, raw)
 		}
 	})
 }

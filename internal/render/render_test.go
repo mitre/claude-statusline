@@ -291,7 +291,7 @@ func TestAccountRowHotWeekShowsResetInQuietMode(t *testing.T) {
 
 func TestExtraBadgeEnabledNoSpendIsSilent(t *testing.T) {
 	in := Usage{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2, U5: 20}
-	if got := ExtraBadge(in); got != "" {
+	if got := ExtraBadge(in, DefaultOptions()); got != "" {
 		t.Errorf("ExtraBadge(%+v) = %q, want empty (enabled, zero spend, within limits)", in, got)
 	}
 }
@@ -305,21 +305,117 @@ func TestContextRowClampsAbove100(t *testing.T) {
 }
 
 func TestExtraBadge(t *testing.T) {
-	// Actively over a limit and burning credits: loud badge.
-	got := ExtraBadge(Usage{U5: 100, ExtraEnabled: true, CreditsMinor: 150, CreditsExp: 2})
-	want := "  \x1b[1;37;41m ⚠ EXTRA USAGE $1.50 \x1b[m"
+	o := DefaultOptions() // default budget $5.00
+	// Spend at or over the accepted budget: loud badge.
+	got := ExtraBadge(Usage{U5: 100, ExtraEnabled: true, CreditsMinor: 750, CreditsExp: 2}, o)
+	want := "  \x1b[1;37;41m ⚠ EXTRA USAGE $7.50 \x1b[m"
 	if got != want {
 		t.Errorf("ExtraBadge loud:\n got %q\nwant %q", got, want)
 	}
-	// Enabled with spend but within limits: dim tally.
-	got = ExtraBadge(Usage{U5: 20, ExtraEnabled: true, CreditsMinor: 150, CreditsExp: 2})
+	// Spend under the budget is expected, not an emergency — dim tally, and
+	// being over a plan limit does not upgrade it (the meters say that).
+	got = ExtraBadge(Usage{U5: 100, ExtraEnabled: true, CreditsMinor: 150, CreditsExp: 2}, o)
 	want = "\x1b[2m · extra $1.50\x1b[m"
 	if got != want {
-		t.Errorf("ExtraBadge dim:\n got %q\nwant %q", got, want)
+		t.Errorf("ExtraBadge dim under budget:\n got %q\nwant %q", got, want)
 	}
 	// Disabled: nothing.
-	if got := ExtraBadge(Usage{U5: 100, ExtraEnabled: false, CreditsMinor: 150}); got != "" {
+	if got := ExtraBadge(Usage{U5: 100, ExtraEnabled: false, CreditsMinor: 750}, o); got != "" {
 		t.Errorf("ExtraBadge disabled should be empty, got %q", got)
+	}
+}
+
+func TestExtraBadgeBudgetGatesTheAlarm(t *testing.T) {
+	// Spend below the accepted budget is expected, not an emergency: it
+	// stays a dim tally so nothing is hidden, and the alarm is reserved for
+	// spend that has reached the budget. Plan limits do not enter into it —
+	// the account row's meters already turn red at 100% on their own.
+	o := DefaultOptions()
+	o.Model.ExtraBudget = 5.0 // five major currency units
+
+	below := Usage{ExtraEnabled: true, CreditsMinor: 242, CreditsExp: 2, U5: 100, MaxActive: 100}
+	if got, want := ExtraBadge(below, o), "\x1b[2m · extra $2.42\x1b[m"; got != want {
+		t.Errorf("below budget:\n got %q\nwant %q", got, want)
+	}
+
+	// The boundary itself alarms: "you may spend $5" is spent at $5.
+	at := Usage{ExtraEnabled: true, CreditsMinor: 500, CreditsExp: 2}
+	if got, want := ExtraBadge(at, o), "  \x1b[1;37;41m ⚠ EXTRA USAGE $5.00 \x1b[m"; got != want {
+		t.Errorf("at budget:\n got %q\nwant %q", got, want)
+	}
+
+	above := Usage{ExtraEnabled: true, CreditsMinor: 5001, CreditsExp: 2}
+	if got, want := ExtraBadge(above, o), "  \x1b[1;37;41m ⚠ EXTRA USAGE $50.01 \x1b[m"; got != want {
+		t.Errorf("above budget:\n got %q\nwant %q", got, want)
+	}
+
+	// Zero spend still renders nothing whatever the budget is.
+	none := Usage{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2, MaxActive: 100}
+	if got := ExtraBadge(none, o); got != "" {
+		t.Errorf("zero spend = %q, want empty", got)
+	}
+}
+
+func TestExtraBadgeBudgetUsesThePayloadExponent(t *testing.T) {
+	// The budget is expressed in major currency units and converted with the
+	// payload's OWN exponent — a currency with a different minor-unit scale
+	// must not shift the threshold by an order of magnitude.
+	o := DefaultOptions()
+	o.Model.ExtraBudget = 5.0
+
+	// exponent 0: 4 minor units is 4 major units — under budget.
+	under := Usage{ExtraEnabled: true, CreditsMinor: 4, CreditsExp: 0}
+	if got := ExtraBadge(under, o); !strings.Contains(got, "· extra") {
+		t.Errorf("exp=0 under budget = %q, want the dim tally", got)
+	}
+	// exponent 0: 5 minor units is 5 major units — at budget.
+	at := Usage{ExtraEnabled: true, CreditsMinor: 5, CreditsExp: 0}
+	if got := ExtraBadge(at, o); !strings.Contains(got, "EXTRA USAGE") {
+		t.Errorf("exp=0 at budget = %q, want the alarm", got)
+	}
+}
+
+func TestExtraBadgeSilentAtLimitWithoutSpend(t *testing.T) {
+	// Sitting at 100% of a plan limit with nothing billed is NOT extra
+	// usage: the account row's scoped meter reports the exhausted limit and
+	// its reset, and the badge stays silent rather than showing an alarm
+	// with a zero amount. The alarm means money is leaving, nothing else.
+	cases := []Usage{
+		{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2, U5: 40, MaxActive: 100},
+		{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2, U5: 100},
+		{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2, U7: 100},
+	}
+	for _, in := range cases {
+		if got := ExtraBadge(in, DefaultOptions()); got != "" {
+			t.Errorf("ExtraBadge(%+v) = %q, want empty — no credits spent", in, got)
+		}
+	}
+}
+
+func TestAccountRowScopedSegment(t *testing.T) {
+	// The scoped limit is a PARALLEL cap, rendered as its own meter beside
+	// 5h and week — same severity and reset treatment, label from the
+	// payload.
+	in := Usage{
+		U5: 24, R5: "1:30p", U7: 71, R7: "Mon 10:00a",
+		Scoped: []ScopedLimit{{Name: "Zephyr", Pct: 100, Reset: "Mon 10:00a"}},
+	}
+	got := AccountRow(in, DefaultOptions())
+	want := "\x1b[2maccount  \x1b[m" +
+		"\x1b[32m5h 24%\x1b[m \x1b[2m(resets 1:30p)\x1b[m \x1b[2m·\x1b[m " +
+		"\x1b[33mweek 71%\x1b[m \x1b[2m(resets Mon 10:00a)\x1b[m \x1b[2m·\x1b[m " +
+		"\x1b[31mZephyr 100%\x1b[m \x1b[2m(resets Mon 10:00a)\x1b[m"
+	if got != want {
+		t.Errorf("AccountRow scoped(%+v):\n got %q\nwant %q", in, got, want)
+	}
+}
+
+func TestAccountRowOmitsScopedSegmentWhenAbsent(t *testing.T) {
+	// No scoped limit in the payload: the row is byte-identical to today.
+	in := Usage{U5: 5, U7: 13}
+	want := "\x1b[2maccount  \x1b[m\x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m"
+	if got := AccountRow(in, DefaultOptions()); got != want {
+		t.Errorf("AccountRow without scoped limits must not change:\n got %q\nwant %q", got, want)
 	}
 }
 

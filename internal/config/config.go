@@ -46,12 +46,13 @@ type fileSchema struct {
 		Activity *bool `toml:"activity"`
 	} `toml:"rows"`
 	Model struct {
-		ShowAuth        *bool `toml:"show_auth"`
-		ShowSession     *bool `toml:"show_session"`
-		ShowContextSize *bool `toml:"show_context_size"`
-		ShowEffort      *bool `toml:"show_effort"`
-		ShowFastMode    *bool `toml:"show_fast_mode"`
-		ShowMeteredCost *bool `toml:"show_metered_cost"`
+		ShowAuth        *bool    `toml:"show_auth"`
+		ShowSession     *bool    `toml:"show_session"`
+		ShowContextSize *bool    `toml:"show_context_size"`
+		ShowEffort      *bool    `toml:"show_effort"`
+		ShowFastMode    *bool    `toml:"show_fast_mode"`
+		ShowMeteredCost *bool    `toml:"show_metered_cost"`
+		ExtraBudget     *float64 `toml:"extra_budget_dollars"`
 	} `toml:"model"`
 	Context struct {
 		Exceeds200kMarker *bool `toml:"exceeds_200k_marker"`
@@ -144,6 +145,12 @@ func Load(path string) (Config, error) {
 	setB(&cfg.Options.Model.ShowEffort, f.Model.ShowEffort)
 	setB(&cfg.Options.Model.ShowFastMode, f.Model.ShowFastMode)
 	setB(&cfg.Options.Model.ShowMeteredCost, f.Model.ShowMeteredCost)
+	if f.Model.ExtraBudget != nil {
+		if *f.Model.ExtraBudget < 0 {
+			return cfg, fmt.Errorf("model.extra_budget_dollars: %v is not valid (extra-usage spend you accept before the badge alarms; 0 alarms on any spend)", *f.Model.ExtraBudget)
+		}
+		cfg.Options.Model.ExtraBudget = *f.Model.ExtraBudget
+	}
 	setB(&cfg.Options.Context.Exceeds200kMarker, f.Context.Exceeds200kMarker)
 	setB(&cfg.Options.Project.ShowBranch, f.Project.ShowBranch)
 	setB(&cfg.Options.Project.ShowDirty, f.Project.ShowDirty)

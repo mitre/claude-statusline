@@ -158,6 +158,47 @@ func TestLoadProjectGitTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadModelExtraBudget(t *testing.T) {
+	dir := t.TempDir()
+	write := func(body string) string {
+		p := filepath.Join(dir, "c.toml")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	cfg, err := Load(write("[model]\nshow_auth = true\n"))
+	if err != nil || cfg.Options.Model.ExtraBudget != 5.0 {
+		t.Errorf("absent extra_budget_dollars must default to 5.00: err=%v got=%v",
+			err, cfg.Options.Model.ExtraBudget)
+	}
+
+	// The owner's case: an allowance somebody already approved.
+	cfg, err = Load(write("[model]\nextra_budget_dollars = 50.0\n"))
+	if err != nil || cfg.Options.Model.ExtraBudget != 50.0 {
+		t.Errorf("extra_budget_dollars=50.0: err=%v got=%v", err, cfg.Options.Model.ExtraBudget)
+	}
+
+	// Cents survive the dollars-to-minor-units conversion exactly.
+	cfg, err = Load(write("[model]\nextra_budget_dollars = 2.42\n"))
+	if err != nil || cfg.Options.Model.ExtraBudget != 2.42 {
+		t.Errorf("extra_budget_dollars=2.42 must survive exactly: err=%v got=%v",
+			err, cfg.Options.Model.ExtraBudget)
+	}
+
+	// 0 is the documented "alarm on any spend" setting, not an error.
+	cfg, err = Load(write("[model]\nextra_budget_dollars = 0\n"))
+	if err != nil || cfg.Options.Model.ExtraBudget != 0 {
+		t.Errorf("extra_budget_dollars=0 (alarm on any spend): err=%v got=%v",
+			err, cfg.Options.Model.ExtraBudget)
+	}
+
+	if _, err = Load(write("[model]\nextra_budget_dollars = -1.0\n")); err == nil {
+		t.Error("negative extra_budget_dollars must surface an error")
+	}
+}
+
 func TestLoadProjectGitEngine(t *testing.T) {
 	dir := t.TempDir()
 	write := func(body string) string {

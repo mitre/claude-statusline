@@ -7,8 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Scoped plan limits on the account row**: a plan limit the payload narrows
+  to a scope — today a model — now renders as its own meter beside `5h` and
+  `week`, named by the payload and carrying its own reset time (e.g.
+  `Fable 100% (resets Mon 10:00a)`). Previously this limit was invisible: an
+  exhausted model-specific weekly allowance could only be inferred from the
+  alarm it triggered.
+- **`[model] extra_budget_dollars`** (default `5.0`): extra-usage spend you
+  accept before the badge alarms. Below it the badge is a dim `· extra $2.42`
+  tally; at or above it the red `EXTRA USAGE` alarm shows. `0` alarms on any
+  spend. The comparison happens in the payload's own minor units, so no
+  floating-point rounding decides whether the alarm fires.
+
 ### Fixed
 
+- **The extra-usage alarm no longer shouts about money that was never spent.**
+  It fired whenever any active plan limit hit 100%, so an exhausted
+  model-scoped allowance rendered as `⚠ EXTRA USAGE $0.00` — a billing alarm
+  with nothing billed. Spend is now the only trigger; limit state is carried
+  by the account meters, which turn red at 100% on their own.
+- **The session's weekly model window is no longer matched against a
+  compiled-in model list.** The window key is derived from the payload's own
+  `seven_day_*` keys, so a model the vendor ships tomorrow is picked up with
+  no code change; previously anything outside `opus`/`sonnet`/`haiku` showed
+  no window even when the payload carried one. Matching normalizes both sides
+  and prefers the more specific key, deterministically.
+- **README corrected**: it stated that the Fable weekly limit is never
+  exposed by the usage endpoint. It is — as a scoped entry in `limits[]`,
+  which the new scoped meter renders.
 - Standard MITRE publishing files: `LICENSE.md` aligned verbatim to the
   MITRE SAF license file, and the README now carries the `### NOTICE`
   section referencing `NOTICE.md` (Case Number 18-3678).

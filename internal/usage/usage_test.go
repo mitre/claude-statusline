@@ -65,6 +65,70 @@ func TestParseResetLabels(t *testing.T) {
 	}
 }
 
+// scopedPayload carries one plan limit narrowed to a model scope, alongside
+// the two unscoped ones. The model name is synthetic on purpose: the label
+// is read from the payload, so the vendor can rename the scoped model with
+// no change here.
+const scopedPayload = `{
+  "five_hour": {"utilization": 24, "resets_at": "2026-07-03T20:30:00Z"},
+  "seven_day": {"utilization": 71, "resets_at": "2026-07-06T17:00:00Z"},
+  "extra_usage": {"is_enabled": true},
+  "spend": {"used": {"amount_minor": 0, "exponent": 2}},
+  "limits": [
+    {"kind": "session", "percent": 24, "is_active": false},
+    {"kind": "weekly_all", "percent": 71, "is_active": false},
+    {"kind": "weekly_scoped", "percent": 100, "is_active": true,
+     "resets_at": "2026-07-06T17:00:00Z",
+     "scope": {"model": {"id": null, "display_name": "Zephyr"}}}
+  ]
+}`
+
+func TestParseExtractsScopedLimits(t *testing.T) {
+	u, err := Parse([]byte(scopedPayload), now, "")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(u.Scoped) != 1 {
+		t.Fatalf("Scoped = %+v, want only the scoped limit (unscoped ones stay out)", u.Scoped)
+	}
+	got := u.Scoped[0]
+	if got.Name != "Zephyr" {
+		t.Errorf("Name = %q, want the payload's scope display name", got.Name)
+	}
+	if got.Pct != 100 {
+		t.Errorf("Pct = %d, want 100", got.Pct)
+	}
+	if got.Reset != "Mon 10:00a" {
+		t.Errorf("Reset = %q, want \"Mon 10:00a\"", got.Reset)
+	}
+}
+
+func TestParseKeepsScopedLimitTheVendorCannotName(t *testing.T) {
+	// A scope with no usable name still surfaces: a binding limit is never
+	// dropped, and the meter never renders a blank label.
+	raw := `{
+  "five_hour": {"utilization": 24, "resets_at": "2026-07-03T20:30:00Z"},
+  "limits": [
+    {"kind": "weekly_scoped", "percent": 90, "is_active": true,
+     "resets_at": "2026-07-06T17:00:00Z",
+     "scope": {"model": {"id": null, "display_name": ""}, "surface": null}}
+  ]
+}`
+	u, err := Parse([]byte(raw), now, "")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(u.Scoped) != 1 {
+		t.Fatalf("Scoped = %+v, want the nameless scoped limit kept", u.Scoped)
+	}
+	if u.Scoped[0].Name != "scoped" {
+		t.Errorf("Name = %q, want the generic %q label", u.Scoped[0].Name, "scoped")
+	}
+	if u.Scoped[0].Pct != 90 {
+		t.Errorf("Pct = %d, want 90", u.Scoped[0].Pct)
+	}
+}
+
 const opusPayload = `{
   "five_hour": {"utilization": 28, "resets_at": "2026-07-03T20:30:00Z"},
   "seven_day": {"utilization": 18, "resets_at": "2026-07-06T17:00:00Z"},
@@ -72,27 +136,78 @@ const opusPayload = `{
   "seven_day_sonnet": {"utilization": 3}
 }`
 
-func TestFamilyFromModelName(t *testing.T) {
-	cases := []struct {
-		name   string
-		family string
-	}{
-		{name: "Opus 4.8", family: "opus"},
-		{name: "Claude Sonnet 5", family: "sonnet"},
-		{name: "Haiku 4.5", family: "haiku"},
-		{name: "Fable 5", family: ""},
-		{name: "Fable 5 (1M context)", family: ""},
-		{name: "?", family: ""},
+// unlistedModelPayload names a weekly window for a model that exists in no
+// source-level list, alongside a non-model scope real payloads carry. Both
+// the key and the model name below are invented: the only way these tests
+// pass is by reading the payload's own vocabulary.
+const unlistedModelPayload = `{
+  "five_hour": {"utilization": 24, "resets_at": "2026-07-03T20:30:00Z"},
+  "seven_day": {"utilization": 71, "resets_at": "2026-07-06T17:00:00Z"},
+  "seven_day_oauth_apps": {"utilization": 5},
+  "seven_day_zephyr": {"utilization": 62.4, "resets_at": "2026-07-07T22:00:00Z"}
+}`
+
+func TestParseResolvesWindowForModelInNoList(t *testing.T) {
+	u, err := Parse([]byte(unlistedModelPayload), now, "Zephyr 5 (1M context)")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
 	}
-	for _, c := range cases {
-		if got := FamilyFromModelName(c.name); got != c.family {
-			t.Errorf("FamilyFromModelName(%q) = %q, want %q", c.name, got, c.family)
+	if u.ModelFamily != "zephyr" {
+		t.Errorf("ModelFamily = %q, want the payload's own key suffix", u.ModelFamily)
+	}
+	if u.ModelPct != 62 {
+		t.Errorf("ModelPct = %d, want floor(62.4)=62", u.ModelPct)
+	}
+	// 2026-07-07 is a Tuesday; 22:00Z → 15:00 PDT.
+	if u.ModelReset != "Tue 3:00p" {
+		t.Errorf("ModelReset = %q, want \"Tue 3:00p\"", u.ModelReset)
+	}
+}
+
+func TestParseOmitsWindowWhenNoKeyMatchesTheModel(t *testing.T) {
+	u, err := Parse([]byte(unlistedModelPayload), now, "Mythos 2")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if u.ModelFamily != "" || u.ModelPct != 0 || u.ModelReset != "" {
+		t.Errorf("unmatched model fabricated a window: %+v", u)
+	}
+}
+
+func TestParseDoesNotMatchNonModelScopes(t *testing.T) {
+	// seven_day_oauth_apps is a surface scope, not a model window: no model
+	// name implies it, so it must never be picked as one.
+	u, err := Parse([]byte(unlistedModelPayload), now, "OAuth 1")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if u.ModelFamily != "" {
+		t.Errorf("ModelFamily = %q, want none — a surface scope is not a model window", u.ModelFamily)
+	}
+}
+
+func TestParsePrefersTheMoreSpecificWindowKey(t *testing.T) {
+	// Two keys match: selection must be deterministic and pick the more
+	// specific one, never whichever the map happened to yield first. The
+	// underscored key must line up with the spaced display name.
+	raw := `{
+  "five_hour": {"utilization": 24, "resets_at": "2026-07-03T20:30:00Z"},
+  "seven_day_zephyr": {"utilization": 10},
+  "seven_day_zephyr_compact": {"utilization": 77, "resets_at": "2026-07-07T22:00:00Z"}
+}`
+	for i := 0; i < 20; i++ {
+		u, err := Parse([]byte(raw), now, "Zephyr Compact 5")
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		if u.ModelFamily != "zephyr_compact" || u.ModelPct != 77 {
+			t.Fatalf("run %d: got %q %d, want zephyr_compact 77", i, u.ModelFamily, u.ModelPct)
 		}
 	}
 }
 
 func TestParseExtractsModelWindow(t *testing.T) {
-	u, err := Parse([]byte(opusPayload), now, "opus")
+	u, err := Parse([]byte(opusPayload), now, "Opus 4.8")
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,30 +36,96 @@ type payload struct {
 		} `json:"used"`
 	} `json:"spend"`
 	Limits []struct {
-		IsActive bool `json:"is_active"`
-		Percent  int  `json:"percent"`
+		IsActive bool        `json:"is_active"`
+		Percent  int         `json:"percent"`
+		ResetsAt string      `json:"resets_at"`
+		Scope    *limitScope `json:"scope"`
 	} `json:"limits"`
 }
 
-// FamilyFromModelName maps a session model display name to its payload
-// window family. Unknown families (fable, mythos, "?") return "" — the
-// model segment is then omitted entirely.
-func FamilyFromModelName(name string) string {
-	lower := strings.ToLower(name)
-	for _, f := range []string{"opus", "sonnet", "haiku"} {
-		if strings.Contains(lower, f) {
-			return f
+// limitScope is the narrowing a plan limit applies. Unscoped limits carry a
+// null scope; scoped ones name their subject, which the renderer displays
+// verbatim.
+type limitScope struct {
+	Model *struct {
+		DisplayName string `json:"display_name"`
+	} `json:"model"`
+}
+
+// scopeLabel names a scoped limit from the payload alone — no model name is
+// compiled in, so the next scoped model the vendor introduces flows straight
+// through. A scope the payload cannot name still gets a label rather than
+// being dropped: a binding limit the owner cannot see is worse than a
+// generically named one.
+func scopeLabel(s *limitScope) string {
+	if s.Model != nil && s.Model.DisplayName != "" {
+		return s.Model.DisplayName
+	}
+	return "scoped"
+}
+
+// sevenDayPrefix marks the payload's per-scope weekly windows.
+const sevenDayPrefix = "seven_day_"
+
+// modelToken reduces a model display name or a payload key suffix to
+// comparable lowercase alphanumerics, so an underscored key ("zephyr_compact")
+// lines up with a spaced display name ("Zephyr Compact 5") and punctuation in
+// either never blocks a match.
+func modelToken(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
 		}
 	}
-	return ""
+	return b.String()
+}
+
+// modelWindowKey picks the payload's weekly window for this session's model,
+// returning the key and the family it names. Candidates are the payload's own
+// seven_day_* keys — the vendor's vocabulary, never a compiled-in model list —
+// so a newly shipped model gets its window the moment the payload carries one,
+// with no change here. Candidates are tried longest-first so a more specific
+// key wins over one whose token it contains, and the ordering is explicit:
+// map iteration order must never decide what renders. No match returns "",
+// and the segment is then omitted rather than shown as a fabricated zero.
+func modelWindowKey(fields map[string]json.RawMessage, modelName string) (key, family string) {
+	name := modelToken(modelName)
+	if name == "" {
+		return "", ""
+	}
+	type candidate struct{ family, token string }
+	var cands []candidate
+	for k := range fields {
+		if !strings.HasPrefix(k, sevenDayPrefix) || len(k) == len(sevenDayPrefix) {
+			continue
+		}
+		fam := strings.TrimPrefix(k, sevenDayPrefix)
+		if tok := modelToken(fam); tok != "" {
+			cands = append(cands, candidate{family: fam, token: tok})
+		}
+	}
+	sort.Slice(cands, func(i, j int) bool {
+		if len(cands[i].token) != len(cands[j].token) {
+			return len(cands[i].token) > len(cands[j].token)
+		}
+		return cands[i].family < cands[j].family
+	})
+	for _, c := range cands {
+		if strings.Contains(name, c.token) {
+			return sevenDayPrefix + c.family, c.family
+		}
+	}
+	return "", ""
 }
 
 // Parse validates and extracts a usage payload. Payloads without the
 // expected shape (e.g. rate-limit error bodies) return an error — they must
-// never be rendered as zeros. When family is non-empty and the payload
-// carries a seven_day_<family> window with a utilization, the model segment
-// fields are populated; otherwise they stay zero and the segment is omitted.
-func Parse(raw []byte, now time.Time, family string) (render.Usage, error) {
+// never be rendered as zeros. modelName is the session model's display name:
+// when the payload carries a weekly window whose own key matches it, the
+// model segment fields are populated; otherwise they stay zero and the
+// segment is omitted.
+func Parse(raw []byte, now time.Time, modelName string) (render.Usage, error) {
 	var p payload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return render.Usage{}, err
@@ -87,14 +154,21 @@ func Parse(raw []byte, now time.Time, family string) (render.Usage, error) {
 		if l.IsActive && l.Percent > u.MaxActive {
 			u.MaxActive = l.Percent
 		}
+		if l.Scope != nil {
+			u.Scoped = append(u.Scoped, render.ScopedLimit{
+				Name:  scopeLabel(l.Scope),
+				Pct:   l.Percent,
+				Reset: resetLabel(l.ResetsAt, now),
+			})
+		}
 	}
 
-	if family != "" {
+	if modelName != "" {
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &fields); err == nil {
-			if wraw, ok := fields["seven_day_"+family]; ok {
+			if key, family := modelWindowKey(fields, modelName); key != "" {
 				var w window
-				if err := json.Unmarshal(wraw, &w); err == nil && w.Utilization != nil {
+				if err := json.Unmarshal(fields[key], &w); err == nil && w.Utilization != nil {
 					u.ModelFamily = family
 					u.ModelPct = int(math.Floor(*w.Utilization))
 					u.ModelReset = resetLabel(w.ResetsAt, now)

@@ -8,14 +8,15 @@ script it replaces (~90 ms vs ~950 ms per render).
 model    Fable 5 1M · Sub · session 0a1b2c3d
 project  ~/projects/demo-app · ⎇ main ~2
 context  ▓▓▓░░░░░░░ 30%
-account  dev@example.com · 5h 28% (resets 1:30p) · week 18% (resets Mon 10a) · opus/wk 41% (resets Tue 3p)
+account  dev@example.com · 5h 28% (resets 1:30p) · week 18% (resets Mon 10a) · Fable 100% (resets Mon 10a)
 activity 17h23m · +1,598/-8 lines
 ```
 
 Rows collapse when they have nothing to say. Alarms are loud only when
 abnormal: a `/compact` badge at ≥85% context, reset times once a usage window
-runs hot (≥80%), an `⚠ EXTRA USAGE` badge while extra-usage credits are
-actively billing, and an `⚠ API KEY SET — METERED BILLING` alarm whenever an
+runs hot (≥80%), an `⚠ EXTRA USAGE` badge once extra-usage spend reaches the
+budget you accept (`[model] extra_budget_dollars`, default `5.0`; below it a
+dim `· extra $2.42` tally), and an `⚠ API KEY SET — METERED BILLING` alarm whenever an
 `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` override is exported — carrying
 the session's accumulated cost (`· $12.34`) once there is any.
 
@@ -76,6 +77,7 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | `[model] show_effort` | `true` | Dim reasoning-effort level (`xhigh`, …); omitted when the host sends none |
 | `[model] show_fast_mode` | `true` | `⚡ fast` badge while fast mode is active |
 | `[model] show_metered_cost` | `true` | Session cost inside the metered-billing alarm (only while the alarm shows) |
+| `[model] extra_budget_dollars` | `5.0` | Extra-usage spend you accept before the alarm fires. Below it, a dim `· extra $2.42` tally; at or above it, the `EXTRA USAGE` alarm. `0` alarms on any spend |
 | `[context] exceeds_200k_marker` | `true` | Dim `>200k` once the session crosses the 200k-token tier |
 | `[project] show_branch` | `true` | Git branch (`@sha` when detached) |
 | `[project] show_dirty` | `true` | Changed-file count |
@@ -125,7 +127,8 @@ subscription — two concurrent sessions correctly show the same pools):
 |---|---|
 | `5h N%` | rolling 5-hour, all models |
 | `week N%` | rolling 7-day, all models |
-| `<model>/wk N%` | rolling 7-day pool for **this session's** model family (opus/sonnet/haiku) — a parallel weekly cap, not a slice of `week`; omitted when the payload has no window for the session's model. The usage endpoint values a per-model window only when that limit policy is active on your account (plans without model-specific caps report them as `null`, so the meter self-omits). The Fable weekly limit is never exposed by this endpoint — Claude Code reads it from API response headers that external tools can't see (upstream requests to forward it: anthropics/claude-code#73770, #69791) |
+| `<model>/wk N%` | rolling 7-day pool for **this session's** model — a parallel weekly cap, not a slice of `week`; omitted when the payload has no window for it. The window is matched against the payload's own `seven_day_*` keys, so a model the vendor ships tomorrow is picked up with no code change. The usage endpoint values a per-model window only when that limit policy is active on your account (plans without model-specific caps report them as `null`, so the meter self-omits) |
+| `<scope> N%` | a plan limit the payload narrows to a **scope** — today a model, named by the payload (e.g. `Fable 100%`). A parallel cap like the one above, shown whenever the payload carries it, with its own reset time. This is how a model-specific weekly limit surfaces even when no `seven_day_*` window exists for it |
 
 Reset times show on every meter by default; `show_resets = "quiet"` restores
 the hot-only (≥80%) behavior.

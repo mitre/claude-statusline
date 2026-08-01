@@ -106,8 +106,7 @@ func run(d deps) (string, string) {
 		var u render.Usage
 		have := false
 		if raw, staleFor, ok := usage.Resolve(cfg.CacheDir, ttl, now, d.fetchUsage); ok {
-			family := usage.FamilyFromModelName(sess.ModelName)
-			if p, uerr := usage.Parse(raw, now, family); uerr == nil {
+			if p, uerr := usage.Parse(raw, now, sess.ModelName); uerr == nil {
 				u, have = p, true
 				u.DataAge = staleFor
 			}
