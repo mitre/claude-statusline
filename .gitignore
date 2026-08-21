@@ -15,5 +15,9 @@ coverage.out
 .beads/recovery-prompt.md
 .beads/archive/
 
+# Per-machine activity log — appended on every interaction, so tracking it
+# produces a diff on every session and merge conflicts between machines.
+.beads/interactions.jsonl
+
 # GitHub App private keys must never be committed
 *.pem
