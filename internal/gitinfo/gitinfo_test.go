@@ -3,6 +3,7 @@ package gitinfo
 import (
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -459,5 +460,88 @@ func TestIndexLockNonRepoCwdIsSilent(t *testing.T) {
 	}, t.TempDir())
 	if lockAge != 0 {
 		t.Errorf("non-repo cwd: lockAge = %v, want 0", lockAge)
+	}
+}
+
+// fnvKey mirrors Get's cache-file keying for dynamic fixture paths.
+func fnvKey(cwd string) string {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(cwd))
+	return fmt.Sprintf("%x", h.Sum64())
+}
+
+// A repository go-git cannot OPEN (here: extensions.worktreeConfig, which git
+// writes for per-worktree config and go-git rejects at PlainOpen) is a valid
+// repo the CLI handles fine. The error arrives instantly — before the budget
+// is touched — so the render must fall back to the CLI engine immediately and
+// write the escalation marker for subsequent renders. Regression: this path
+// previously served a permanent "?" and never escalated.
+func TestGoGitIncapableRepoEscalatesToCLISameRender(t *testing.T) {
+	repoDir, wt := initRepo(t)
+	commitFile(t, wt, repoDir, "a.txt", "committed")
+	cfg, err := os.OpenFile(filepath.Join(repoDir, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.WriteString("[extensions]\n\tworktreeConfig = true\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cacheDir := t.TempDir()
+	cli := runnerFor(map[string]string{
+		"[branch --show-current]":                  "fix/cli-gemini-error-surfacing\n",
+		"[--no-optional-locks status --porcelain]": "",
+	})
+	branch, dirty, _ := Get(Options{CacheDir: cacheDir, Run: cli, Budget: time.Second}, repoDir)
+	if branch != "fix/cli-gemini-error-surfacing" || dirty != 0 {
+		t.Errorf("incapable-repo render = %q, %d; want CLI fallback fix/cli-gemini-error-surfacing, 0", branch, dirty)
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, "engine-cli-"+fnvKey(repoDir))); err != nil {
+		t.Errorf("escalation marker not written for go-git-incapable repo: %v", err)
+	}
+}
+
+// Escalation with no CLI runner configured must degrade, never panic —
+// reachable both from the incapable-repo fallback and from a stale
+// engine-cli marker with Options that carry no Run.
+func TestEscalationWithNilRunnerDegrades(t *testing.T) {
+	repoDir, wt := initRepo(t)
+	commitFile(t, wt, repoDir, "a.txt", "committed")
+	cfg, err := os.OpenFile(filepath.Join(repoDir, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.WriteString("[extensions]\n\tworktreeConfig = true\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	branch, dirty, _ := Get(Options{CacheDir: t.TempDir(), Budget: time.Second}, repoDir)
+	if branch != "?" || dirty != 0 {
+		t.Errorf("nil-runner escalation = %q, %d; want degraded \"?\", 0", branch, dirty)
+	}
+}
+
+// The boundary the escalation must NOT cross: a cwd that is genuinely not a
+// repository keeps the degraded values and never spawns a git subprocess —
+// otherwise every non-repo directory would fork git on every render.
+func TestNonRepoCwdDegradesWithoutCLI(t *testing.T) {
+	nonRepo := t.TempDir()
+	cacheDir := t.TempDir()
+	fatalRun := func(_ string, _ ...string) (string, error) {
+		t.Error("CLI git invoked for a non-repository cwd")
+		return "", errors.New("unreachable")
+	}
+	branch, dirty, _ := Get(Options{CacheDir: cacheDir, Run: fatalRun, Budget: time.Second}, nonRepo)
+	if branch != "?" || dirty != 0 {
+		t.Errorf("non-repo render = %q, %d; want degraded \"?\", 0", branch, dirty)
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, "engine-cli-"+fnvKey(nonRepo))); err == nil {
+		t.Error("escalation marker written for a non-repository cwd")
 	}
 }

@@ -10,6 +10,7 @@
 package gitinfo
 
 import (
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -176,9 +177,18 @@ func inprocGet(o Options, cwd, branchPath, dirtyPath, markerPath string) (string
 	select {
 	case r := <-ch:
 		if r.err != nil {
-			// Not a repository / unreadable: same degraded values as the
-			// CLI failure path.
-			return staleBranch(branchPath), staleDirty(dirtyPath)
+			if errors.Is(r.err, gogit.ErrRepositoryNotExists) {
+				// Genuinely not a repository: degraded values, and no
+				// escalation — a non-repo cwd must never fork git per render.
+				return staleBranch(branchPath), staleDirty(dirtyPath)
+			}
+			// A repository go-git cannot handle (unsupported extension such
+			// as worktreeConfig, sha256 objectFormat, index features, ...).
+			// The CLI is the reference implementation — escalate exactly like
+			// the overrun path, but fall back THIS render: the error arrived
+			// instantly, so unlike an overrun the budget is still intact.
+			_ = cache.Write(markerPath, "1")
+			return cliGet(o.Run, cwd, branchPath, dirtyPath)
 		}
 		branch := r.branch
 		if branch == "" {
@@ -229,8 +239,13 @@ func gogitRead(cwd string) (string, int, error) {
 }
 
 // cliGet is the subprocess engine (deadline-bounded runner injected by the
-// caller), kept for repos escalated past the in-process budget.
+// caller), kept for repos escalated past the in-process budget. A nil runner
+// means no CLI is available: serve the same degraded values as a failed run —
+// never a panic (reachable via escalation or a stale engine marker).
 func cliGet(run RunGit, cwd, branchPath, dirtyPath string) (string, int) {
+	if run == nil {
+		return staleBranch(branchPath), staleDirty(dirtyPath)
+	}
 	branch, ok := cache.ReadFresh(branchPath, branchTTL)
 	if !ok {
 		branch = liveBranch(cwd, run)
