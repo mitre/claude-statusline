@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-24
+
 ### Added
 
 - **Scoped plan limits on the account row**: a plan limit the payload narrows
@@ -40,6 +42,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Standard MITRE publishing files: `LICENSE.md` aligned verbatim to the
   MITRE SAF license file, and the README now carries the `### NOTICE`
   section referencing `NOTICE.md` (Case Number 18-3678).
+- **A repository go-git cannot read no longer renders as `⎇ ?`.** Every
+  go-git open error was treated as "not a repository", so a repo using an
+  extension go-git does not support — `extensions.worktreeConfig`, sha256
+  `objectFormat`, some index features — showed degraded branch and dirty
+  values. Now only a genuine non-repo cwd degrades (without forking git); any
+  other go-git error escalates that repo to the git CLI engine and falls back
+  to it in the same render. The CLI path also no longer panics when no git
+  runner is available; it serves the same degraded values as a failed run.
+
+### Security
+
+- Go toolchain bumped 1.26.5 → 1.27.1 and every dependency updated to its
+  latest release (go-git 5.19.1 → 5.19.2, lipgloss 2.0.5 → 2.0.6,
+  `golang.org/x/crypto` 0.50.0 → 0.57.0, `golang.org/x/net` 0.53.0 → 0.59.0,
+  and the indirect modules with them). This clears five advisories govulncheck
+  flagged in CI: GO-2026-6214 (go-git path traversal via crafted reference
+  names), GO-2026-6213 (go-git worktree operations may follow symlinks),
+  GO-2026-6090 (crypto/tls), GO-2026-5972 (encoding/asn1 recursion depth) and
+  GO-2026-5026 (x/net idna accepts ASCII-only Punycode labels). The go-git
+  advisories land on the calls the in-process engine makes against whatever
+  repository the shell is in. It also clears three `golang.org/x/crypto/ssh`
+  advisories in imported but uncalled code: GO-2026-6355 and GO-2026-6354
+  (deadlocked-channel DoS) and GO-2026-6303 (source-address option not
+  enforced for non-public-key auth).
 
 ## [0.1.1] - 2026-07-16
 
