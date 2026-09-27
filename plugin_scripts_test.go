@@ -274,7 +274,11 @@ func TestRenderFormulaMatchesGolden(t *testing.T) {
 func bareTap(t *testing.T, reject bool) (url, dir string) {
 	t.Helper()
 	dir = filepath.Join(t.TempDir(), "tap.git")
-	if out, err := exec.Command("git", "init", "--quiet", "--bare", dir).CombinedOutput(); err != nil {
+	// --initial-branch pins the bare repo's HEAD to main like the real tap;
+	// otherwise HEAD follows the host's init.defaultBranch and a clone after
+	// the first push to main comes back empty (caught on CI, where the
+	// default is master).
+	if out, err := exec.Command("git", "init", "--quiet", "--bare", "--initial-branch=main", dir).CombinedOutput(); err != nil {
 		t.Fatalf("git init --bare: %v: %s", err, out)
 	}
 	if reject {
