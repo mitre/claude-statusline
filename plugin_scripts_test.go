@@ -268,6 +268,97 @@ func TestRenderFormulaMatchesGolden(t *testing.T) {
 	}
 }
 
+// bareTap creates a local bare repo standing in for mitre/homebrew-tap.
+// With reject, a pre-receive hook refuses every push — the "rejected tap
+// push" case that once printed "published" and exited 0.
+func bareTap(t *testing.T, reject bool) (url, dir string) {
+	t.Helper()
+	dir = filepath.Join(t.TempDir(), "tap.git")
+	if out, err := exec.Command("git", "init", "--quiet", "--bare", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v: %s", err, out)
+	}
+	if reject {
+		hook := "#!/bin/sh\necho \"rejected by test hook\" >&2\nexit 1\n"
+		if err := os.WriteFile(filepath.Join(dir, "hooks", "pre-receive"), []byte(hook), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return "file://" + dir, dir
+}
+
+// runPublishFormula runs the script from a scratch cwd holding the golden
+// checksums fixture, pointed at tapURL. The token is a dummy: nothing in
+// these tests may reach the network.
+func runPublishFormula(t *testing.T, tapURL string) (out string, err error) {
+	t.Helper()
+	script, aerr := filepath.Abs("scripts/publish-formula.sh")
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	sums, rerr := os.ReadFile("testdata/formula-checksums.txt")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	work := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(work, "dist"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "dist", "checksums.txt"), sums, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", script, "9.9.9")
+	cmd.Dir = work
+	cmd.Env = append(os.Environ(),
+		"HOMEBREW_TAP_GITHUB_TOKEN=dummy-test-token",
+		"TAP_URL="+tapURL,
+	)
+	b, err := cmd.CombinedOutput()
+	return string(b), err
+}
+
+func TestPublishFormulaHonorsTapURLOverride(t *testing.T) {
+	url, dir := bareTap(t, false)
+	out, err := runPublishFormula(t, url)
+	if err != nil {
+		t.Fatalf("publish against local tap failed: %v: %s", err, out)
+	}
+	if !strings.Contains(out, "published") {
+		t.Errorf("success run must report the publish, got: %q", out)
+	}
+	ls, lerr := exec.Command("git", "-C", dir, "ls-tree", "-r", "--name-only", "main").Output()
+	if lerr != nil || !strings.Contains(string(ls), "Formula/claude-statusline.rb") {
+		t.Errorf("formula must land in the tap repo, ls-tree = %q (%v)", ls, lerr)
+	}
+}
+
+func TestPublishFormulaFailsWhenPushRejected(t *testing.T) {
+	url, _ := bareTap(t, true)
+	out, err := runPublishFormula(t, url)
+	if err == nil {
+		t.Fatalf("a rejected tap push must exit non-zero, output: %s", out)
+	}
+	if strings.Contains(out, "published Formula") {
+		t.Errorf("a rejected push must never claim publication: %q", out)
+	}
+	if !strings.Contains(out, "push") {
+		t.Errorf("failure must say the push failed, got: %q", out)
+	}
+}
+
+func TestPublishFormulaUnchangedRerunExitsZero(t *testing.T) {
+	url, _ := bareTap(t, false)
+	if out, err := runPublishFormula(t, url); err != nil {
+		t.Fatalf("first publish failed: %v: %s", err, out)
+	}
+	out, err := runPublishFormula(t, url)
+	if err != nil {
+		t.Fatalf("unchanged re-run must exit 0: %v: %s", err, out)
+	}
+	if !strings.Contains(out, "unchanged") {
+		t.Errorf("unchanged re-run must say so, got: %q", out)
+	}
+}
+
 func TestRenderFormulaRefusesIncompleteChecksums(t *testing.T) {
 	// A checksums file missing any of the four platform assets must fail
 	// loudly — a partial formula would break installs for that platform.

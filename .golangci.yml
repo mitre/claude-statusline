@@ -56,6 +56,13 @@ linters:
       - path: _test\.go
         linters: [gosec]
         text: "G306"
+      # Taint-analysis twin of the G304 test exclusion above: tests copy
+      # repo fixture content (testdata/) into t.TempDir()-derived paths;
+      # writing fixtures at variable temp paths IS the tests' purpose.
+      # Production write paths remain fully checked.
+      - path: _test\.go
+        linters: [gosec]
+        text: "G703"
 
 formatters:
   enable:
