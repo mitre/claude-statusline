@@ -1,0 +1,8 @@
+#!/bin/sh
+# Fast pre-commit gate: lint only. The heavier gates (race, cover, vuln,
+# build) stay in CI — a slow hook trains people to bypass it. make lint
+# carries the tool-version guard, so a mismatched local golangci-lint is
+# refused instead of linting with the wrong version.
+# Skip explicitly with `git commit --no-verify` (see AGENTS.md for when
+# that is acceptable).
+exec make lint
