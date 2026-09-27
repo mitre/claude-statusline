@@ -22,14 +22,10 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      # Pinned to the same version the repo is linted with locally.
-      - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
-      - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
-      # Pinned to the same version the release workflow uses.
-      - name: Install goreleaser
-        run: go install github.com/goreleaser/goreleaser/v2@v2.17.0
+      # Every tool version is pinned in the Makefile (the single source);
+      # the make targets refuse a mismatched binary.
+      - name: Install pinned tools
+        run: make tools
       - run: make lint
       - run: make vuln
       - run: make race

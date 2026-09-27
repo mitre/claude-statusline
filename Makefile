@@ -1,11 +1,47 @@
 BINARY := claude-statusline
 DIST   := dist
 
-.PHONY: build test vet lint vuln race cover fuzz bench check release snapshot clean
+.PHONY: build test vet lint vuln race cover fuzz bench check release snapshot clean \
+	tools require-golangci-lint require-govulncheck require-goreleaser
 
 COVER_MIN ?= 90
 PKG_COVER_MIN ?= 85
 FUZZTIME ?= 30s
+
+# ---- Tool pins: the ONLY place tool versions appear. Workflows install via
+# `make tools`; AGENTS.md points here instead of repeating numbers. The
+# require-* guards refuse a mismatched local binary — a local/CI version
+# split (2.11.3 vs 2.13.2) once turned a release PR red with no local signal.
+GOLANGCI_LINT_VERSION := v2.13.2
+GOVULNCHECK_VERSION   := v1.7.0
+GORELEASER_VERSION    := v2.17.0
+
+# Local builds use exactly go.mod's Go — the same version CI resolves from
+# go-version-file — so a newer Homebrew Go can't silently change the gates.
+export GOTOOLCHAIN := go$(shell awk '$$1 == "go" {print $$2; exit}' go.mod)
+
+tools:
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	go install github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)
+
+# Each guard parses the binary's own version report; "missing" and
+# "mismatched" both fail with the same remedy. Kept as three explicit
+# targets: each tool reports its version in a different shape.
+require-golangci-lint:
+	@have=$$(golangci-lint --version 2>/dev/null | awk '{print $$4}'); \
+	[ "v$$have" = "$(GOLANGCI_LINT_VERSION)" ] || { \
+	  echo "FAIL: local golangci-lint is '$${have:-missing}', pinned $(GOLANGCI_LINT_VERSION) — run: make tools" >&2; exit 1; }
+
+require-govulncheck:
+	@have=$$(govulncheck -version 2>/dev/null | awk '/^Scanner:/ {sub(/.*@/, "", $$2); print $$2}'); \
+	[ "$$have" = "$(GOVULNCHECK_VERSION)" ] || { \
+	  echo "FAIL: local govulncheck is '$${have:-missing}', pinned $(GOVULNCHECK_VERSION) — run: make tools" >&2; exit 1; }
+
+require-goreleaser:
+	@have=$$(goreleaser --version 2>/dev/null | awk '/^GitVersion:/ {print $$2}'); \
+	[ "$$have" = "$(GORELEASER_VERSION)" ] || { \
+	  echo "FAIL: local goreleaser is '$${have:-missing}', pinned $(GORELEASER_VERSION) — run: make tools" >&2; exit 1; }
 
 # The one gate: everything a card close (and CI) must prove, in one command.
 # (race runs the full suite under the race detector; cover re-runs for the
@@ -46,11 +82,11 @@ fuzz:
 bench:
 	go test -run='^$$' -bench=. -benchmem ./...
 
-lint:
+lint: require-golangci-lint
 	golangci-lint config verify
 	golangci-lint run
 
-vuln:
+vuln: require-govulncheck
 	govulncheck ./...
 
 build: vet
@@ -65,10 +101,10 @@ vet:
 # One artifact pipeline: goreleaser owns cross-compilation, archives, and
 # checksums. `release` publishes (tag + GITHUB_TOKEN required — the v* tag
 # workflow's job); `snapshot` is the local no-publish proof.
-release: vet test
+release: require-goreleaser vet test
 	goreleaser release --clean
 
-snapshot: vet test
+snapshot: require-goreleaser vet test
 	goreleaser release --snapshot --clean
 	@ls -la $(DIST)
 
