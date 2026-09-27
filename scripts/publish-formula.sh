@@ -20,7 +20,9 @@ SUMS="dist/checksums.txt"
 }
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-WORK=$(mktemp -d) || exit 1
+# Explicit template: macOS mktemp ignores $TMPDIR without one and falls
+# back to the confstr per-user dir, which sandboxed environments deny.
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/publish-formula.XXXXXX") || exit 1
 trap 'rm -rf "$WORK"' EXIT
 
 sh "${SCRIPT_DIR}/render-formula.sh" "$VER" "$SUMS" > "${WORK}/claude-statusline.rb" || exit 1

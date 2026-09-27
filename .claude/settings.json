@@ -11,5 +11,35 @@
         "matcher": ""
       }
     ]
+  },
+  "sandbox": {
+    "enableWeakerNetworkIsolation": true,
+    "excludedCommands": [
+      "git push*",
+      "git fetch*",
+      "git pull*",
+      "git ls-remote*",
+      "gh *",
+      "goreleaser *",
+      "bd *",
+      "dolt *"
+    ],
+    "network": {
+      "allowedDomains": [
+        "proxy.golang.org",
+        "sum.golang.org",
+        "vuln.go.dev",
+        "storage.googleapis.com",
+        "github.com",
+        "api.github.com",
+        "codeload.github.com",
+        "objects.githubusercontent.com"
+      ]
+    }
+  },
+  "permissions": {
+    "ask": [
+      "Bash(git push*)"
+    ]
   }
 }
