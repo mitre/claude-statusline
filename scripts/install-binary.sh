@@ -22,7 +22,9 @@ esac
 NAME="claude-statusline-${VER}-${OS}-${ARCH}.tar.gz"
 BASE="https://github.com/mitre/claude-statusline/releases/download/v${VER}"
 
-DL=$(mktemp -d) || exit 1
+# Explicit template: macOS mktemp ignores $TMPDIR without one and falls
+# back to the confstr per-user dir, which sandboxed environments deny.
+DL=$(mktemp -d "${TMPDIR:-/tmp}/claude-statusline-install.XXXXXX") || exit 1
 trap 'rm -rf "$DL"' EXIT
 
 curl -fsSL --max-time 120 "${BASE}/${NAME}" -o "${DL}/${NAME}" || {
