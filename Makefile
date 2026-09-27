@@ -2,7 +2,7 @@ BINARY := claude-statusline
 DIST   := dist
 
 .PHONY: build test vet lint vuln race cover fuzz bench check release snapshot clean \
-	tools require-golangci-lint require-govulncheck require-goreleaser
+	tools hooks require-golangci-lint require-govulncheck require-goreleaser
 
 COVER_MIN ?= 90
 PKG_COVER_MIN ?= 85
@@ -19,6 +19,11 @@ GORELEASER_VERSION    := v2.17.0
 # Local builds use exactly go.mod's Go — the same version CI resolves from
 # go-version-file — so a newer Homebrew Go can't silently change the gates.
 export GOTOOLCHAIN := go$(shell awk '$$1 == "go" {print $$2; exit}' go.mod)
+
+# Installs the fast-gate pre-commit hook (lint only; idempotent; appends
+# alongside other tools' managed hook sections — see scripts/install-hooks.sh).
+hooks:
+	sh scripts/install-hooks.sh
 
 tools:
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)

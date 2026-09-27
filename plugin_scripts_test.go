@@ -363,6 +363,126 @@ func TestPublishFormulaUnchangedRerunExitsZero(t *testing.T) {
 	}
 }
 
+// --- pre-commit gate hook (scripts/githooks/pre-commit + installer) ---
+
+const hookMarker = "# --- BEGIN claude-statusline fast gates ---"
+
+// scratchRepo creates an empty git repo and returns its path.
+func scratchRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "--quiet", "--initial-branch=main", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	return dir
+}
+
+func runInstallHooks(t *testing.T, repo string) string {
+	t.Helper()
+	script, err := filepath.Abs("scripts/install-hooks.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", script)
+	cmd.Dir = repo
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("install-hooks.sh: %v: %s", err, out)
+	}
+	return string(out)
+}
+
+func TestInstallHooksCreatesExecutableHook(t *testing.T) {
+	repo := scratchRepo(t)
+	runInstallHooks(t, repo)
+
+	hook := filepath.Join(repo, ".git", "hooks", "pre-commit")
+	info, err := os.Stat(hook)
+	if err != nil {
+		t.Fatalf("hook not created: %v", err)
+	}
+	if info.Mode()&0o100 == 0 {
+		t.Errorf("hook must be owner-executable, mode %v", info.Mode())
+	}
+	content, err := os.ReadFile(hook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), hookMarker) {
+		t.Errorf("hook must contain the managed-block marker, got:\n%s", content)
+	}
+	if !strings.Contains(string(content), "scripts/githooks/pre-commit") {
+		t.Errorf("hook must dispatch to the versioned gate script, got:\n%s", content)
+	}
+}
+
+func TestInstallHooksIsIdempotent(t *testing.T) {
+	repo := scratchRepo(t)
+	runInstallHooks(t, repo)
+	runInstallHooks(t, repo)
+
+	content, err := os.ReadFile(filepath.Join(repo, ".git", "hooks", "pre-commit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(content), hookMarker); got != 1 {
+		t.Errorf("double install must leave exactly 1 managed block, got %d:\n%s", got, content)
+	}
+}
+
+func TestInstallHooksPreservesForeignSections(t *testing.T) {
+	repo := scratchRepo(t)
+	foreign := "#!/usr/bin/env sh\n# --- BEGIN BEADS INTEGRATION v1.3.0 ---\nbd hooks run pre-commit \"$@\" || exit $?\n# --- END BEADS INTEGRATION v1.3.0 ---\n"
+	hook := filepath.Join(repo, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(hook, []byte(foreign), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runInstallHooks(t, repo)
+
+	content, err := os.ReadFile(hook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "BEGIN BEADS INTEGRATION v1.3.0") {
+		t.Errorf("existing managed sections must survive the install, got:\n%s", content)
+	}
+	if !strings.Contains(string(content), hookMarker) {
+		t.Errorf("our block must be appended alongside, got:\n%s", content)
+	}
+}
+
+// shimMake fakes `make` first on PATH, recording its argv and exiting rc.
+func shimMake(t *testing.T, rc int) (argvFile string) {
+	t.Helper()
+	dir := t.TempDir()
+	argvFile = filepath.Join(dir, "make-argv")
+	script := "#!/bin/sh\necho \"$@\" > \"" + argvFile + "\"\nexit " + fmt.Sprint(rc) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "make"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return argvFile
+}
+
+func TestPreCommitGateFailsWhenLintFails(t *testing.T) {
+	argvFile := shimMake(t, 1)
+	out, err := exec.Command("sh", "scripts/githooks/pre-commit").CombinedOutput()
+	if err == nil {
+		t.Fatalf("gate must exit non-zero when make lint fails, output: %s", out)
+	}
+	argv, rerr := os.ReadFile(argvFile)
+	if rerr != nil || strings.TrimSpace(string(argv)) != "lint" {
+		t.Errorf("gate must run exactly 'make lint', argv=%q (%v)", argv, rerr)
+	}
+}
+
+func TestPreCommitGatePassesWhenLintPasses(t *testing.T) {
+	shimMake(t, 0)
+	if out, err := exec.Command("sh", "scripts/githooks/pre-commit").CombinedOutput(); err != nil {
+		t.Fatalf("gate must exit zero when make lint passes: %v: %s", err, out)
+	}
+}
+
 func TestRenderFormulaRefusesIncompleteChecksums(t *testing.T) {
 	// A checksums file missing any of the four platform assets must fail
 	// loudly — a partial formula would break installs for that platform.
