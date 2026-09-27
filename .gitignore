@@ -21,3 +21,6 @@ coverage.out
 
 # GitHub App private keys must never be committed
 *.pem
+
+# Beads / Dolt files (added by bd init)
+*.gate.lock*
