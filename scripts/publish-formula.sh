@@ -13,7 +13,10 @@ VER="${VER#v}"
 # is the real tap.
 TAP_URL="${TAP_URL:-https://github.com/mitre/homebrew-tap.git}"
 
-SUMS="dist/checksums.txt"
+# Overridable: the release workflow's formula job sets CHECKSUMS_FILE to
+# the checksums.txt DOWNLOADED from the published release, so a job re-run
+# renders from what was actually shipped — never from a rebuilt dist/.
+SUMS="${CHECKSUMS_FILE:-dist/checksums.txt}"
 [ -f "$SUMS" ] || {
   echo "missing ${SUMS} — run the release build first" >&2
   exit 1

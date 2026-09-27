@@ -16,7 +16,7 @@ failure — a failed step ends the setup with a clear report.
 Run exactly:
 
 ```bash
-VER=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json" | head -1) && sh "${CLAUDE_PLUGIN_ROOT}/scripts/install-binary.sh" "$VER"
+VER=$(sh "${CLAUDE_PLUGIN_ROOT}/scripts/plugin-version.sh" "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json") && sh "${CLAUDE_PLUGIN_ROOT}/scripts/install-binary.sh" "$VER"
 ```
 
 The script downloads the release archive for this OS/arch, verifies its

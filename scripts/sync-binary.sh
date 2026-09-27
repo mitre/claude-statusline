@@ -9,8 +9,8 @@ set -u
 BIN="${HOME}/.claude/claude-statusline"
 [ -x "$BIN" ] || exit 0
 
-PLUGIN_VER=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json" | head -1)
-[ -n "$PLUGIN_VER" ] || exit 0
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+PLUGIN_VER=$(sh "${SCRIPT_DIR}/plugin-version.sh" "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json" 2>/dev/null) || exit 0
 
 BIN_VER=$("$BIN" --version 2>/dev/null | awk '{ print $2 }')
 [ -n "$BIN_VER" ] || exit 0
@@ -24,7 +24,6 @@ if [ -d "$LOCK" ] && [ -n "$(find "$LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ];
 fi
 mkdir "$LOCK" 2>/dev/null || exit 0
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 (
   trap 'rmdir "$LOCK" 2>/dev/null' EXIT
   sh "${SCRIPT_DIR}/install-binary.sh" "$PLUGIN_VER"
