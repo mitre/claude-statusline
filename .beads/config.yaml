@@ -67,4 +67,4 @@
 
 dolt.shared-server: true
 sync:
-    remote: "git+https://github.com/mitre/claude-statusline.git"
+    remote: "git+ssh://git@github.com/mitre/claude-statusline.git"

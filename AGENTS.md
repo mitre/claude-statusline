@@ -68,7 +68,7 @@ go test ./internal/render/                    # single package
 go test -run TestName ./internal/gitinfo/     # single test
 ```
 
-CI (`.github/workflows/ci.yml`) runs exactly the make targets above — never add CI-only shell; add a make target instead. golangci-lint is pinned (v2.11.3, config `version: "2"`) with gofumpt, gosec, revive, gocritic, misspell.
+CI (`.github/workflows/ci.yml`) runs exactly the make targets above — never add CI-only shell; add a make target instead. golangci-lint is pinned (v2.13.2, config `version: "2"`) with gofumpt, gosec, revive, gocritic, misspell.
 
 ### Test-hygiene traps (each has bitten before)
 
