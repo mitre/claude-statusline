@@ -2,21 +2,30 @@
 # command CI runs is the command a developer runs. No duplicated shell here.
 name: CI
 
+# Triggers: exactly one authoritative run per SHA. PR branches run via
+# pull_request only (an unfiltered push trigger doubled every PR run);
+# tags get no CI here — the release workflow runs its own gates job on
+# the tagged commit.
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# Superseded PR pushes cancel their in-flight run; main pushes queue —
+# cancel-in-progress on main killed 9 of the last 40 main runs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   gates:
     name: lint + vuln + race + cover + cross-build (linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
