@@ -2,7 +2,7 @@ BINARY := claude-statusline
 DIST   := dist
 
 .PHONY: build test vet lint vuln race cover fuzz bench check release snapshot clean \
-	tools hooks preflight release-checksums \
+	tools hooks preflight release-checksums publish-formula \
 	require-golangci-lint require-govulncheck require-goreleaser
 
 COVER_MIN ?= 90
@@ -121,7 +121,8 @@ release: require-goreleaser vet test
 	goreleaser release --clean --release-notes=$(DIST)/release-notes.md
 
 snapshot: require-goreleaser vet test
-	goreleaser release --snapshot --clean
+	@VER=$$(sh scripts/plugin-version.sh .claude-plugin/plugin.json) && \
+	  SNAPSHOT_VERSION="$$VER" goreleaser release --snapshot --clean
 	@ls -la $(DIST)
 
 # Fetches the PUBLISHED release's checksums.txt (requires VERSION, e.g.
