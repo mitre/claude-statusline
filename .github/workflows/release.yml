@@ -99,7 +99,7 @@ jobs:
         id: tap-token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
-          app-id: ${{ vars.TAP_PUBLISHER_APP_ID }}
+          client-id: ${{ vars.TAP_PUBLISHER_CLIENT_ID }}
           private-key: ${{ secrets.TAP_PUBLISHER_APP_PRIVATE_KEY }}
           owner: mitre
           repositories: homebrew-tap
