@@ -70,6 +70,8 @@ go test -run TestName ./internal/gitinfo/     # single test
 
 CI (`.github/workflows/ci.yml`) runs exactly the make targets above — never add CI-only shell; add a make target instead. Every tool version (golangci-lint, govulncheck, goreleaser) is pinned once in the Makefile (`*_VERSION` variables); `make tools` installs them and the gate targets refuse a mismatched local binary. golangci-lint runs config `version: "2"` with gofumpt, gosec, revive, gocritic, misspell.
 
+The release pipeline (tag → preflight → gates → release → Homebrew formula) is documented end-to-end in [docs/release-pipeline.md](docs/release-pipeline.md) — jobs, guardrails, and the release runbook live there, not here.
+
 `make hooks` installs the fast-gate pre-commit hook (once per clone). It runs `make lint` only — race/cover/vuln stay in CI because a slow hook gets bypassed — and inherits the tool-version guard, so a mismatched golangci-lint refuses rather than lints. The installer appends a marker-delimited block to `.git/hooks/pre-commit` alongside other tools' managed sections (beads keeps its own there); it never uses `core.hooksPath`, which would disable them. `git commit --no-verify` is acceptable only for commits no gate applies to (pure docs/board files) or when the hook itself is broken — never to sneak code past lint; CI runs the same pinned gate regardless.
 
 ### Test-hygiene traps (each has bitten before)

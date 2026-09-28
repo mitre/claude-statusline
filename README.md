@@ -32,6 +32,16 @@ version-pinned to the plugin from then on):
 /claude-statusline:setup
 ```
 
+Or with Homebrew (the formula is generated and pushed by the release
+pipeline; its sha256 pins match the release's `checksums.txt`):
+
+```sh
+brew install mitre/tap/claude-statusline
+```
+
+The binary lands at `/opt/homebrew/opt/claude-statusline/bin/claude-statusline`
+(Apple silicon) — point `statusLine` there, or at a copy wherever you prefer.
+
 Or with Go:
 
 ```sh
@@ -200,6 +210,17 @@ values are never fabricated. `show_stale_age = false` hides the marker.
 
 ## Develop
 
+One-time setup per clone:
+
+```sh
+make tools    # install golangci-lint / govulncheck / goreleaser at the pinned versions
+make hooks    # install the pre-commit fast gate (runs make lint; skippable only via --no-verify)
+```
+
+Tool versions are pinned once in the Makefile (`*_VERSION` variables) and CI
+installs the same way; the gate targets refuse a mismatched local binary
+rather than lint with the wrong version.
+
 ```sh
 make check    # the one gate: lint + vuln + race + cover + build
 make test     # unit tests (all logic is exec/HTTP-injected — no network)
@@ -209,8 +230,13 @@ make race     # full suite under the race detector
 make cover    # coverage floors: 90% total, 85% per package (override: COVER_MIN / PKG_COVER_MIN)
 make build    # local binary (claude-statusline --version reports build identity; "dev" on un-injected builds)
 make snapshot # local no-publish proof of the release pipeline: darwin/linux × arm64/amd64 archives + checksums into dist/
-make release  # publish via goreleaser — tag + GITHUB_TOKEN required (the v* tag workflow's job, gated by its preflight and make-check jobs)
+make preflight TAG=v0.2.0  # the release gate, runnable locally: tag shape, manifest parity, CHANGELOG section, tag-on-main
 ```
+
+Releases are cut by pushing a `v<major>.<minor>.<patch>` tag; everything
+after that is pipeline. [docs/release-pipeline.md](docs/release-pipeline.md)
+is the full reference — jobs, gates, artifacts, the Homebrew formula path,
+and the release runbook.
 
 ## License
 

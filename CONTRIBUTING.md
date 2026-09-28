@@ -34,8 +34,14 @@ Do **not** open a public issue — see [SECURITY.md](./SECURITY.md).
 ## Development
 
 ```sh
+make tools   # once per clone: install the pinned tool versions (golangci-lint, govulncheck, goreleaser)
+make hooks   # once per clone: install the pre-commit fast gate (runs make lint)
 make check   # the one gate: lint + vuln + race + cover + build — must be green before any PR
 ```
+
+The gate targets refuse a mismatched local tool version and tell you to run
+`make tools` — versions are pinned once in the Makefile, and CI installs the
+same way, so local green means CI green.
 
 - **TDD**: no production code without a failing test first. Rendered output is
   pinned byte-for-byte by golden tests — display changes update goldens
