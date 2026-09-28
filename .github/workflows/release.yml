@@ -47,6 +47,10 @@ jobs:
     name: goreleaser (archives + checksums)
     needs: [preflight, gates]
     runs-on: ubuntu-latest
+    # The publish path runs in the `release` environment: its secrets and
+    # variables are only served to jobs on v-tag refs (environment tag
+    # policy), not to any branch's workflow.
+    environment: release
     permissions:
       contents: write
     steps:
@@ -75,6 +79,8 @@ jobs:
     name: publish Homebrew formula
     needs: release
     runs-on: ubuntu-latest
+    # Holds the tap app key — same environment gating as the release job.
+    environment: release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
