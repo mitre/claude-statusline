@@ -33,12 +33,11 @@ snapshot:
   version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
 
 changelog:
-  # CHANGELOG.md (Keep a Changelog) is the human release-notes source of
-  # record; the generated git log is supplementary.
-  use: git
-  filters:
-    exclude:
-      - "^chore: beads"
+  # CHANGELOG.md (Keep a Changelog) is the release-notes source of record:
+  # `make release` extracts the version's section (scripts/release-notes.sh)
+  # and passes it via --release-notes. The git-log changelog is disabled so
+  # it can never leak in beside or instead of the curated notes.
+  disable: true
 
 # Homebrew publishing deliberately does NOT use goreleaser's publishers:
 # `brews` is deprecated (fails `goreleaser check`) and its replacement

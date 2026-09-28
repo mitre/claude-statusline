@@ -2,7 +2,8 @@ BINARY := claude-statusline
 DIST   := dist
 
 .PHONY: build test vet lint vuln race cover fuzz bench check release snapshot clean \
-	tools hooks require-golangci-lint require-govulncheck require-goreleaser
+	tools hooks preflight release-checksums \
+	require-golangci-lint require-govulncheck require-goreleaser
 
 COVER_MIN ?= 90
 PKG_COVER_MIN ?= 85
@@ -103,21 +104,39 @@ test:
 vet:
 	go vet ./...
 
+# Release preflight: tag shape, manifest/tag version parity, CHANGELOG
+# section, tagged-commit-on-main — the release workflow's first job.
+preflight:
+	sh scripts/release-preflight.sh "$(TAG)"
+
 # One artifact pipeline: goreleaser owns cross-compilation, archives, and
 # checksums. `release` publishes (tag + GITHUB_TOKEN required — the v* tag
-# workflow's job); `snapshot` is the local no-publish proof.
+# workflow's job); `snapshot` is the local no-publish proof. Release notes
+# come from CHANGELOG.md's section for the version (goreleaser's git-log
+# changelog is disabled in .goreleaser.yaml).
 release: require-goreleaser vet test
-	goreleaser release --clean
+	@mkdir -p $(DIST)
+	@VER=$$(sh scripts/plugin-version.sh .claude-plugin/plugin.json) && \
+	  sh scripts/release-notes.sh "$$VER" > $(DIST)/release-notes.md
+	goreleaser release --clean --release-notes=$(DIST)/release-notes.md
 
 snapshot: require-goreleaser vet test
 	goreleaser release --snapshot --clean
 	@ls -la $(DIST)
 
-# Renders the formula from this release's checksums and pushes it to
-# mitre/homebrew-tap (requires HOMEBREW_TAP_GITHUB_TOKEN and VERSION —
-# the release workflow's follow-on step after `release`).
+# Fetches the PUBLISHED release's checksums.txt (requires VERSION, e.g.
+# v0.2.0, and gh auth) into published/ — the formula job's input, so a
+# job re-run can never rebuild archives under shipped checksums.
+release-checksums:
+	@mkdir -p published
+	gh release download "$(VERSION)" --pattern checksums.txt --dir published --clobber
+
+# Renders the formula from a checksums file and pushes it to
+# mitre/homebrew-tap (requires HOMEBREW_TAP_GITHUB_TOKEN and VERSION).
+# CI passes CHECKSUMS_FILE=published/checksums.txt from release-checksums;
+# locally it defaults to dist/checksums.txt.
 publish-formula:
-	sh scripts/publish-formula.sh "$(VERSION)"
+	CHECKSUMS_FILE="$(CHECKSUMS_FILE)" sh scripts/publish-formula.sh "$(VERSION)"
 
 clean:
 	rm -f $(BINARY)

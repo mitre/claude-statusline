@@ -483,6 +483,174 @@ func TestPreCommitGatePassesWhenLintPasses(t *testing.T) {
 	}
 }
 
+// --- release preflight (scripts/release-preflight.sh + shared version/notes scripts) ---
+
+// preflightRepo builds a scratch repo shaped like this one where preflight
+// looks: plugin manifests at .claude-plugin/, CHANGELOG.md, branch main.
+func preflightRepo(t *testing.T, manifestVer, changelogVer string) string {
+	t.Helper()
+	dir := scratchRepo(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".claude-plugin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writePreflightFile(t, dir, ".claude-plugin/plugin.json",
+		`{"name":"claude-statusline","version":"`+manifestVer+`"}`)
+	writePreflightFile(t, dir, ".claude-plugin/marketplace.json",
+		`{"plugins":[{"name":"claude-statusline","version":"`+manifestVer+`"}]}`)
+	writePreflightFile(t, dir, "CHANGELOG.md",
+		"# Changelog\n\n## [Unreleased]\n\n## ["+changelogVer+"] - 2026-09-27\n\n### Fixed\n\n- a fix entry\n\n## [0.1.0] - 2026-07-15\n\n### Added\n\n- old entry\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "-c", "user.name=t", "-c", "user.email=t@test.invalid", "commit", "-q", "-m", "seed")
+	return dir
+}
+
+func writePreflightFile(t *testing.T, dir, rel, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, rel), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func gitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+}
+
+// runPreflight executes the script in dir with MAIN_REF=main (the scratch
+// repos have no origin — same seam idea as TAP_URL).
+func runPreflight(t *testing.T, dir, tag string) (out string, err error) {
+	t.Helper()
+	script, aerr := filepath.Abs("scripts/release-preflight.sh")
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	cmd := exec.Command("sh", script, tag)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "MAIN_REF=main")
+	b, err := cmd.CombinedOutput()
+	return string(b), err
+}
+
+func TestReleasePreflightRejectsVersionMismatch(t *testing.T) {
+	dir := preflightRepo(t, "0.2.0", "0.3.0")
+	gitIn(t, dir, "tag", "v0.3.0")
+	out, err := runPreflight(t, dir, "v0.3.0")
+	if err == nil {
+		t.Fatalf("plugin.json 0.2.0 vs tag v0.3.0 must fail, output: %s", out)
+	}
+	if !strings.Contains(out, "plugin.json") {
+		t.Errorf("failure must name plugin.json, got: %q", out)
+	}
+}
+
+func TestReleasePreflightRejectsMarketplaceMismatch(t *testing.T) {
+	dir := preflightRepo(t, "0.3.0", "0.3.0")
+	writePreflightFile(t, dir, ".claude-plugin/marketplace.json",
+		`{"plugins":[{"name":"claude-statusline","version":"0.2.0"}]}`)
+	gitIn(t, dir, "tag", "v0.3.0")
+	out, err := runPreflight(t, dir, "v0.3.0")
+	if err == nil {
+		t.Fatalf("marketplace.json 0.2.0 vs tag v0.3.0 must fail, output: %s", out)
+	}
+	if !strings.Contains(out, "marketplace.json") {
+		t.Errorf("failure must name marketplace.json, got: %q", out)
+	}
+}
+
+func TestReleasePreflightRejectsNonSemverTag(t *testing.T) {
+	dir := preflightRepo(t, "0.3.0", "0.3.0")
+	gitIn(t, dir, "tag", "v0.3.0-rc1")
+	out, err := runPreflight(t, dir, "v0.3.0-rc1")
+	if err == nil {
+		t.Fatalf("non-semver tag must fail, output: %s", out)
+	}
+	if !strings.Contains(out, "vMAJOR.MINOR.PATCH") {
+		t.Errorf("failure must state the required tag shape, got: %q", out)
+	}
+}
+
+func TestReleasePreflightRejectsMissingChangelogHeading(t *testing.T) {
+	dir := preflightRepo(t, "0.3.0", "0.2.0")
+	gitIn(t, dir, "tag", "v0.3.0")
+	out, err := runPreflight(t, dir, "v0.3.0")
+	if err == nil {
+		t.Fatalf("missing CHANGELOG section must fail, output: %s", out)
+	}
+	if !strings.Contains(out, "CHANGELOG") {
+		t.Errorf("failure must name the CHANGELOG, got: %q", out)
+	}
+}
+
+func TestReleasePreflightRejectsTagOffMain(t *testing.T) {
+	dir := preflightRepo(t, "0.3.0", "0.3.0")
+	gitIn(t, dir, "checkout", "-q", "-b", "side")
+	writePreflightFile(t, dir, "extra.txt", "off-main change\n")
+	gitIn(t, dir, "add", "extra.txt")
+	gitIn(t, dir, "-c", "user.name=t", "-c", "user.email=t@test.invalid", "commit", "-q", "-m", "side commit")
+	gitIn(t, dir, "tag", "v0.3.0")
+	out, err := runPreflight(t, dir, "v0.3.0")
+	if err == nil {
+		t.Fatalf("tag off main must fail, output: %s", out)
+	}
+	if !strings.Contains(out, "not on main") {
+		t.Errorf("failure must say the tag is not on main, got: %q", out)
+	}
+}
+
+func TestReleasePreflightPassesWhenAligned(t *testing.T) {
+	dir := preflightRepo(t, "0.3.0", "0.3.0")
+	gitIn(t, dir, "tag", "v0.3.0")
+	out, err := runPreflight(t, dir, "v0.3.0")
+	if err != nil {
+		t.Fatalf("aligned release must pass preflight: %v: %s", err, out)
+	}
+	if !strings.Contains(out, "preflight OK: v0.3.0") {
+		t.Errorf("success must report what was verified, got: %q", out)
+	}
+}
+
+func TestPluginVersionScriptExtractsAndFails(t *testing.T) {
+	out, err := exec.Command("sh", "scripts/plugin-version.sh", ".claude-plugin/plugin.json").Output()
+	if err != nil {
+		t.Fatalf("plugin-version.sh on the real manifest: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "0.2.0" {
+		t.Errorf("plugin-version.sh = %q, want 0.2.0 (the current manifest version)", got)
+	}
+	empty := filepath.Join(t.TempDir(), "empty.json")
+	if err := os.WriteFile(empty, []byte(`{"name":"x"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exec.Command("sh", "scripts/plugin-version.sh", empty).Output(); err == nil {
+		t.Error("a manifest without a version must fail, not print empty")
+	}
+}
+
+func TestReleaseNotesExtractsExactSection(t *testing.T) {
+	cl := filepath.Join(t.TempDir(), "CHANGELOG.md")
+	content := "# Changelog\n\n## [Unreleased]\n\n## [0.3.0] - 2026-09-27\n\n### Fixed\n\n- fix one\n- fix two\n\n## [0.2.0] - 2026-09-24\n\n### Added\n\n- old\n"
+	if err := os.WriteFile(cl, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("sh", "scripts/release-notes.sh", "0.3.0", cl).Output()
+	if err != nil {
+		t.Fatalf("release-notes.sh: %v", err)
+	}
+	// Trailing blank lines before the next heading are stripped (shell
+	// command substitution); one final newline is the canonical shape.
+	want := "\n### Fixed\n\n- fix one\n- fix two\n"
+	if string(out) != want {
+		t.Errorf("extracted section = %q, want %q", out, want)
+	}
+	if _, err := exec.Command("sh", "scripts/release-notes.sh", "9.9.9", cl).Output(); err == nil {
+		t.Error("an absent version's notes must fail, not print empty")
+	}
+}
+
 func TestRenderFormulaRefusesIncompleteChecksums(t *testing.T) {
 	// A checksums file missing any of the four platform assets must fail
 	// loudly — a partial formula would break installs for that platform.
