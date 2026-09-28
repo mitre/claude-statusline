@@ -42,6 +42,6 @@ jobs:
       # Snapshot build: the multi-platform compile check plus a full dry run
       # of the release pipeline (archives + checksums) — publishes nothing.
       - run: make snapshot
-# The macOS byte-parity job was retired 2026-07-03 alongside the parity make
-# target: the first intentional display change (account row) ended the
-# byte-parity era. Go golden tests are the display spec of record.
+# No macOS job: the Go golden tests are the display spec of record and are
+# platform-neutral — the linux runner covers every gate. (Provenance of the
+# retired byte-parity era lives in README §Design notes.)

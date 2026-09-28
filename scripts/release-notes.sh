@@ -7,8 +7,11 @@ set -u
 VER="${1:?usage: release-notes.sh <version> [changelog-path]}"
 FILE="${2:-CHANGELOG.md}"
 
+# A section ends at the next "## [" heading or at the Keep-a-Changelog
+# link-definition block ("[x.y.z]: url") that follows the last section.
 OUT=$(awk -v ver="$VER" '
   /^## \[/ { insec = (index($0, "## [" ver "] - ") == 1); next }
+  /^\[[^]]*\]: / { insec = 0 }
   insec { print }
 ' "$FILE") || exit 1
 

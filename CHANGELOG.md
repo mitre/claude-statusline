@@ -295,3 +295,8 @@ regression tests:
   `render.Build` and the full `run()` frame over fakes, per fixture) —
   observe-only guards for the ~90 ms wall budget, which itself includes
   real IO the benchmarks deliberately exclude.
+
+[Unreleased]: https://github.com/mitre/claude-statusline/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/mitre/claude-statusline/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/mitre/claude-statusline/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/mitre/claude-statusline/releases/tag/v0.1.0

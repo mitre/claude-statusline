@@ -651,6 +651,24 @@ func TestReleaseNotesExtractsExactSection(t *testing.T) {
 	}
 }
 
+func TestReleaseNotesExcludeTrailingLinkDefinitions(t *testing.T) {
+	// Keep-a-Changelog link definitions follow the LAST section; they are
+	// plumbing, never release notes.
+	cl := filepath.Join(t.TempDir(), "CHANGELOG.md")
+	content := "# Changelog\n\n## [0.1.0] - 2026-07-15\n\n### Added\n\n- first release\n\n[Unreleased]: https://example.invalid/compare/v0.1.0...HEAD\n[0.1.0]: https://example.invalid/releases/tag/v0.1.0\n"
+	if err := os.WriteFile(cl, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("sh", "scripts/release-notes.sh", "0.1.0", cl).Output()
+	if err != nil {
+		t.Fatalf("release-notes.sh: %v", err)
+	}
+	want := "\n### Added\n\n- first release\n"
+	if string(out) != want {
+		t.Errorf("last section must exclude link definitions, got %q, want %q", out, want)
+	}
+}
+
 func TestRenderFormulaRefusesIncompleteChecksums(t *testing.T) {
 	// A checksums file missing any of the four platform assets must fail
 	// loudly — a partial formula would break installs for that platform.
