@@ -125,19 +125,24 @@ snapshot: require-goreleaser vet test
 	  SNAPSHOT_VERSION="$$VER" goreleaser release --snapshot --clean
 	@ls -la $(DIST)
 
+# VERSION reaches these recipes as an ENVIRONMENT value ($$VERSION), never
+# make-text expansion — tag-derived text must not be spliced into command
+# lines. `export` covers both `VERSION=v0.2.0 make …` and `make … VERSION=…`.
+export VERSION
+
 # Fetches the PUBLISHED release's checksums.txt (requires VERSION, e.g.
 # v0.2.0, and gh auth) into published/ — the formula job's input, so a
 # job re-run can never rebuild archives under shipped checksums.
 release-checksums:
 	@mkdir -p published
-	gh release download "$(VERSION)" --pattern checksums.txt --dir published --clobber
+	gh release download "$$VERSION" --pattern checksums.txt --dir published --clobber
 
 # Renders the formula from a checksums file and pushes it to
 # mitre/homebrew-tap (requires HOMEBREW_TAP_GITHUB_TOKEN and VERSION).
 # CI passes CHECKSUMS_FILE=published/checksums.txt from release-checksums;
 # locally it defaults to dist/checksums.txt.
 publish-formula:
-	CHECKSUMS_FILE="$(CHECKSUMS_FILE)" sh scripts/publish-formula.sh "$(VERSION)"
+	CHECKSUMS_FILE="$(CHECKSUMS_FILE)" sh scripts/publish-formula.sh "$$VERSION"
 
 clean:
 	rm -f $(BINARY)

@@ -1,0 +1,19 @@
+# Keeps the SHA-pinned actions and Go modules current: Dependabot proposes
+# pin bumps (updating both the SHA and its # vX.Y.Z comment) that land only
+# through the normal PR gates. Weekly, grouped — one PR per ecosystem.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-modules:
+        patterns: ["*"]

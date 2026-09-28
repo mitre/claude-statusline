@@ -18,10 +18,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Ancestry check needs origin/main history — full clone.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - run: make preflight TAG=${{ github.ref_name }}
+          persist-credentials: false
+      - run: make preflight TAG="$VERSION"
+        env:
+          VERSION: ${{ github.ref_name }}
 
   # The full local gate (lint + vuln + race + cover + build) must pass on the
   # tagged commit before anything publishes — a tag on a red commit stops here.
@@ -29,8 +32,10 @@ jobs:
     name: make check (release gate)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
       # Every tool version is pinned in the Makefile (the single source).
@@ -45,13 +50,17 @@ jobs:
     permissions:
       contents: write
     steps:
-      # goreleaser derives versions from git history — full clone.
-      - uses: actions/checkout@v7
+      # goreleaser derives versions from git history — full clone. The one
+      # job holding contents:write gets no persisted credentials and no
+      # shared Go cache (cache poisoning must not reach the publish path).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v6
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          cache: false
       # Every tool version is pinned in the Makefile (the single source).
       - name: Install pinned tools
         run: make tools
@@ -67,11 +76,14 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Fetch published checksums
-        run: make release-checksums VERSION=${{ github.ref_name }}
+        run: make release-checksums
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.ref_name }}
       # Short-lived installation token (1h) from the org's mitre-tap-publisher
       # app — scoped to Contents-write on mitre/homebrew-tap only. Our tested
       # scripts push the rendered formula into the tap (goreleaser's brews is
@@ -79,12 +91,15 @@ jobs:
       # .goreleaser.yaml).
       - name: Mint tap token
         id: tap-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ vars.TAP_PUBLISHER_APP_ID }}
           private-key: ${{ secrets.TAP_PUBLISHER_APP_PRIVATE_KEY }}
           owner: mitre
           repositories: homebrew-tap
-      - run: make publish-formula VERSION=${{ github.ref_name }} CHECKSUMS_FILE=published/checksums.txt
+          # The narrowest token that can push the formula — nothing else.
+          permission-contents: write
+      - run: make publish-formula CHECKSUMS_FILE=published/checksums.txt
         env:
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
+          VERSION: ${{ github.ref_name }}
