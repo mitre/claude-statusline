@@ -39,6 +39,7 @@ func main() {
 		keychainOK: creds.ok,
 		fetchUsage: func() ([]byte, error) { return fetchUsage(creds) },
 		readFile:   os.ReadFile,
+		stat:       os.Stat,
 	})
 	if diag != "" {
 		fmt.Fprint(os.Stderr, diag)

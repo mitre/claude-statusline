@@ -455,3 +455,48 @@ func TestRunAntigravityEndToEnd(t *testing.T) {
 		t.Errorf("missing 5h/week meters: %q", out)
 	}
 }
+
+func TestRunAntigravityConfigLoaded(t *testing.T) {
+	d := e2eDeps(t, "full.json")
+	d.keychainOK = func() error { return errors.New("no claude credentials") }
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("no anthropic endpoint") }
+	d.readFile = func(_ string) ([]byte, error) { return nil, os.ErrNotExist }
+
+	home := t.TempDir()
+	agDir := filepath.Join(home, ".gemini", "antigravity-cli")
+	if err := os.MkdirAll(agDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Hide activity row via Antigravity config file
+	agConfig := "[rows]\nactivity = false\n"
+	if err := os.WriteFile(filepath.Join(agDir, "statusline.toml"), []byte(agConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d.getenv = func(k string) string {
+		if k == "HOME" {
+			return home
+		}
+		return ""
+	}
+	d.stdin = strings.NewReader(`{
+		"session_id": "9233d019-88e0-4ce2-a28c-6de1295fad0a",
+		"product": "antigravity",
+		"plan_tier": "Google AI Ultra",
+		"email": "lippold@gmail.com",
+		"cwd": "/Users/dev/projects/demo-app",
+		"lines_added": 12,
+		"lines_removed": 5,
+		"quota": {
+			"gemini-5h": {"remaining_fraction": 0.95, "reset_time": "2026-10-04T18:43:54Z"}
+		}
+	}`)
+
+	out, _ := run(d)
+	if strings.Contains(out, "activity") || strings.Contains(out, "+12/-5") {
+		t.Errorf("activity row should have been disabled by ~/.gemini/antigravity-cli/statusline.toml: %q", out)
+	}
+	if !strings.Contains(out, "Google AI Ultra") {
+		t.Errorf("missing plan tier in account row: %q", out)
+	}
+}

@@ -27,6 +27,7 @@ type deps struct {
 	keychainOK func() error
 	fetchUsage func() ([]byte, error)
 	readFile   func(string) ([]byte, error)
+	stat       func(string) (os.FileInfo, error)
 }
 
 // runGitCtx executes git under a context so a deadline can actually kill the
@@ -60,7 +61,11 @@ func run(d deps) (string, string) {
 	}
 
 	var diag string
-	cfg, err := config.Load(configPath(d.getenv))
+	stat := d.stat
+	if stat == nil {
+		stat = os.Stat
+	}
+	cfg, err := config.Load(configPath(sess.Product, d.getenv, stat))
 	if err != nil {
 		cfg = config.Default()
 		diag = fmt.Sprintf("claude-statusline: config error: %v\n", err)
@@ -160,9 +165,21 @@ func run(d deps) (string, string) {
 	return render.Build(st, cfg.Options), diag
 }
 
-func configPath(getenv func(string) string) string {
+func configPath(product string, getenv func(string) string, stat func(string) (os.FileInfo, error)) string {
+	if p := getenv("ANTIGRAVITY_STATUSLINE_CONFIG"); p != "" {
+		return p
+	}
 	if p := getenv("CLAUDE_STATUSLINE_CONFIG"); p != "" {
 		return p
 	}
-	return filepath.Join(getenv("HOME"), ".claude", "statusline.toml")
+	home := getenv("HOME")
+	if product == "antigravity" {
+		agPath := filepath.Join(home, ".gemini", "antigravity-cli", "statusline.toml")
+		if stat != nil {
+			if _, err := stat(agPath); err == nil {
+				return agPath
+			}
+		}
+	}
+	return filepath.Join(home, ".claude", "statusline.toml")
 }
