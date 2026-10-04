@@ -36,6 +36,7 @@ var sepDot = " " + dimS.Render("·") + " "
 // usage package, plus the account email resolved by the account package.
 type Usage struct {
 	Email        string // logged-in account email, "" = segment omitted
+	PlanTier     string // account plan tier (e.g. "Google AI Ultra"), "" = segment omitted
 	U5, U7       int    // five-hour / seven-day utilization percent
 	R5, R7       string // local-time reset labels, "" when absent
 	ModelFamily  string // family named by the payload's own window key, "" = none
@@ -186,6 +187,10 @@ func ModelRow(st State, extraBadge string, o Options) string {
 			row += dimS.Render(" · ") + grnS.Render("Sub")
 		case "API":
 			row += dimS.Render(" · ") + ylwS.Render("API")
+		default:
+			if st.Auth != "" && st.Auth != "?" {
+				row += dimS.Render(" · ") + grnS.Render(st.Auth)
+			}
 		}
 	}
 	if o.Model.ShowEffort && st.Effort != "" {
@@ -302,6 +307,9 @@ func AccountRow(u Usage, o Options) string {
 			e = dimS.Render(e)
 		}
 		parts = append(parts, e)
+	}
+	if u.PlanTier != "" {
+		parts = append(parts, u.PlanTier)
 	}
 	parts = append(parts,
 		meter(fmt.Sprintf("5h %d%%", u.U5), u.U5, u.R5, always),

@@ -439,14 +439,17 @@ func TestRunAntigravityEndToEnd(t *testing.T) {
 	if !strings.Contains(out, "Gemini 3.8 Flash (High) 1M") {
 		t.Errorf("missing model name: %q", out)
 	}
-	if !strings.Contains(out, "Sub") {
-		t.Errorf("missing Sub auth badge: %q", out)
+	if !strings.Contains(out, "Ultra") {
+		t.Errorf("missing Ultra auth badge: %q", out)
 	}
 	if !strings.Contains(out, "22%") || !strings.Contains(out, ">200k") {
 		t.Errorf("missing context bar: %q", out)
 	}
 	if !strings.Contains(out, "account") || !strings.Contains(out, "lippold@gmail.com") {
 		t.Errorf("missing account email: %q", out)
+	}
+	if !strings.Contains(out, "Google AI Ultra") {
+		t.Errorf("missing plan tier in account row: %q", out)
 	}
 	if !strings.Contains(out, "5h 4%") || !strings.Contains(out, "week 1%") {
 		t.Errorf("missing 5h/week meters: %q", out)

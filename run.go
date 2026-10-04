@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/mitre/claude-statusline/internal/account"
@@ -69,7 +70,14 @@ func run(d deps) (string, string) {
 	badge, apiKeySet := auth.Detect(cfg.CacheDir, d.getenv, d.keychainOK)
 	if sess.Product == "antigravity" {
 		apiKeySet = false
-		if badge == "?" {
+		switch {
+		case strings.Contains(sess.PlanTier, "Ultra"):
+			badge = "Ultra"
+		case strings.Contains(sess.PlanTier, "Pro"):
+			badge = "Pro"
+		case sess.PlanTier != "":
+			badge = sess.PlanTier
+		case badge == "?":
 			badge = "Sub"
 		}
 	}
@@ -106,7 +114,7 @@ func run(d deps) (string, string) {
 		st.Branch = "?"
 	}
 
-	if cfg.Usage.Enabled && badge == "Sub" {
+	if cfg.Usage.Enabled && badge != "API" && badge != "?" {
 		ttl := time.Duration(cfg.Usage.TTLSeconds) * time.Second
 		now := time.Now()
 		var u render.Usage
@@ -144,6 +152,7 @@ func run(d deps) (string, string) {
 			} else {
 				u.Email = account.Email(d.getenv("HOME"), d.readFile)
 			}
+			u.PlanTier = sess.PlanTier
 			st.Usage = &u
 		}
 	}
