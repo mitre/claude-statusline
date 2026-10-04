@@ -251,22 +251,23 @@ func ProjectRow(cwd, home, branch string, dirty int, lockAge time.Duration, o Op
 // >= 85%. The marker and the alarm answer different questions: absolute
 // tokens past the 200k tier boundary vs pressure on the window.
 func ContextRow(pct int, exceeds200k bool, o Options) string {
-	filled := min(pct/10, 10)
+	clampedPct := max(0, pct)
+	filled := min(clampedPct/10, 10)
 	bar := strings.Repeat("▓", filled) + strings.Repeat("░", 10-filled)
 
 	barS, labelS := grnS, grnS
 	switch {
-	case pct >= 80:
+	case clampedPct >= 80:
 		barS, labelS = redS, hotS
-	case pct >= 50:
+	case clampedPct >= 50:
 		barS, labelS = ylwS, ylwS
 	}
 
-	row := lbl("context") + barS.Render(bar) + " " + labelS.Render(fmt.Sprintf("%d%%", pct))
+	row := lbl("context") + barS.Render(bar) + " " + labelS.Render(fmt.Sprintf("%d%%", clampedPct))
 	if exceeds200k && o.Context.Exceeds200kMarker {
 		row += " " + dimS.Render(">200k")
 	}
-	if pct >= 85 {
+	if clampedPct >= 85 {
 		row += " " + alarmS.Render(" /compact ")
 	}
 	return row

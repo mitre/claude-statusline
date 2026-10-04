@@ -113,6 +113,9 @@ func defaultCacheDir() string {
 // is not an error; a malformed file is.
 func Load(path string) (Config, error) {
 	cfg := Default()
+	if path == "" {
+		return cfg, nil
+	}
 
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {

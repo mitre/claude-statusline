@@ -32,6 +32,16 @@ func TestLoadMissingFileGivesDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadEmptyPathReturnsDefault(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load(\"\") error = %v, want nil", err)
+	}
+	if !cfg.Options.Rows.Model {
+		t.Errorf("default rows not enabled: %+v", cfg.Options.Rows)
+	}
+}
+
 func TestLoadPartialOverlayKeepsOtherDefaults(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "statusline.toml")
 	body := `

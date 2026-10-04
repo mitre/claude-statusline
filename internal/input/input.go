@@ -113,7 +113,7 @@ func Parse(r io.Reader) (Session, error) {
 		Email:        p.Email,
 		ModelName:    p.Model.DisplayName,
 		CWD:          p.Workspace.CurrentDir,
-		CtxPct:       int(math.Floor(p.ContextWindow.UsedPercentage)),
+		CtxPct:       max(0, int(math.Floor(p.ContextWindow.UsedPercentage))),
 		CtxSize:      p.ContextWindow.ContextWindowSize,
 		LinesAdded:   p.Cost.TotalLinesAdded,
 		LinesRemoved: p.Cost.TotalLinesRemoved,

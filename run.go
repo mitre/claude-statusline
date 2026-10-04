@@ -173,6 +173,9 @@ func configPath(product string, getenv func(string) string, stat func(string) (o
 		return p
 	}
 	home := getenv("HOME")
+	if home == "" {
+		return ""
+	}
 	if product == "antigravity" {
 		agPath := filepath.Join(home, ".gemini", "antigravity-cli", "statusline.toml")
 		if stat != nil {

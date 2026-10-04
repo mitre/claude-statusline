@@ -204,3 +204,10 @@ func TestConfigPathAntigravityFallsBackToClaudeIfAbsent(t *testing.T) {
 		t.Errorf("configPath = %q; want fallback to %q", got, want)
 	}
 }
+
+func TestConfigPathEmptyHomeReturnsEmpty(t *testing.T) {
+	got := configPath("", envMap(map[string]string{"HOME": ""}), nil)
+	if got != "" {
+		t.Errorf("configPath with empty HOME = %q; want empty string to avoid relative lookup", got)
+	}
+}

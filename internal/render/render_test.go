@@ -351,6 +351,14 @@ func TestContextRowClampsAbove100(t *testing.T) {
 	}
 }
 
+func TestContextRowClampsBelowZero(t *testing.T) {
+	got := ContextRow(-10, false, DefaultOptions())
+	want := "\x1b[2mcontext  \x1b[m\x1b[32m░░░░░░░░░░\x1b[m \x1b[32m0%\x1b[m"
+	if got != want {
+		t.Errorf("ContextRow(-10, false, DefaultOptions()):\n got %q\nwant %q", got, want)
+	}
+}
+
 func TestExtraBadge(t *testing.T) {
 	o := DefaultOptions() // default budget $5.00
 	// Spend at or over the accepted budget: loud badge.
