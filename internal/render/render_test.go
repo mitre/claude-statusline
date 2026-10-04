@@ -59,6 +59,27 @@ func TestModelRowAPIKeyWarning(t *testing.T) {
 	}
 }
 
+func TestModelRowCustomAuthBadge(t *testing.T) {
+	// Custom auth badges like "Ultra" or "Pro" render in green, mirroring "Sub".
+	got := ModelRow(State{Model: "Gemini 3.8 Flash (High)", CtxSize: 1000000, Auth: "Ultra"}, "", DefaultOptions())
+	want := "\x1b[2mmodel    \x1b[m\x1b[1;36mGemini 3.8 Flash (High) 1M\x1b[m\x1b[2m · \x1b[m\x1b[32mUltra\x1b[m"
+	if got != want {
+		t.Errorf("ModelRow Ultra:\n got %q\nwant %q", got, want)
+	}
+
+	gotPro := ModelRow(State{Model: "Gemini 3.8 Flash", CtxSize: 1000000, Auth: "Pro"}, "", DefaultOptions())
+	wantPro := "\x1b[2mmodel    \x1b[m\x1b[1;36mGemini 3.8 Flash 1M\x1b[m\x1b[2m · \x1b[m\x1b[32mPro\x1b[m"
+	if gotPro != wantPro {
+		t.Errorf("ModelRow Pro:\n got %q\nwant %q", gotPro, wantPro)
+	}
+
+	// Unknown or empty auth badge does not render a badge.
+	gotUnknown := ModelRow(State{Model: "Gemini 3.8 Flash", CtxSize: 1000000, Auth: "?"}, "", DefaultOptions())
+	if strings.Contains(gotUnknown, "· \x1b[32m") || strings.Contains(gotUnknown, "· \x1b[33m") {
+		t.Errorf("unknown auth badge must not render an auth tag: %q", gotUnknown)
+	}
+}
+
 func TestProjectRow(t *testing.T) {
 	got := ProjectRow("/Users/dev/projects/demo-app", home, "main", 2, 0, DefaultOptions())
 	want := "\x1b[2mproject  \x1b[m\x1b[1m~/projects/demo-app\x1b[m \x1b[2m·\x1b[m \x1b[34m⎇ main\x1b[m \x1b[33m~2\x1b[m"
@@ -157,6 +178,32 @@ func TestAccountRowEmailScopeLabel(t *testing.T) {
 	wantDim := "\x1b[2maccount  \x1b[m\x1b[2mdev@example.com\x1b[m \x1b[2m·\x1b[m \x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m"
 	if got := AccountRow(in, dimOpt); got != wantDim {
 		t.Errorf("email_style=dim:\n got %q\nwant %q", got, wantDim)
+	}
+}
+
+func TestAccountRowPlanTier(t *testing.T) {
+	// Account row renders plan tier between email and 5h/week meters when present.
+	in := Usage{Email: "dev@example.com", PlanTier: "Google AI Ultra", U5: 5, U7: 13}
+	got := AccountRow(in, DefaultOptions())
+	want := "\x1b[2maccount  \x1b[mdev@example.com \x1b[2m·\x1b[m Google AI Ultra \x1b[2m·\x1b[m \x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m"
+	if got != want {
+		t.Errorf("AccountRow with PlanTier:\n got %q\nwant %q", got, want)
+	}
+
+	// PlanTier without email: renders as first segment.
+	inNoEmail := Usage{PlanTier: "Google AI Ultra", U5: 5, U7: 13}
+	gotNoEmail := AccountRow(inNoEmail, DefaultOptions())
+	wantNoEmail := "\x1b[2maccount  \x1b[mGoogle AI Ultra \x1b[2m·\x1b[m \x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m"
+	if gotNoEmail != wantNoEmail {
+		t.Errorf("AccountRow PlanTier without email:\n got %q\nwant %q", gotNoEmail, wantNoEmail)
+	}
+
+	// Empty PlanTier: preserves standard email + meters output byte-for-byte.
+	inEmpty := Usage{Email: "dev@example.com", PlanTier: "", U5: 5, U7: 13}
+	gotEmpty := AccountRow(inEmpty, DefaultOptions())
+	wantEmpty := "\x1b[2maccount  \x1b[mdev@example.com \x1b[2m·\x1b[m \x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m"
+	if gotEmpty != wantEmpty {
+		t.Errorf("empty PlanTier must not alter account row:\n got %q\nwant %q", gotEmpty, wantEmpty)
 	}
 }
 
