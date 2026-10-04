@@ -408,3 +408,47 @@ func TestRunNoCacheStdinMetersStillRender(t *testing.T) {
 		t.Errorf("stdin-only account row must render when no cache exists: %q", out)
 	}
 }
+
+func TestRunAntigravityEndToEnd(t *testing.T) {
+	d := e2eDeps(t, "full.json")
+	// Antigravity does not use keychain or fetchUsage
+	d.keychainOK = func() error { return errors.New("no claude credentials") }
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("no anthropic endpoint") }
+	d.readFile = func(_ string) ([]byte, error) { return nil, os.ErrNotExist }
+	d.stdin = strings.NewReader(`{
+		"session_id": "9233d019-88e0-4ce2-a28c-6de1295fad0a",
+		"product": "antigravity",
+		"plan_tier": "Google AI Ultra",
+		"email": "lippold@gmail.com",
+		"cwd": "/Users/dev/projects/demo-app",
+		"workspace": {"current_dir": "/Users/dev/projects/demo-app"},
+		"model": {"display_name": "Gemini 3.8 Flash (High)", "effort": "high"},
+		"context_window": {"used_percentage": 22.09, "context_window_size": 1048576},
+		"exceeds_200k_tokens": true,
+		"quota": {
+			"gemini-5h": {"remaining_fraction": 0.9606924, "reset_time": "2026-10-04T18:43:54Z"},
+			"gemini-weekly": {"remaining_fraction": 0.9937261, "reset_time": "2026-10-11T01:50:24Z"},
+			"3p-5h": {"remaining_fraction": 1.0, "reset_time": "2026-10-04T20:03:09Z"}
+		}
+	}`)
+
+	out, errOut := run(d)
+	if errOut != "" {
+		t.Errorf("unexpected stderr: %q", errOut)
+	}
+	if !strings.Contains(out, "Gemini 3.8 Flash (High) 1M") {
+		t.Errorf("missing model name: %q", out)
+	}
+	if !strings.Contains(out, "Sub") {
+		t.Errorf("missing Sub auth badge: %q", out)
+	}
+	if !strings.Contains(out, "22%") || !strings.Contains(out, ">200k") {
+		t.Errorf("missing context bar: %q", out)
+	}
+	if !strings.Contains(out, "account") || !strings.Contains(out, "lippold@gmail.com") {
+		t.Errorf("missing account email: %q", out)
+	}
+	if !strings.Contains(out, "5h 4%") || !strings.Contains(out, "week 1%") {
+		t.Errorf("missing 5h/week meters: %q", out)
+	}
+}

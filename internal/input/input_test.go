@@ -156,3 +156,105 @@ func TestParseRateLimitsAbsentOrMalformed(t *testing.T) {
 		}
 	}
 }
+
+func TestParseAntigravitySession(t *testing.T) {
+	j := `{
+		"product": "antigravity",
+		"plan_tier": "Google AI Ultra",
+		"email": "dev@example.com",
+		"model": {"display_name": "Gemini 3.8 Flash (High)", "effort": "high"},
+		"quota": {
+			"gemini-5h": {
+				"remaining_fraction": 0.9606924,
+				"reset_time": "2026-10-04T18:43:54Z",
+				"reset_in_seconds": 13206
+			},
+			"gemini-weekly": {
+				"remaining_fraction": 0.9937261,
+				"reset_time": "2026-10-11T01:50:24Z",
+				"reset_in_seconds": 557196
+			},
+			"3p-5h": {
+				"remaining_fraction": 1.0,
+				"reset_time": "2026-10-04T20:03:09Z",
+				"reset_in_seconds": 17961
+			}
+		}
+	}`
+	s, err := Parse(strings.NewReader(j))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if s.Product != "antigravity" {
+		t.Errorf("Product = %q, want \"antigravity\"", s.Product)
+	}
+	if s.PlanTier != "Google AI Ultra" {
+		t.Errorf("PlanTier = %q, want \"Google AI Ultra\"", s.PlanTier)
+	}
+	if s.Email != "dev@example.com" {
+		t.Errorf("Email = %q, want \"dev@example.com\"", s.Email)
+	}
+	if !s.RateLimitsOK {
+		t.Fatal("RateLimitsOK = false for Antigravity quota")
+	}
+	if s.R5Pct != 4 {
+		t.Errorf("R5Pct = %d, want 4", s.R5Pct)
+	}
+	if s.R7Pct != 1 {
+		t.Errorf("R7Pct = %d, want 1", s.R7Pct)
+	}
+	if s.R5ResetUnix != 1791139434 {
+		t.Errorf("R5ResetUnix = %d, want 1791139434", s.R5ResetUnix)
+	}
+	if s.R7ResetUnix != 1791683424 {
+		t.Errorf("R7ResetUnix = %d, want 1791683424", s.R7ResetUnix)
+	}
+	// ModelName already contains (High), so Effort stays empty to avoid redundant display
+	if s.Effort != "" {
+		t.Errorf("Effort = %q, want empty (already in ModelName)", s.Effort)
+	}
+	// 3p-5h is 100% remaining (0% used), so ScopedMeters should be empty
+	if len(s.ScopedMeters) != 0 {
+		t.Errorf("ScopedMeters = %+v, want empty", s.ScopedMeters)
+	}
+}
+
+func TestParseAntigravity3pModel(t *testing.T) {
+	j := `{
+		"product": "antigravity",
+		"model": {"display_name": "Claude 3.7 Sonnet", "effort": "high"},
+		"quota": {
+			"gemini-5h": {
+				"remaining_fraction": 0.90,
+				"reset_time": "2026-10-04T18:43:54Z"
+			},
+			"3p-5h": {
+				"remaining_fraction": 0.65,
+				"reset_time": "2026-10-04T20:00:00Z"
+			},
+			"3p-weekly": {
+				"remaining_fraction": 0.80,
+				"reset_time": "2026-10-11T12:00:00Z"
+			}
+		}
+	}`
+	s, err := Parse(strings.NewReader(j))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	// 3p model should select 3p-5h and 3p-weekly
+	if s.R5Pct != 35 {
+		t.Errorf("R5Pct = %d, want 35", s.R5Pct)
+	}
+	if s.R7Pct != 20 {
+		t.Errorf("R7Pct = %d, want 20", s.R7Pct)
+	}
+	// Claude 3.7 Sonnet does not contain "high", so Effort should be "high"
+	if s.Effort != "high" {
+		t.Errorf("Effort = %q, want \"high\"", s.Effort)
+	}
+	// Gemini secondary has usage (10% used), so ScopedMeters should have it
+	if len(s.ScopedMeters) != 1 || s.ScopedMeters[0].Name != "gemini-5h" || s.ScopedMeters[0].Pct != 10 {
+		t.Errorf("ScopedMeters = %+v, want [{Name: gemini-5h, Pct: 10}]", s.ScopedMeters)
+	}
+}

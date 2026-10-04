@@ -67,6 +67,12 @@ func run(d deps) (string, string) {
 	_ = os.MkdirAll(cfg.CacheDir, 0o700)
 
 	badge, apiKeySet := auth.Detect(cfg.CacheDir, d.getenv, d.keychainOK)
+	if sess.Product == "antigravity" {
+		apiKeySet = false
+		if badge == "?" {
+			badge = "Sub"
+		}
+	}
 
 	st := render.State{
 		Model:        sess.ModelName,
@@ -105,10 +111,12 @@ func run(d deps) (string, string) {
 		now := time.Now()
 		var u render.Usage
 		have := false
-		if raw, staleFor, ok := usage.Resolve(cfg.CacheDir, ttl, now, d.fetchUsage); ok {
-			if p, uerr := usage.Parse(raw, now, sess.ModelName); uerr == nil {
-				u, have = p, true
-				u.DataAge = staleFor
+		if sess.Product != "antigravity" {
+			if raw, staleFor, ok := usage.Resolve(cfg.CacheDir, ttl, now, d.fetchUsage); ok {
+				if p, uerr := usage.Parse(raw, now, sess.ModelName); uerr == nil {
+					u, have = p, true
+					u.DataAge = staleFor
+				}
 			}
 		}
 		// The stdin payload carries the two all-model meters since v2.1.210.
@@ -120,11 +128,22 @@ func run(d deps) (string, string) {
 		if sess.RateLimitsOK && (!have || u.DataAge > 0) {
 			u.U5, u.R5 = sess.R5Pct, usage.ResetLabelUnix(sess.R5ResetUnix, now)
 			u.U7, u.R7 = sess.R7Pct, usage.ResetLabelUnix(sess.R7ResetUnix, now)
+			for _, sc := range sess.ScopedMeters {
+				u.Scoped = append(u.Scoped, render.ScopedLimit{
+					Name:  sc.Name,
+					Pct:   sc.Pct,
+					Reset: usage.ResetLabelUnix(sc.ResetUnix, now),
+				})
+			}
 			u.MetersLive = true
 			have = true
 		}
 		if have {
-			u.Email = account.Email(d.getenv("HOME"), d.readFile)
+			if sess.Email != "" {
+				u.Email = sess.Email
+			} else {
+				u.Email = account.Email(d.getenv("HOME"), d.readFile)
+			}
 			st.Usage = &u
 		}
 	}
