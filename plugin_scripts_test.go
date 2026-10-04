@@ -614,6 +614,22 @@ func TestReleasePreflightPassesWhenAligned(t *testing.T) {
 	}
 }
 
+func TestReleasePreflightRejectsInvalidDateFormatInChangelog(t *testing.T) {
+	dir := preflightRepo(t, "0.3.0", "0.3.0")
+	writePreflightFile(t, dir, "CHANGELOG.md",
+		"# Changelog\n\n## [Unreleased]\n\n## [0.3.0] - unreleased\n\n### Fixed\n\n- a fix entry\n")
+	gitIn(t, dir, "add", "CHANGELOG.md")
+	gitIn(t, dir, "-c", "user.name=t", "-c", "user.email=t@test.invalid", "commit", "-q", "-m", "bad date")
+	gitIn(t, dir, "tag", "v0.3.0")
+	out, err := runPreflight(t, dir, "v0.3.0")
+	if err == nil {
+		t.Fatalf("CHANGELOG with non-ISO date must fail preflight, output: %s", out)
+	}
+	if !strings.Contains(out, "YYYY-MM-DD") {
+		t.Errorf("failure must mention YYYY-MM-DD, got: %q", out)
+	}
+}
+
 func TestPluginVersionScriptExtractsAndFails(t *testing.T) {
 	// Parity with the real manifest: the script must extract the exact
 	// version declared in .claude-plugin/plugin.json, decoupled from hardcoded strings.

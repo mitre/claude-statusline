@@ -500,3 +500,41 @@ func TestRunAntigravityConfigLoaded(t *testing.T) {
 		t.Errorf("missing plan tier in account row: %q", out)
 	}
 }
+
+func TestRunAntigravityIgnoresAnthropicAPIKeyBadge(t *testing.T) {
+	d := e2eDeps(t, "full.json")
+	d.keychainOK = func() error { return errors.New("no claude credentials") }
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("no anthropic endpoint") }
+	d.readFile = func(_ string) ([]byte, error) { return nil, os.ErrNotExist }
+	origGetenv := d.getenv
+	d.getenv = func(k string) string {
+		if k == "ANTHROPIC_API_KEY" {
+			return "sk-ant-test"
+		}
+		return origGetenv(k)
+	}
+	// Antigravity payload with NO plan_tier specified
+	d.stdin = strings.NewReader(`{
+		"session_id": "9233d019-88e0-4ce2-a28c-6de1295fad0a",
+		"product": "antigravity",
+		"email": "lippold@gmail.com",
+		"cwd": "/Users/dev/projects/demo-app",
+		"quota": {
+			"gemini-5h": {"remaining_fraction": 0.95, "reset_time": "2026-10-04T18:43:54Z"}
+		}
+	}`)
+
+	out, _ := run(d)
+	// Must NOT show API key alarm or yellow API badge
+	if strings.Contains(out, "METERED BILLING") || strings.Contains(out, "· API") {
+		t.Errorf("Antigravity session must not inherit API badge or alarm from ANTHROPIC_API_KEY: %q", out)
+	}
+	// Must show Sub badge
+	if !strings.Contains(out, "Sub") {
+		t.Errorf("Antigravity session with empty plan_tier must default to Sub: %q", out)
+	}
+	// Account meters must render!
+	if !strings.Contains(out, "account") || !strings.Contains(out, "5h 5%") {
+		t.Errorf("account meters must render despite ANTHROPIC_API_KEY in env: %q", out)
+	}
+}

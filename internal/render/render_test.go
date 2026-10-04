@@ -88,6 +88,24 @@ func TestProjectRow(t *testing.T) {
 	}
 }
 
+func TestProjectRowTildeHomeDoesNotMatchSiblingPrefix(t *testing.T) {
+	// A cwd like /Users/developer sharing a prefix with home /Users/dev
+	// must NOT be shortened to ~eloper.
+	got := ProjectRow("/Users/developer/project", "/Users/dev", "main", 0, 0, DefaultOptions())
+	if strings.Contains(got, "~eloper") {
+		t.Errorf("sibling path /Users/developer incorrectly shortened: %q", got)
+	}
+	if !strings.Contains(got, "/Users/developer/project") {
+		t.Errorf("sibling path should remain unchanged: %q", got)
+	}
+
+	// But /Users/dev itself must shorten to ~
+	gotHome := ProjectRow("/Users/dev", "/Users/dev", "main", 0, 0, DefaultOptions())
+	if !strings.Contains(gotHome, "\x1b[1m~\x1b[m") {
+		t.Errorf("home directory itself must shorten to ~: %q", gotHome)
+	}
+}
+
 func TestProjectRowCleanTreeHidesDirty(t *testing.T) {
 	got := ProjectRow("/Users/dev/x", home, "main", 0, 0, DefaultOptions())
 	if strings.Contains(got, "~0") || strings.Contains(got, "\x1b[33m") {

@@ -226,8 +226,12 @@ func ModelRow(st State, extraBadge string, o Options) string {
 // the long-held index.lock badge.
 func ProjectRow(cwd, home, branch string, dirty int, lockAge time.Duration, o Options) string {
 	path := cwd
-	if o.Project.TildeHome && home != "" && strings.HasPrefix(path, home) {
-		path = "~" + strings.TrimPrefix(path, home)
+	if o.Project.TildeHome && home != "" {
+		if path == home {
+			path = "~"
+		} else if strings.HasPrefix(path, home+"/") {
+			path = "~" + strings.TrimPrefix(path, home)
+		}
 	}
 	row := lbl("project") + boldS.Render(path)
 	if o.Project.ShowBranch && branch != "" {

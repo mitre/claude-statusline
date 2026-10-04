@@ -139,10 +139,10 @@ func Parse(r io.Reader) (Session, error) {
 	}
 	if fh := p.RateLimits.FiveHour; fh != nil && fh.UsedPercentage != nil {
 		s.RateLimitsOK = true
-		s.R5Pct = int(math.Floor(*fh.UsedPercentage))
+		s.R5Pct = max(0, min(100, int(math.Floor(*fh.UsedPercentage))))
 		s.R5ResetUnix = fh.ResetsAt
 		if sd := p.RateLimits.SevenDay; sd != nil && sd.UsedPercentage != nil {
-			s.R7Pct = int(math.Floor(*sd.UsedPercentage))
+			s.R7Pct = max(0, min(100, int(math.Floor(*sd.UsedPercentage))))
 			s.R7ResetUnix = sd.ResetsAt
 		}
 	} else if len(p.Quota) > 0 {

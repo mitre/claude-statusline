@@ -82,7 +82,7 @@ func run(d deps) (string, string) {
 			badge = "Pro"
 		case sess.PlanTier != "":
 			badge = sess.PlanTier
-		case badge == "?":
+		default:
 			badge = "Sub"
 		}
 	}

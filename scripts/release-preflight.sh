@@ -12,11 +12,11 @@ MAIN_REF="${MAIN_REF:-origin/main}"
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 
 fail() {
-  echo "preflight: $1" >&2
+  printf 'preflight: %s\n' "$1" >&2
   exit 1
 }
 
-echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+printf '%s\n' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
   || fail "tag '${TAG}' is not vMAJOR.MINOR.PATCH"
 VER="${TAG#v}"
 
@@ -30,8 +30,8 @@ MARKET_VER=$(sh "${SCRIPT_DIR}/plugin-version.sh" .claude-plugin/marketplace.jso
 [ "$MARKET_VER" = "$VER" ] \
   || fail "marketplace.json version '${MARKET_VER}' does not match tag version '${VER}'"
 
-grep -q "^## \[${VER}\] - " CHANGELOG.md \
-  || fail "CHANGELOG.md has no '## [${VER}] - <date>' section"
+grep -Eq "^## \[${VER}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md \
+  || fail "CHANGELOG.md has no '## [${VER}] - YYYY-MM-DD' section"
 sh "${SCRIPT_DIR}/release-notes.sh" "$VER" >/dev/null \
   || fail "CHANGELOG.md section for ${VER} is empty"
 
@@ -40,4 +40,4 @@ TAG_COMMIT=$(git rev-parse -q --verify "refs/tags/${TAG}^{commit}") \
 git merge-base --is-ancestor "$TAG_COMMIT" "$MAIN_REF" \
   || fail "tagged commit ${TAG_COMMIT} is not on ${MAIN_REF#origin/} (${MAIN_REF})"
 
-echo "preflight OK: ${TAG} — plugin.json, marketplace.json, CHANGELOG section, and ${MAIN_REF} ancestry all aligned"
+printf 'preflight OK: %s — plugin.json, marketplace.json, CHANGELOG section, and %s ancestry all aligned\n' "${TAG}" "${MAIN_REF}"

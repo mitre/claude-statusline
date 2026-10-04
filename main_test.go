@@ -132,6 +132,22 @@ func TestKeychainCredentialJSONMissingItem(t *testing.T) {
 	}
 }
 
+func TestKeychainCredentialJSONTimeoutBoundsCall(t *testing.T) {
+	origTimeout := keychainTimeout
+	keychainTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { keychainTimeout = origTimeout })
+
+	shimSecurity(t, "#!/bin/sh\nsleep 5\n")
+	start := time.Now()
+	_, err := keychainCredentialJSON()
+	if err == nil {
+		t.Fatal("keychainCredentialJSON = nil error; want timeout kill")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("keychainCredentialJSON returned after %v; timeout did not bound the call", elapsed)
+	}
+}
+
 func TestRunGitDeadlineKillsChild(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()

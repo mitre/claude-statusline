@@ -258,3 +258,25 @@ func TestParseAntigravity3pModel(t *testing.T) {
 		t.Errorf("ScopedMeters = %+v, want [{Name: gemini-5h, Pct: 10}]", s.ScopedMeters)
 	}
 }
+
+func TestParseRateLimitsClamped(t *testing.T) {
+	j := `{
+		"rate_limits": {
+			"five_hour": {"used_percentage": -15.5, "resets_at": 1700000000},
+			"seven_day": {"used_percentage": 142.9, "resets_at": 1700500000}
+		}
+	}`
+	s, err := Parse(strings.NewReader(j))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !s.RateLimitsOK {
+		t.Fatal("RateLimitsOK should be true")
+	}
+	if s.R5Pct != 0 {
+		t.Errorf("R5Pct = %d, want 0 (clamped from -15.5)", s.R5Pct)
+	}
+	if s.R7Pct != 100 {
+		t.Errorf("R7Pct = %d, want 100 (clamped from 142.9)", s.R7Pct)
+	}
+}
