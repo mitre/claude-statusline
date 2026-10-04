@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -614,13 +615,44 @@ func TestReleasePreflightPassesWhenAligned(t *testing.T) {
 }
 
 func TestPluginVersionScriptExtractsAndFails(t *testing.T) {
+	// Parity with the real manifest: the script must extract the exact
+	// version declared in .claude-plugin/plugin.json, decoupled from hardcoded strings.
+	manifestData, err := os.ReadFile(".claude-plugin/plugin.json")
+	if err != nil {
+		t.Fatalf("reading .claude-plugin/plugin.json: %v", err)
+	}
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("unmarshaling .claude-plugin/plugin.json: %v", err)
+	}
+	if manifest.Version == "" {
+		t.Fatal(".claude-plugin/plugin.json has empty version")
+	}
+
 	out, err := exec.Command("sh", "scripts/plugin-version.sh", ".claude-plugin/plugin.json").Output()
 	if err != nil {
 		t.Fatalf("plugin-version.sh on the real manifest: %v", err)
 	}
-	if got := strings.TrimSpace(string(out)); got != "0.2.0" {
-		t.Errorf("plugin-version.sh = %q, want 0.2.0 (the current manifest version)", got)
+	if got := strings.TrimSpace(string(out)); got != manifest.Version {
+		t.Errorf("plugin-version.sh = %q, want %q (manifest version)", got, manifest.Version)
 	}
+
+	// Controlled fixture: proves extraction on an arbitrary known version string.
+	fixture := filepath.Join(t.TempDir(), "manifest.json")
+	if err := os.WriteFile(fixture, []byte(`{"name":"test","version":"9.8.7"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fOut, err := exec.Command("sh", "scripts/plugin-version.sh", fixture).Output()
+	if err != nil {
+		t.Fatalf("plugin-version.sh on fixture: %v", err)
+	}
+	if got := strings.TrimSpace(string(fOut)); got != "9.8.7" {
+		t.Errorf("plugin-version.sh on fixture = %q, want %q", got, "9.8.7")
+	}
+
+	// Missing version: must fail with non-zero exit code.
 	empty := filepath.Join(t.TempDir(), "empty.json")
 	if err := os.WriteFile(empty, []byte(`{"name":"x"}`), 0o600); err != nil {
 		t.Fatal(err)
