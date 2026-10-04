@@ -408,3 +408,133 @@ func TestRunNoCacheStdinMetersStillRender(t *testing.T) {
 		t.Errorf("stdin-only account row must render when no cache exists: %q", out)
 	}
 }
+
+func TestRunAntigravityEndToEnd(t *testing.T) {
+	d := e2eDeps(t, "full.json")
+	// Antigravity does not use keychain or fetchUsage
+	d.keychainOK = func() error { return errors.New("no claude credentials") }
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("no anthropic endpoint") }
+	d.readFile = func(_ string) ([]byte, error) { return nil, os.ErrNotExist }
+	d.stdin = strings.NewReader(`{
+		"session_id": "9233d019-88e0-4ce2-a28c-6de1295fad0a",
+		"product": "antigravity",
+		"plan_tier": "Google AI Ultra",
+		"email": "lippold@gmail.com",
+		"cwd": "/Users/dev/projects/demo-app",
+		"workspace": {"current_dir": "/Users/dev/projects/demo-app"},
+		"model": {"display_name": "Gemini 3.8 Flash (High)", "effort": "high"},
+		"context_window": {"used_percentage": 22.09, "context_window_size": 1048576},
+		"exceeds_200k_tokens": true,
+		"quota": {
+			"gemini-5h": {"remaining_fraction": 0.9606924, "reset_time": "2026-10-04T18:43:54Z"},
+			"gemini-weekly": {"remaining_fraction": 0.9937261, "reset_time": "2026-10-11T01:50:24Z"},
+			"3p-5h": {"remaining_fraction": 1.0, "reset_time": "2026-10-04T20:03:09Z"}
+		}
+	}`)
+
+	out, errOut := run(d)
+	if errOut != "" {
+		t.Errorf("unexpected stderr: %q", errOut)
+	}
+	if !strings.Contains(out, "Gemini 3.8 Flash (High) 1M") {
+		t.Errorf("missing model name: %q", out)
+	}
+	if !strings.Contains(out, "Ultra") {
+		t.Errorf("missing Ultra auth badge: %q", out)
+	}
+	if !strings.Contains(out, "22%") || !strings.Contains(out, ">200k") {
+		t.Errorf("missing context bar: %q", out)
+	}
+	if !strings.Contains(out, "account") || !strings.Contains(out, "lippold@gmail.com") {
+		t.Errorf("missing account email: %q", out)
+	}
+	if !strings.Contains(out, "Google AI Ultra") {
+		t.Errorf("missing plan tier in account row: %q", out)
+	}
+	if !strings.Contains(out, "5h 4%") || !strings.Contains(out, "week 1%") {
+		t.Errorf("missing 5h/week meters: %q", out)
+	}
+}
+
+func TestRunAntigravityConfigLoaded(t *testing.T) {
+	d := e2eDeps(t, "full.json")
+	d.keychainOK = func() error { return errors.New("no claude credentials") }
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("no anthropic endpoint") }
+	d.readFile = func(_ string) ([]byte, error) { return nil, os.ErrNotExist }
+
+	home := t.TempDir()
+	agDir := filepath.Join(home, ".gemini", "antigravity-cli")
+	if err := os.MkdirAll(agDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Hide activity row via Antigravity config file
+	agConfig := "[rows]\nactivity = false\n"
+	if err := os.WriteFile(filepath.Join(agDir, "statusline.toml"), []byte(agConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d.getenv = func(k string) string {
+		if k == "HOME" {
+			return home
+		}
+		return ""
+	}
+	d.stdin = strings.NewReader(`{
+		"session_id": "9233d019-88e0-4ce2-a28c-6de1295fad0a",
+		"product": "antigravity",
+		"plan_tier": "Google AI Ultra",
+		"email": "lippold@gmail.com",
+		"cwd": "/Users/dev/projects/demo-app",
+		"lines_added": 12,
+		"lines_removed": 5,
+		"quota": {
+			"gemini-5h": {"remaining_fraction": 0.95, "reset_time": "2026-10-04T18:43:54Z"}
+		}
+	}`)
+
+	out, _ := run(d)
+	if strings.Contains(out, "activity") || strings.Contains(out, "+12/-5") {
+		t.Errorf("activity row should have been disabled by ~/.gemini/antigravity-cli/statusline.toml: %q", out)
+	}
+	if !strings.Contains(out, "Google AI Ultra") {
+		t.Errorf("missing plan tier in account row: %q", out)
+	}
+}
+
+func TestRunAntigravityIgnoresAnthropicAPIKeyBadge(t *testing.T) {
+	d := e2eDeps(t, "full.json")
+	d.keychainOK = func() error { return errors.New("no claude credentials") }
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("no anthropic endpoint") }
+	d.readFile = func(_ string) ([]byte, error) { return nil, os.ErrNotExist }
+	origGetenv := d.getenv
+	d.getenv = func(k string) string {
+		if k == "ANTHROPIC_API_KEY" {
+			return "sk-ant-test"
+		}
+		return origGetenv(k)
+	}
+	// Antigravity payload with NO plan_tier specified
+	d.stdin = strings.NewReader(`{
+		"session_id": "9233d019-88e0-4ce2-a28c-6de1295fad0a",
+		"product": "antigravity",
+		"email": "lippold@gmail.com",
+		"cwd": "/Users/dev/projects/demo-app",
+		"quota": {
+			"gemini-5h": {"remaining_fraction": 0.95, "reset_time": "2026-10-04T18:43:54Z"}
+		}
+	}`)
+
+	out, _ := run(d)
+	// Must NOT show API key alarm or yellow API badge
+	if strings.Contains(out, "METERED BILLING") || strings.Contains(out, "· API") {
+		t.Errorf("Antigravity session must not inherit API badge or alarm from ANTHROPIC_API_KEY: %q", out)
+	}
+	// Must show Sub badge
+	if !strings.Contains(out, "Sub") {
+		t.Errorf("Antigravity session with empty plan_tier must default to Sub: %q", out)
+	}
+	// Account meters must render!
+	if !strings.Contains(out, "account") || !strings.Contains(out, "5h 5%") {
+		t.Errorf("account meters must render despite ANTHROPIC_API_KEY in env: %q", out)
+	}
+}

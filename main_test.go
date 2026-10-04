@@ -132,6 +132,22 @@ func TestKeychainCredentialJSONMissingItem(t *testing.T) {
 	}
 }
 
+func TestKeychainCredentialJSONTimeoutBoundsCall(t *testing.T) {
+	origTimeout := keychainTimeout
+	keychainTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { keychainTimeout = origTimeout })
+
+	shimSecurity(t, "#!/bin/sh\nsleep 5\n")
+	start := time.Now()
+	_, err := keychainCredentialJSON()
+	if err == nil {
+		t.Fatal("keychainCredentialJSON = nil error; want timeout kill")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("keychainCredentialJSON returned after %v; timeout did not bound the call", elapsed)
+	}
+}
+
 func TestRunGitDeadlineKillsChild(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -140,7 +156,7 @@ func TestRunGitDeadlineKillsChild(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(shim, "git"), []byte("#!/bin/sh\nsleep 5\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", shim)
+	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	start := time.Now()
 	_, err := runGit(ctx, dir, "status")
@@ -155,18 +171,59 @@ func TestRunGitDeadlineKillsChild(t *testing.T) {
 }
 
 func TestConfigPathDefaultsUnderHome(t *testing.T) {
-	got := configPath(envMap(map[string]string{"HOME": "/Users/dev"}))
+	got := configPath("", envMap(map[string]string{"HOME": "/Users/dev"}), nil)
 	if want := "/Users/dev/.claude/statusline.toml"; got != want {
 		t.Errorf("configPath = %q; want %q", got, want)
 	}
 }
 
 func TestConfigPathHonorsOverride(t *testing.T) {
-	got := configPath(envMap(map[string]string{
+	got := configPath("", envMap(map[string]string{
 		"CLAUDE_STATUSLINE_CONFIG": "/tmp/other.toml",
 		"HOME":                     "/Users/dev",
-	}))
+	}), nil)
 	if got != "/tmp/other.toml" {
 		t.Errorf("configPath = %q; want the env override", got)
+	}
+}
+
+func TestConfigPathHonorsAntigravityOverride(t *testing.T) {
+	got := configPath("antigravity", envMap(map[string]string{
+		"ANTIGRAVITY_STATUSLINE_CONFIG": "/tmp/ag.toml",
+		"CLAUDE_STATUSLINE_CONFIG":      "/tmp/other.toml",
+		"HOME":                          "/Users/dev",
+	}), nil)
+	if got != "/tmp/ag.toml" {
+		t.Errorf("configPath = %q; want ANTIGRAVITY_STATUSLINE_CONFIG override", got)
+	}
+}
+
+func TestConfigPathAntigravityDefaultsUnderGeminiIfPresent(t *testing.T) {
+	stat := func(p string) (os.FileInfo, error) {
+		if p == "/Users/dev/.gemini/antigravity-cli/statusline.toml" {
+			return nil, nil
+		}
+		return nil, os.ErrNotExist
+	}
+	got := configPath("antigravity", envMap(map[string]string{"HOME": "/Users/dev"}), stat)
+	if want := "/Users/dev/.gemini/antigravity-cli/statusline.toml"; got != want {
+		t.Errorf("configPath = %q; want %q", got, want)
+	}
+}
+
+func TestConfigPathAntigravityFallsBackToClaudeIfAbsent(t *testing.T) {
+	stat := func(string) (os.FileInfo, error) {
+		return nil, os.ErrNotExist
+	}
+	got := configPath("antigravity", envMap(map[string]string{"HOME": "/Users/dev"}), stat)
+	if want := "/Users/dev/.claude/statusline.toml"; got != want {
+		t.Errorf("configPath = %q; want fallback to %q", got, want)
+	}
+}
+
+func TestConfigPathEmptyHomeReturnsEmpty(t *testing.T) {
+	got := configPath("", envMap(map[string]string{"HOME": ""}), nil)
+	if got != "" {
+		t.Errorf("configPath with empty HOME = %q; want empty string to avoid relative lookup", got)
 	}
 }

@@ -32,6 +32,16 @@ func TestLoadMissingFileGivesDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadEmptyPathReturnsDefault(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load(\"\") error = %v, want nil", err)
+	}
+	if !cfg.Options.Rows.Model {
+		t.Errorf("default rows not enabled: %+v", cfg.Options.Rows)
+	}
+}
+
 func TestLoadPartialOverlayKeepsOtherDefaults(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "statusline.toml")
 	body := `
@@ -359,5 +369,31 @@ func TestSegmentToggleInvalidTypeErrors(t *testing.T) {
 	}
 	if _, err := Load(p); err == nil {
 		t.Error("a non-bool show_effort must surface a config error, not fall through silently")
+	}
+}
+
+func TestLoadUsageTTLSeconds(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	cfg, err := Load(write("a.toml", "[usage]\nttl_seconds = 60\n"))
+	if err != nil || cfg.Usage.TTLSeconds != 60 {
+		t.Errorf("ttl_seconds=60: err=%v got=%d", err, cfg.Usage.TTLSeconds)
+	}
+
+	cfg, err = Load(write("b.toml", "[usage]\nttl_seconds = 0\n"))
+	if err != nil || cfg.Usage.TTLSeconds != 0 {
+		t.Errorf("ttl_seconds=0: err=%v got=%d", err, cfg.Usage.TTLSeconds)
+	}
+
+	if _, err = Load(write("c.toml", "[usage]\nttl_seconds = -5\n")); err == nil {
+		t.Error("negative ttl_seconds must surface an error")
 	}
 }

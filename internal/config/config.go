@@ -113,6 +113,9 @@ func defaultCacheDir() string {
 // is not an error; a malformed file is.
 func Load(path string) (Config, error) {
 	cfg := Default()
+	if path == "" {
+		return cfg, nil
+	}
 
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -200,6 +203,9 @@ func Load(path string) (Config, error) {
 	}
 	setB(&cfg.Usage.Enabled, f.Usage.Enabled)
 	if f.Usage.TTLSeconds != nil {
+		if *f.Usage.TTLSeconds < 0 {
+			return cfg, fmt.Errorf("usage.ttl_seconds: %d is not valid (must be >= 0)", *f.Usage.TTLSeconds)
+		}
 		cfg.Usage.TTLSeconds = *f.Usage.TTLSeconds
 	}
 	if f.Cache.Dir != nil {

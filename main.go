@@ -39,6 +39,7 @@ func main() {
 		keychainOK: creds.ok,
 		fetchUsage: func() ([]byte, error) { return fetchUsage(creds) },
 		readFile:   os.ReadFile,
+		stat:       os.Stat,
 	})
 	if diag != "" {
 		fmt.Fprint(os.Stderr, diag)
@@ -60,12 +61,20 @@ func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 	return string(out), err
 }
 
+var keychainTimeout = 1 * time.Second
+
 // keychainCredentialJSON reads Claude Code's credential JSON from the macOS
 // keychain item. On hosts without the `security` binary (Linux, containers)
 // the exec fails cleanly and the credential chain treats it as a miss.
+// A timeout bounds the exec so an unresponsive keychain or prompt never
+// blocks the statusline render.
 func keychainCredentialJSON() (string, error) {
-	out, err := exec.Command("security", "find-generic-password",
-		"-s", "Claude Code-credentials", "-w").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), keychainTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "security", "find-generic-password",
+		"-s", "Claude Code-credentials", "-w")
+	cmd.WaitDelay = 100 * time.Millisecond
+	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}

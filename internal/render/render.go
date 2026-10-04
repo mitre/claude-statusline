@@ -36,6 +36,7 @@ var sepDot = " " + dimS.Render("·") + " "
 // usage package, plus the account email resolved by the account package.
 type Usage struct {
 	Email        string // logged-in account email, "" = segment omitted
+	PlanTier     string // account plan tier (e.g. "Google AI Ultra"), "" = segment omitted
 	U5, U7       int    // five-hour / seven-day utilization percent
 	R5, R7       string // local-time reset labels, "" when absent
 	ModelFamily  string // family named by the payload's own window key, "" = none
@@ -186,6 +187,10 @@ func ModelRow(st State, extraBadge string, o Options) string {
 			row += dimS.Render(" · ") + grnS.Render("Sub")
 		case "API":
 			row += dimS.Render(" · ") + ylwS.Render("API")
+		default:
+			if st.Auth != "" && st.Auth != "?" {
+				row += dimS.Render(" · ") + grnS.Render(st.Auth)
+			}
 		}
 	}
 	if o.Model.ShowEffort && st.Effort != "" {
@@ -221,8 +226,13 @@ func ModelRow(st State, extraBadge string, o Options) string {
 // the long-held index.lock badge.
 func ProjectRow(cwd, home, branch string, dirty int, lockAge time.Duration, o Options) string {
 	path := cwd
-	if o.Project.TildeHome && home != "" && strings.HasPrefix(path, home) {
-		path = "~" + strings.TrimPrefix(path, home)
+	cleanHome := strings.TrimSuffix(home, "/")
+	if o.Project.TildeHome && cleanHome != "" {
+		if path == cleanHome || path == cleanHome+"/" {
+			path = "~"
+		} else if strings.HasPrefix(path, cleanHome+"/") {
+			path = "~" + strings.TrimPrefix(path, cleanHome)
+		}
 	}
 	row := lbl("project") + boldS.Render(path)
 	if o.Project.ShowBranch && branch != "" {
@@ -246,22 +256,23 @@ func ProjectRow(cwd, home, branch string, dirty int, lockAge time.Duration, o Op
 // >= 85%. The marker and the alarm answer different questions: absolute
 // tokens past the 200k tier boundary vs pressure on the window.
 func ContextRow(pct int, exceeds200k bool, o Options) string {
-	filled := min(pct/10, 10)
+	clampedPct := max(0, pct)
+	filled := min(clampedPct/10, 10)
 	bar := strings.Repeat("▓", filled) + strings.Repeat("░", 10-filled)
 
 	barS, labelS := grnS, grnS
 	switch {
-	case pct >= 80:
+	case clampedPct >= 80:
 		barS, labelS = redS, hotS
-	case pct >= 50:
+	case clampedPct >= 50:
 		barS, labelS = ylwS, ylwS
 	}
 
-	row := lbl("context") + barS.Render(bar) + " " + labelS.Render(fmt.Sprintf("%d%%", pct))
+	row := lbl("context") + barS.Render(bar) + " " + labelS.Render(fmt.Sprintf("%d%%", clampedPct))
 	if exceeds200k && o.Context.Exceeds200kMarker {
 		row += " " + dimS.Render(">200k")
 	}
-	if pct >= 85 {
+	if clampedPct >= 85 {
 		row += " " + alarmS.Render(" /compact ")
 	}
 	return row
@@ -302,6 +313,9 @@ func AccountRow(u Usage, o Options) string {
 			e = dimS.Render(e)
 		}
 		parts = append(parts, e)
+	}
+	if u.PlanTier != "" {
+		parts = append(parts, u.PlanTier)
 	}
 	parts = append(parts,
 		meter(fmt.Sprintf("5h %d%%", u.U5), u.U5, u.R5, always),
