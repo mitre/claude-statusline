@@ -106,6 +106,18 @@ func TestProjectRowTildeHomeDoesNotMatchSiblingPrefix(t *testing.T) {
 	}
 }
 
+func TestProjectRowTildeHomeWithTrailingSlash(t *testing.T) {
+	got := ProjectRow("/Users/dev/project", "/Users/dev/", "main", 0, 0, DefaultOptions())
+	if !strings.Contains(got, "\x1b[1m~/project\x1b[m") {
+		t.Errorf("ProjectRow with trailing slash in HOME failed to shorten properly: %q", got)
+	}
+
+	gotHome := ProjectRow("/Users/dev", "/Users/dev/", "main", 0, 0, DefaultOptions())
+	if !strings.Contains(gotHome, "\x1b[1m~\x1b[m") {
+		t.Errorf("ProjectRow with trailing slash in HOME failed to shorten home to ~: %q", gotHome)
+	}
+}
+
 func TestProjectRowCleanTreeHidesDirty(t *testing.T) {
 	got := ProjectRow("/Users/dev/x", home, "main", 0, 0, DefaultOptions())
 	if strings.Contains(got, "~0") || strings.Contains(got, "\x1b[33m") {

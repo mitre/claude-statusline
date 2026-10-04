@@ -280,3 +280,26 @@ func TestParseRateLimitsClamped(t *testing.T) {
 		t.Errorf("R7Pct = %d, want 100 (clamped from 142.9)", s.R7Pct)
 	}
 }
+
+func TestParsePercentagesHugeFloatNoOverflow(t *testing.T) {
+	j := `{
+		"context_window": {"used_percentage": 1e30},
+		"rate_limits": {
+			"five_hour": {"used_percentage": 1e30, "resets_at": 1700000000},
+			"seven_day": {"used_percentage": 1e30, "resets_at": 1700500000}
+		}
+	}`
+	s, err := Parse(strings.NewReader(j))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if s.CtxPct != 100 {
+		t.Errorf("CtxPct = %d, want 100 (clamped from 1e30)", s.CtxPct)
+	}
+	if s.R5Pct != 100 {
+		t.Errorf("R5Pct = %d, want 100 (clamped from 1e30)", s.R5Pct)
+	}
+	if s.R7Pct != 100 {
+		t.Errorf("R7Pct = %d, want 100 (clamped from 1e30)", s.R7Pct)
+	}
+}

@@ -113,7 +113,7 @@ func Parse(r io.Reader) (Session, error) {
 		Email:        p.Email,
 		ModelName:    p.Model.DisplayName,
 		CWD:          p.Workspace.CurrentDir,
-		CtxPct:       max(0, int(math.Floor(p.ContextWindow.UsedPercentage))),
+		CtxPct:       int(math.Floor(max(0.0, min(100.0, p.ContextWindow.UsedPercentage)))),
 		CtxSize:      p.ContextWindow.ContextWindowSize,
 		LinesAdded:   p.Cost.TotalLinesAdded,
 		LinesRemoved: p.Cost.TotalLinesRemoved,
@@ -139,10 +139,10 @@ func Parse(r io.Reader) (Session, error) {
 	}
 	if fh := p.RateLimits.FiveHour; fh != nil && fh.UsedPercentage != nil {
 		s.RateLimitsOK = true
-		s.R5Pct = max(0, min(100, int(math.Floor(*fh.UsedPercentage))))
+		s.R5Pct = int(math.Floor(max(0.0, min(100.0, *fh.UsedPercentage))))
 		s.R5ResetUnix = fh.ResetsAt
 		if sd := p.RateLimits.SevenDay; sd != nil && sd.UsedPercentage != nil {
-			s.R7Pct = max(0, min(100, int(math.Floor(*sd.UsedPercentage))))
+			s.R7Pct = int(math.Floor(max(0.0, min(100.0, *sd.UsedPercentage))))
 			s.R7ResetUnix = sd.ResetsAt
 		}
 	} else if len(p.Quota) > 0 {

@@ -156,7 +156,7 @@ func TestRunGitDeadlineKillsChild(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(shim, "git"), []byte("#!/bin/sh\nsleep 5\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", shim)
+	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	start := time.Now()
 	_, err := runGit(ctx, dir, "status")

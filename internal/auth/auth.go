@@ -26,7 +26,7 @@ func Detect(cacheDir string, getenv func(string) string, keychainOK func() error
 	switch {
 	case getenv("ANTHROPIC_API_KEY") != "":
 		badge = "API"
-	case keychainOK() == nil:
+	case keychainOK != nil && keychainOK() == nil:
 		badge = "Sub"
 	}
 	_ = cache.Write(path, badge)

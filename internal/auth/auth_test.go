@@ -57,3 +57,10 @@ func TestBadgeIsCached(t *testing.T) {
 		t.Errorf("auth cache file missing (bash-compatible name): %v", err)
 	}
 }
+
+func TestDetectWithNilKeychainOKDegradesToUnknown(t *testing.T) {
+	badge, apiKeySet := Detect(t.TempDir(), env(nil), nil)
+	if badge != "?" || apiKeySet {
+		t.Errorf("Detect with nil keychainOK = %q, %v; want \"?\", false", badge, apiKeySet)
+	}
+}
