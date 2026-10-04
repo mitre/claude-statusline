@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-04
+
 ### Added
 
 - **Google Antigravity CLI (`agy`) support**:
   - Automatically detect Antigravity sessions (`"product": "antigravity"`).
+  - Auto-discover `~/.gemini/antigravity-cli/statusline.toml`, with `$ANTIGRAVITY_STATUSLINE_CONFIG` environment override and fallback to `~/.claude/statusline.toml`.
   - Parse `quota` windows (`gemini-5h`, `gemini-weekly`, `3p-5h`, `3p-weekly`) into live 5-hour and 7-day rate limits with local reset timestamps.
   - Dynamically route model families to corresponding quota pools (Gemini models to `gemini-*`, third-party models to `3p-*`), exposing active secondary pools as scoped meters.
   - Render subscription plan tiers (`Google AI Ultra`, `Google AI Pro`) in the account row, and custom tier badges (`Ultra`, `Pro`) in the model row.
@@ -306,7 +309,8 @@ regression tests:
   observe-only guards for the ~90 ms wall budget, which itself includes
   real IO the benchmarks deliberately exclude.
 
-[Unreleased]: https://github.com/mitre/claude-statusline/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/mitre/claude-statusline/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/mitre/claude-statusline/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mitre/claude-statusline/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/mitre/claude-statusline/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mitre/claude-statusline/releases/tag/v0.1.0
