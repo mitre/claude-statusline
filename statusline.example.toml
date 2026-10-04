@@ -21,7 +21,7 @@ activity = true
 
 # Segments within the model row.
 [model]
-show_auth = true         # "· Sub" / "· API" badge
+show_auth = true         # "· Sub" / "· API" badge (or "· Ultra" / "· Pro" under Antigravity)
 show_session = true      # "· session 0a1b2c3d" (first 8 chars of session id)
 show_context_size = true # append "1M"/"200k" to the model name
 show_effort = true       # "· xhigh" reasoning-effort level (dim; omitted when the host sends none)
@@ -58,7 +58,7 @@ lock_badge_after_s = 300
 # Account-scope meters row (Sub auth only).
 [account]
 # Logged-in account email as the row's first segment — names whose pools
-# the meters describe. Read from ~/.claude.json; omitted when absent.
+# the meters describe. Read from ~/.claude.json (or Antigravity session); omitted when absent.
 show_email = true
 # "normal" (default): regular weight. "dim": fade it into the furniture
 # tier with the session id and reset labels.

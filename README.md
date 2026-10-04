@@ -72,6 +72,29 @@ Point Claude Code at the binary in `~/.claude/settings.json`:
 Claude Code passes session JSON on stdin; the program prints ANSI rows on
 stdout. That is the entire contract — no shell involved.
 
+### Google Antigravity CLI (`agy`)
+
+`claude-statusline` natively supports [Google Antigravity CLI](https://github.com/google-deepmind) (`agy`), which shares the exact same `statusLine` specification (`type: command`, sends session telemetry over `stdin`, renders ANSI on `stdout`).
+
+Point Antigravity CLI at the binary in `~/.gemini/antigravity-cli/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/Users/you/.claude/claude-statusline"
+  }
+}
+```
+
+When running inside Antigravity (`"product": "antigravity"`):
+- **Model row auth badge**: Auto-detects the plan tier (e.g. `Google AI Ultra` renders as green `Ultra` badge, `Pro` renders as `Pro`, or `Sub`).
+- **Account identity & plan tier**: Reads user email and plan tier directly from the stdin payload (e.g. `lippold@example.com · Google AI Ultra`).
+- **Live quota meters**: Automatically maps Antigravity's quota pools (`gemini-5h`, `gemini-weekly`, `3p-5h`, `3p-weekly`) into live 5h/week rate limits with local timezone reset times.
+- **Model family routing**: Dynamically selects Gemini or 3p quota pools based on the active model family, and renders secondary pools as scoped meters when utilized.
+- **API key safety**: Bypasses Anthropic OAuth endpoints and suppresses false metered-billing warnings when `ANTHROPIC_API_KEY` is present in the host environment.
+
+
 ## Configure
 
 Optional. Copy [`statusline.example.toml`](statusline.example.toml) to
@@ -108,10 +131,10 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 
 | Row | Content |
 |-----|---------|
-| `model` | Model name + context-window size, auth mode (`Sub`/`API`), reasoning-effort level, `⚡ fast` badge when fast mode is active, short session id (distinguishes concurrent sessions in one repo) |
+| `model` | Model name + context-window size, auth mode (`Sub`/`API`, or plan tier badge like `Ultra`/`Pro`), reasoning-effort level, `⚡ fast` badge when fast mode is active, short session id (distinguishes concurrent sessions in one repo) |
 | `project` | Current directory (`~`-shortened), git branch (`@sha` when detached), changed-file count, long-held `index.lock` age badge |
 | `context` | Context-window usage bar; green <50%, yellow <80%, red ≥80%, dim `>200k` once absolute tokens cross the long-context tier, `/compact` badge ≥85% |
-| `account` | ACCOUNT-scope subscription meters (Sub auth only, macOS and Linux; Windows uses the same credentials-file mechanism and is expected to work — unverified) — see meter table below |
+| `account` | ACCOUNT-scope subscription meters (Sub auth and Antigravity CLI, macOS and Linux; Windows uses the same credentials-file mechanism and is expected to work — unverified) — see meter table below |
 | `activity` | Session duration and lines added/removed |
 
 When `.git/index.lock` has been held longer than `[project]
@@ -126,11 +149,11 @@ subprocess, no lock taken. `lock_badge = false` hides it.
 
 The `account` row opens with the logged-in **account email** — it names
 whose pools the meters describe, which matters when you run multiple
-accounts. It is read from Claude Code's local state (`~/.claude.json`) on
+accounts. It is read from Claude Code's local state (`~/.claude.json`) or directly from the Antigravity session payload on
 every render — identity is deliberately never cached, so a login change
 shows immediately — and omitted when unavailable;
-`[account] show_email = false` hides it and `email_style = "dim"` quiets it to the furniture tier. The meters are all **account-wide percent-of-plan-allotment**
-as reported by the usage API (shared by every session under your
+`[account] show_email = false` hides it and `email_style = "dim"` quiets it to the furniture tier. For subscription plans carrying a recognized plan tier name (such as Antigravity's `Google AI Ultra`), the tier is rendered alongside the email. The meters are all **account-wide percent-of-plan-allotment**
+as reported by the usage API or session telemetry (shared by every session under your
 subscription — two concurrent sessions correctly show the same pools):
 
 | Meter | Window |

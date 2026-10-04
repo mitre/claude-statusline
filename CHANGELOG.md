@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Google Antigravity CLI (`agy`) support**:
+  - Automatically detect Antigravity sessions (`"product": "antigravity"`).
+  - Parse `quota` windows (`gemini-5h`, `gemini-weekly`, `3p-5h`, `3p-weekly`) into live 5-hour and 7-day rate limits with local reset timestamps.
+  - Dynamically route model families to corresponding quota pools (Gemini models to `gemini-*`, third-party models to `3p-*`), exposing active secondary pools as scoped meters.
+  - Render subscription plan tiers (`Google AI Ultra`, `Google AI Pro`) in the account row, and custom tier badges (`Ultra`, `Pro`) in the model row.
+  - Read account email directly from inline session telemetry.
+  - Suppress metered-billing warnings when `ANTHROPIC_API_KEY` is present in the environment during an Antigravity session.
+
 ## [0.2.0] - 2026-09-24
 
 ### Added
