@@ -16,18 +16,29 @@ import (
 	lg "charm.land/lipgloss/v2"
 )
 
-// Styles (ANSI 16-color palette, matching the original escape constants).
+// Styles. The colored ones default to the ANSI 16-color palette (matching
+// the original escape constants) and are rebuilt from Options.Colors by
+// setPalette at the start of every Build.
 var (
-	dimS   = lg.NewStyle().Faint(true)
-	boldS  = lg.NewStyle().Bold(true)
-	nameS  = lg.NewStyle().Bold(true).Foreground(lg.Color("6")) // bold cyan
-	redS   = lg.NewStyle().Foreground(lg.Color("1"))
-	grnS   = lg.NewStyle().Foreground(lg.Color("2"))
-	ylwS   = lg.NewStyle().Foreground(lg.Color("3"))
-	bluS   = lg.NewStyle().Foreground(lg.Color("4"))
-	hotS   = lg.NewStyle().Bold(true).Foreground(lg.Color("1"))                           // loud percentage
-	alarmS = lg.NewStyle().Bold(true).Foreground(lg.Color("7")).Background(lg.Color("1")) // white-on-red badge
+	dimS  = lg.NewStyle().Faint(true)
+	boldS = lg.NewStyle().Bold(true)
+
+	nameS, redS, grnS, ylwS, bluS, hotS, alarmS lg.Style
 )
+
+func init() { setPalette(DefaultOptions().Colors) }
+
+// setPalette rebuilds the colored styles from c. A statusline renders one
+// frame per process, so package-level styles stay the simplest carrier.
+func setPalette(c Colors) {
+	nameS = lg.NewStyle().Bold(true).Foreground(lg.Color(c.Cyan)) // bold cyan
+	redS = lg.NewStyle().Foreground(lg.Color(c.Red))
+	grnS = lg.NewStyle().Foreground(lg.Color(c.Green))
+	ylwS = lg.NewStyle().Foreground(lg.Color(c.Yellow))
+	bluS = lg.NewStyle().Foreground(lg.Color(c.Blue))
+	hotS = lg.NewStyle().Bold(true).Foreground(lg.Color(c.Red))                             // loud percentage
+	alarmS = lg.NewStyle().Bold(true).Foreground(lg.Color("7")).Background(lg.Color(c.Red)) // white-on-red badge
+}
 
 // sepDot is the dim mid-dot row separator with outer spaces.
 var sepDot = " " + dimS.Render("·") + " "
@@ -103,9 +114,16 @@ type State struct {
 	Exceeds200k bool
 }
 
+// Colors maps each palette slot to a color: an ANSI index ("0"–"255") or
+// a "#rrggbb" truecolor hex. Defaults are the terminal's own ANSI colors.
+type Colors struct {
+	Red, Green, Yellow, Blue, Cyan string
+}
+
 // Options are the user-configurable display toggles (config maps TOML here).
 type Options struct {
-	Rows struct {
+	Colors Colors
+	Rows   struct {
 		Model, Project, Context, Account, Activity bool
 	}
 	Model struct {
@@ -148,6 +166,7 @@ type Options struct {
 // DefaultOptions returns the zero-config behavior: everything on.
 func DefaultOptions() Options {
 	var o Options
+	o.Colors = Colors{Red: "1", Green: "2", Yellow: "3", Blue: "4", Cyan: "6"}
 	o.Rows.Model, o.Rows.Project, o.Rows.Context, o.Rows.Account, o.Rows.Activity = true, true, true, true, true
 	o.Model.ShowAuth, o.Model.ShowSession, o.Model.ShowContextSize = true, true, true
 	o.Model.ShowEffort, o.Model.ShowFastMode, o.Model.ShowMeteredCost = true, true, true
@@ -422,6 +441,7 @@ func comma(n int) string {
 // Build assembles all rows in reference order, collapsing empty ones and
 // honoring the per-row toggles.
 func Build(st State, o Options) string {
+	setPalette(o.Colors)
 	var rows []string
 	add := func(enabled bool, row string) {
 		if enabled && row != "" {

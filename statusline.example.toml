@@ -78,6 +78,17 @@ show_stale_age = true
 enabled = true     # set false to skip the usage endpoint entirely
 ttl_seconds = 180  # how long a fetched payload is served before re-fetching
 
+# Palette slots. Each takes an ANSI index ("0"-"255") or a truecolor
+# "#rrggbb" hex. Defaults are the terminal's own ANSI colors, so a terminal
+# theme already restyles the line; set these to override it for the
+# statusline alone (e.g. a softer pastel set).
+[colors]
+red = "1"    # hot meters (>=80%), removed lines, alarm badge background
+green = "2"  # calm meters (<50%), added lines, Sub badge
+yellow = "3" # warm meters (>=50%), dirty count, API badge
+blue = "4"
+cyan = "6"   # model name
+
 # Cache location. Defaults to the platform user-cache dir (on macOS:
 # /Users/you/Library/Caches/claude-statusline); set an ABSOLUTE path to
 # override — "~" is not expanded. Caches are disposable: deleting the

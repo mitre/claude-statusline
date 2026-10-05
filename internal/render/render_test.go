@@ -279,6 +279,27 @@ func TestAccountRowModelSegment(t *testing.T) {
 	}
 }
 
+func TestBuildCustomColors(t *testing.T) {
+	// [colors] remaps each palette slot; Build applies it for the frame and
+	// a later default-options Build restores the stock ANSI palette.
+	t.Cleanup(func() { Build(State{}, DefaultOptions()) })
+	opts := DefaultOptions()
+	opts.Rows.Model, opts.Rows.Project, opts.Rows.Activity = false, false, false
+	opts.Colors.Green = "#a6e3a1"
+	opts.Colors.Red = "210"
+	got := Build(State{CtxPct: 30, Usage: &Usage{U5: 28, U7: 90}}, opts)
+	want := "\x1b[2mcontext  \x1b[m\x1b[38;2;166;227;161m▓▓▓░░░░░░░\x1b[m \x1b[38;2;166;227;161m30%\x1b[m\n" +
+		"\x1b[2maccount  \x1b[m\x1b[38;2;166;227;161m5h 28%\x1b[m \x1b[2m·\x1b[m \x1b[38;5;210mweek 90%\x1b[m"
+	if got != want {
+		t.Errorf("Build custom colors:\n got %q\nwant %q", got, want)
+	}
+
+	Build(State{}, DefaultOptions())
+	if got, want := ContextRow(30, false, DefaultOptions()), "\x1b[2mcontext  \x1b[m\x1b[32m▓▓▓░░░░░░░\x1b[m \x1b[32m30%\x1b[m"; got != want {
+		t.Errorf("default palette not restored:\n got %q\nwant %q", got, want)
+	}
+}
+
 func TestAccountRowOmitsUnknownModelFamily(t *testing.T) {
 	// No matching payload window (e.g. fable): segment omitted, never 0%.
 	got := AccountRow(Usage{U5: 28, U7: 18, ModelFamily: ""}, DefaultOptions())
