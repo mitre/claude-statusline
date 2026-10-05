@@ -125,6 +125,7 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | `[account] show_stale_age` | `true` | Dim age marker when stale known-good data is served |
 | `[usage] enabled` | `true` | `false` skips the usage endpoint entirely |
 | `[usage] ttl_seconds` | `180` | How long a fetched payload is served before re-fetching |
+| `[colors]` `red`/`green`/`yellow`/`blue`/`cyan` | `"1"`…`"6"` (terminal ANSI) | Remap a palette slot to an ANSI index (`"0"`–`"255"`) or a truecolor `"#rrggbb"` hex |
 | `[cache] dir` | platform user-cache dir | Cache location override |
 
 ## What each row means
@@ -216,8 +217,9 @@ values are never fabricated. `show_stale_age = false` hides the marker.
   ANSI 16-color palette, and the output is deliberately
   environment-independent: a statusline is always piped and the host
   interprets the sequences, so there is no tty detection and `NO_COLOR` is
-  intentionally not honored (pinned by a test). This is the foundation for
-  user-configurable theming later.
+  intentionally not honored (pinned by a test). `[colors]` remaps the
+  palette slots (ANSI index or truecolor hex) for users who want a
+  statusline-specific theme.
 - **Never crashes the host:** unparseable stdin renders nothing; a malformed
   config falls back to defaults and complains on stderr.
 - **Security posture:** stdin JSON and the workspace path are untrusted input —
