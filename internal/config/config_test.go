@@ -322,6 +322,29 @@ func TestLoadAccountShowStaleAge(t *testing.T) {
 	}
 }
 
+func TestLoadAccountBars(t *testing.T) {
+	dir := t.TempDir()
+	write := func(body string) string {
+		p := filepath.Join(dir, "c.toml")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	cfg, err := Load(write("[account]\nshow_resets = \"always\"\n"))
+	if err != nil || cfg.Options.Account.Bars {
+		t.Errorf("absent bars must default to false: err=%v got=%v", err, cfg.Options.Account.Bars)
+	}
+	cfg, err = Load(write("[account]\nbars = true\n"))
+	if err != nil || !cfg.Options.Account.Bars {
+		t.Errorf("bars=true: err=%v got=%v", err, cfg.Options.Account.Bars)
+	}
+	if _, err = Load(write("[account]\nbars = \"yes\"\n")); err == nil {
+		t.Error("non-boolean bars must surface an error")
+	}
+}
+
 func TestLoadRejectsMalformedTOML(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "bad.toml")
 	if err := os.WriteFile(p, []byte("rows = [unclosed"), 0o600); err != nil {

@@ -71,6 +71,7 @@ type fileSchema struct {
 		ShowEmail    *bool   `toml:"show_email"`
 		EmailStyle   *string `toml:"email_style"` // "normal" (default) | "dim"
 		ShowStaleAge *bool   `toml:"show_stale_age"`
+		Bars         *bool   `toml:"bars"`
 	} `toml:"account"`
 	Usage struct {
 		Enabled    *bool `toml:"enabled"`
@@ -191,6 +192,7 @@ func Load(path string) (Config, error) {
 	}
 	setB(&cfg.Options.Account.ShowEmail, f.Account.ShowEmail)
 	setB(&cfg.Options.Account.ShowStaleAge, f.Account.ShowStaleAge)
+	setB(&cfg.Options.Account.Bars, f.Account.Bars)
 	if f.Account.EmailStyle != nil {
 		switch *f.Account.EmailStyle {
 		case "dim":
