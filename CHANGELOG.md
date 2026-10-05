@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`[account] bars`**: opt-in 10-segment bars on the account-row meters
+  (`5h ▓▓░░░░░░░░ 28%`), reusing the context row's bar and the meters'
+  green/yellow/red thresholds. Default `false` keeps today's text-only row
+  byte-for-byte.
+
 ## [0.3.0] - 2026-10-04
 
 ### Added

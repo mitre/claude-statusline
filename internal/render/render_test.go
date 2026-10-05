@@ -279,6 +279,39 @@ func TestAccountRowModelSegment(t *testing.T) {
 	}
 }
 
+func TestAccountRowMeterBars(t *testing.T) {
+	// bars = true: each meter gains the context row's 10-segment bar between
+	// its name and percentage, in the meter's own threshold color.
+	opts := DefaultOptions()
+	opts.Account.Bars = true
+	in := Usage{
+		U5: 28, R5: "1:30p", U7: 82, R7: "Mon 10a",
+		Scoped:      []ScopedLimit{{Name: "Fable", Pct: 100, Reset: "Mon 10a"}},
+		ModelFamily: "opus", ModelPct: 55,
+	}
+	got := AccountRow(in, opts)
+	want := "\x1b[2maccount  \x1b[m" +
+		"\x1b[32m5h ▓▓░░░░░░░░ 28%\x1b[m \x1b[2m(resets 1:30p)\x1b[m \x1b[2m·\x1b[m " +
+		"\x1b[31mweek ▓▓▓▓▓▓▓▓░░ 82%\x1b[m \x1b[2m(resets Mon 10a)\x1b[m \x1b[2m·\x1b[m " +
+		"\x1b[31mFable ▓▓▓▓▓▓▓▓▓▓ 100%\x1b[m \x1b[2m(resets Mon 10a)\x1b[m \x1b[2m·\x1b[m " +
+		"\x1b[33mopus/wk ▓▓▓▓▓░░░░░ 55%\x1b[m"
+	if got != want {
+		t.Errorf("AccountRow bars(%+v):\n got %q\nwant %q", in, got, want)
+	}
+
+	// Out-of-range payload values clamp the bar, never panic or overflow.
+	got = AccountRow(Usage{U5: -3, U7: 140}, opts)
+	want = "\x1b[2maccount  \x1b[m\x1b[32m5h ░░░░░░░░░░ -3%\x1b[m \x1b[2m·\x1b[m \x1b[31mweek ▓▓▓▓▓▓▓▓▓▓ 140%\x1b[m"
+	if got != want {
+		t.Errorf("AccountRow bars clamp:\n got %q\nwant %q", got, want)
+	}
+
+	// Default (bars = false) stays byte-identical to the text-only meters.
+	if got := AccountRow(Usage{U5: 5, U7: 13}, DefaultOptions()); strings.Contains(got, "░") {
+		t.Errorf("bars must be opt-in: %q", got)
+	}
+}
+
 func TestAccountRowOmitsUnknownModelFamily(t *testing.T) {
 	// No matching payload window (e.g. fable): segment omitted, never 0%.
 	got := AccountRow(Usage{U5: 28, U7: 18, ModelFamily: ""}, DefaultOptions())

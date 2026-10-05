@@ -123,6 +123,7 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | `[account] email_style` | `"normal"` | `"dim"` quiets the email to the furniture tier |
 | `[account] show_resets` | `"always"` | `"quiet"` shows reset times only on hot (≥80%) meters |
 | `[account] show_stale_age` | `true` | Dim age marker when stale known-good data is served |
+| `[account] bars` | `false` | Draw each meter as a 10-segment bar like the context row (`5h ▓▓░░░░░░░░ 28%`) |
 | `[usage] enabled` | `true` | `false` skips the usage endpoint entirely |
 | `[usage] ttl_seconds` | `180` | How long a fetched payload is served before re-fetching |
 | `[cache] dir` | platform user-cache dir | Cache location override |

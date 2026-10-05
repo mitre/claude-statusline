@@ -142,6 +142,9 @@ type Options struct {
 		// fallback is serving (default on — it only appears in a degraded
 		// state worth knowing about).
 		ShowStaleAge bool
+		// Bars renders each meter with the context row's 10-segment bar
+		// between its name and percentage (config bars = true; default off).
+		Bars bool
 	}
 }
 
@@ -257,8 +260,7 @@ func ProjectRow(cwd, home, branch string, dirty int, lockAge time.Duration, o Op
 // tokens past the 200k tier boundary vs pressure on the window.
 func ContextRow(pct int, exceeds200k bool, o Options) string {
 	clampedPct := max(0, pct)
-	filled := min(clampedPct/10, 10)
-	bar := strings.Repeat("▓", filled) + strings.Repeat("░", 10-filled)
+	bar := meterBar(clampedPct)
 
 	barS, labelS := grnS, grnS
 	switch {
@@ -278,6 +280,13 @@ func ContextRow(pct int, exceeds200k bool, o Options) string {
 	return row
 }
 
+// meterBar is the shared 10-segment bar; pct is clamped to [0, 100] so
+// out-of-range payload values can never panic strings.Repeat.
+func meterBar(pct int) string {
+	filled := min(max(0, pct)/10, 10)
+	return strings.Repeat("▓", filled) + strings.Repeat("░", 10-filled)
+}
+
 func limitStyle(pct int) lg.Style {
 	switch {
 	case pct >= 80:
@@ -289,10 +298,15 @@ func limitStyle(pct int) lg.Style {
 	}
 }
 
-// meter renders one account meter with its optional reset label.
-func meter(text string, pct int, reset string, alwaysShowReset bool) string {
+// meter renders one account meter ("5h 28%", or "5h ▓▓░░░░░░░░ 28%" with
+// bars) with its optional reset label.
+func meter(name string, pct int, reset string, o Options) string {
+	text := fmt.Sprintf("%s %d%%", name, pct)
+	if o.Account.Bars {
+		text = fmt.Sprintf("%s %s %d%%", name, meterBar(pct), pct)
+	}
 	s := limitStyle(pct).Render(text)
-	if reset != "" && (alwaysShowReset || pct >= 80) {
+	if reset != "" && (o.Account.AlwaysShowResets || pct >= 80) {
 		s += " " + dimS.Render("(resets "+reset+")")
 	}
 	return s
@@ -305,7 +319,6 @@ func meter(text string, pct int, reset string, alwaysShowReset bool) string {
 // as reported by the usage API. The model window is a PARALLEL weekly cap,
 // not a subset of the week meter.
 func AccountRow(u Usage, o Options) string {
-	always := o.Account.AlwaysShowResets
 	var parts []string
 	if o.Account.ShowEmail && u.Email != "" {
 		e := u.Email
@@ -318,14 +331,14 @@ func AccountRow(u Usage, o Options) string {
 		parts = append(parts, u.PlanTier)
 	}
 	parts = append(parts,
-		meter(fmt.Sprintf("5h %d%%", u.U5), u.U5, u.R5, always),
-		meter(fmt.Sprintf("week %d%%", u.U7), u.U7, u.R7, always),
+		meter("5h", u.U5, u.R5, o),
+		meter("week", u.U7, u.R7, o),
 	)
 	for _, s := range u.Scoped {
-		parts = append(parts, meter(fmt.Sprintf("%s %d%%", s.Name, s.Pct), s.Pct, s.Reset, always))
+		parts = append(parts, meter(s.Name, s.Pct, s.Reset, o))
 	}
 	if u.ModelFamily != "" {
-		parts = append(parts, meter(fmt.Sprintf("%s/wk %d%%", u.ModelFamily, u.ModelPct), u.ModelPct, u.ModelReset, always))
+		parts = append(parts, meter(u.ModelFamily+"/wk", u.ModelPct, u.ModelReset, o))
 	}
 	if u.DataAge > 0 && o.Account.ShowStaleAge && (!u.MetersLive || u.ModelFamily != "") {
 		// Stale-good fallback engaged: qualify the stale data with a
