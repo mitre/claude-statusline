@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -86,6 +88,24 @@ type fileSchema struct {
 	Cache struct {
 		Dir *string `toml:"dir"`
 	} `toml:"cache"`
+	Colors struct {
+		Red    *string `toml:"red"`
+		Green  *string `toml:"green"`
+		Yellow *string `toml:"yellow"`
+		Blue   *string `toml:"blue"`
+		Cyan   *string `toml:"cyan"`
+	} `toml:"colors"`
+}
+
+var hexColor = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
+
+// validColor accepts an ANSI index 0–255 or a "#rrggbb" hex.
+func validColor(s string) bool {
+	if hexColor.MatchString(s) {
+		return true
+	}
+	n, err := strconv.Atoi(s)
+	return err == nil && n >= 0 && n <= 255 && strconv.Itoa(n) == s
 }
 
 // minUsageTTLSeconds is the usage fetch floor (usage.MinFetchInterval) as a
@@ -224,6 +244,25 @@ func Load(path string) (Config, error) {
 				"usage.ttl_seconds: %d raised to %d (the usage endpoint rate-limits faster polling)",
 				*f.Usage.TTLSeconds, minUsageTTLSeconds))
 		}
+	}
+	for _, col := range []struct {
+		key string
+		dst *string
+		src *string
+	}{
+		{"red", &cfg.Options.Colors.Red, f.Colors.Red},
+		{"green", &cfg.Options.Colors.Green, f.Colors.Green},
+		{"yellow", &cfg.Options.Colors.Yellow, f.Colors.Yellow},
+		{"blue", &cfg.Options.Colors.Blue, f.Colors.Blue},
+		{"cyan", &cfg.Options.Colors.Cyan, f.Colors.Cyan},
+	} {
+		if col.src == nil {
+			continue
+		}
+		if !validColor(*col.src) {
+			return cfg, fmt.Errorf("colors.%s: %q is not valid (use an ANSI index 0-255 or a \"#rrggbb\" hex)", col.key, *col.src)
+		}
+		*col.dst = *col.src
 	}
 	if f.Cache.Dir != nil {
 		cfg.CacheDir = *f.Cache.Dir
