@@ -123,6 +123,7 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | `[account] email_style` | `"normal"` | `"dim"` quiets the email to the furniture tier |
 | `[account] show_resets` | `"always"` | `"quiet"` shows reset times only on hot (≥80%) meters |
 | `[account] show_stale_age` | `true` | Dim age marker when stale known-good data is served |
+| `[account] bars` | `false` | Draw each meter as a 10-segment bar like the context row (`5h ▓▓░░░░░░░░ 28%`) |
 | `[usage] enabled` | `true` | `false` skips the usage endpoint entirely |
 | `[usage] ttl_seconds` | `200` | How long a fetched payload is served before re-fetching. Floor 200 (a lower value is raised to 200, with a stderr note): the usage endpoint rate-limits faster polling, and a failed fetch is not retried before 200 s (or the server's `Retry-After`) have passed |
 | `[cache] dir` | platform user-cache dir | Cache location override |

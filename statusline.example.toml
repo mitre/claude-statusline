@@ -72,6 +72,9 @@ show_resets = "always"
 # payload's age. false hides the marker (the meters still show the stale
 # values either way — the marker only names their age).
 show_stale_age = true
+# Draw each meter with the context row's 10-segment bar between its name and
+# percentage ("5h ▓▓░░░░░░░░ 28%"), in the meter's own threshold color.
+bars = false
 
 # Usage-endpoint fetching for the account row.
 [usage]
