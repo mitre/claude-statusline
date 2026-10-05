@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Account row no longer vanishes for 5 minutes after a transient
+  credential miss**: an unknown (`?`) auth badge is now cached for 15 s
+  instead of the full 300 s badge TTL, so a one-off failed lookup (a
+  sandboxed shell, a locked keychain) sharing the cache recovers quickly.
+
 ## [0.3.0] - 2026-10-04
 
 ### Added

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func env(m map[string]string) func(string) string {
@@ -55,6 +56,27 @@ func TestBadgeIsCached(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "auth")); err != nil {
 		t.Errorf("auth cache file missing (bash-compatible name): %v", err)
+	}
+}
+
+func TestUnknownBadgeExpiresQuickly(t *testing.T) {
+	// A transient credential miss (sandboxed shell, locked keychain) must not
+	// hide the account row for the full badge TTL: "?" is negative-cached
+	// briefly, so the next lookup after unknownTTL recovers Sub.
+	dir := t.TempDir()
+	if badge, _ := Detect(dir, env(nil), func() error { return errors.New("locked") }); badge != "?" {
+		t.Fatalf("first Detect = %q", badge)
+	}
+	// Within unknownTTL the miss is still served (no lookup storm).
+	if badge, _ := Detect(dir, env(nil), func() error { return nil }); badge != "?" {
+		t.Errorf("fresh unknown badge not served: %q", badge)
+	}
+	old := time.Now().Add(-unknownTTL - time.Second)
+	if err := os.Chtimes(filepath.Join(dir, "auth"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if badge, _ := Detect(dir, env(nil), func() error { return nil }); badge != "Sub" {
+		t.Errorf("expired unknown badge must re-detect: got %q, want Sub", badge)
 	}
 }
 
