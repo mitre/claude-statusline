@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Go toolchain 1.27.1 → 1.27.2 and `golang.org/x/net` v0.59.0 → v0.60.0,
+  remediating GO-2026-6603, GO-2026-6605, GO-2026-6607, GO-2026-6608,
+  GO-2026-6610, GO-2026-6611, GO-2026-6613 and GO-2026-6617 (`net/http`
+  HTTP/1 and HTTP/2, `mime/multipart`, `crypto/tls` ECH), reachable through
+  the usage-endpoint HTTPS fetch.
+- golangci-lint pin v2.13.2 → v2.14.0: v2.13.2 cannot read the export data
+  Go 1.27.2 writes ("export data version 5 is greater than maximum supported
+  version 4").
+
 ## [0.3.0] - 2026-10-04
 
 ### Added
