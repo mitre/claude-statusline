@@ -13,7 +13,7 @@ FUZZTIME ?= 30s
 # `make tools`; AGENTS.md points here instead of repeating numbers. The
 # require-* guards refuse a mismatched local binary — a local/CI version
 # split (2.11.3 vs 2.13.2) once turned a release PR red with no local signal.
-GOLANGCI_LINT_VERSION := v2.13.2
+GOLANGCI_LINT_VERSION := v2.14.0
 GOVULNCHECK_VERSION   := v1.7.0
 GORELEASER_VERSION    := v2.17.0
 
