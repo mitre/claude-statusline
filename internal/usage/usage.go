@@ -11,12 +11,37 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mitre/claude-statusline/internal/cache"
 	"github.com/mitre/claude-statusline/internal/render"
 )
+
+// MinFetchInterval is the floor between two fetch attempts, whatever the
+// previous attempt returned. The usage endpoint rate-limits faster polling
+// (observed 2026-11-02: HTTP 429 with Retry-After 199 s once a stale cache
+// had every render refetching), so a failed or rejected fetch must not be
+// retried on the next render. Config enforces the same floor on ttl_seconds.
+const MinFetchInterval = 200 * time.Second
+
+// RetryAfterError reports that the endpoint rate-limited the fetch. After is
+// the server's Retry-After interval, zero when the response carried none.
+type RetryAfterError struct {
+	After time.Duration
+}
+
+func (e *RetryAfterError) Error() string {
+	if e.After <= 0 {
+		return "usage endpoint rate-limited the fetch"
+	}
+	return fmt.Sprintf("usage endpoint rate-limited the fetch; retry after %s", e.After)
+}
+
+// nextAttemptFile sits beside the usage cache and holds, as Unix seconds,
+// the earliest moment the next fetch may be attempted.
+const nextAttemptFile = "usage.next-attempt"
 
 type window struct {
 	Utilization *float64 `json:"utilization"`
@@ -121,7 +146,8 @@ func modelWindowKey(fields map[string]json.RawMessage, modelName string) (key, f
 
 // Parse validates and extracts a usage payload. Payloads without the
 // expected shape (e.g. rate-limit error bodies) return an error — they must
-// never be rendered as zeros. modelName is the session model's display name:
+// never be rendered as zeros. The shape gate is "at least one window or
+// limit": a null five_hour alone does not fail it (see FiveHourAbsent). modelName is the session model's display name:
 // when the payload carries a weekly window whose own key matches it, the
 // model segment fields are populated; otherwise they stay zero and the
 // segment is omitted.
@@ -130,19 +156,26 @@ func Parse(raw []byte, now time.Time, modelName string) (render.Usage, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return render.Usage{}, err
 	}
-	if p.FiveHour == nil || p.FiveHour.Utilization == nil {
-		return render.Usage{}, errors.New("payload lacks five_hour.utilization — not usage data")
+	fiveHour := p.FiveHour != nil && p.FiveHour.Utilization != nil
+	sevenDay := p.SevenDay != nil && p.SevenDay.Utilization != nil
+	if !fiveHour && !sevenDay && len(p.Limits) == 0 {
+		return render.Usage{}, errors.New("payload carries no usage window or limit — not usage data")
 	}
 
+	// A null five_hour is the endpoint's "no five-hour window in progress":
+	// the weekly readings are real, the 5h meter is absent — never 0%.
 	u := render.Usage{
-		U5:           int(math.Floor(*p.FiveHour.Utilization)),
-		R5:           resetLabel(p.FiveHour.ResetsAt, now),
-		ExtraEnabled: p.ExtraUsage.IsEnabled,
-		CreditsMinor: p.Spend.Used.AmountMinor,
-		CreditsExp:   2,
+		FiveHourAbsent: !fiveHour,
+		ExtraEnabled:   p.ExtraUsage.IsEnabled,
+		CreditsMinor:   p.Spend.Used.AmountMinor,
+		CreditsExp:     2,
 	}
 	if p.Spend.Used.Exponent != nil {
 		u.CreditsExp = *p.Spend.Used.Exponent
+	}
+	if fiveHour {
+		u.U5 = int(math.Floor(*p.FiveHour.Utilization))
+		u.R5 = resetLabel(p.FiveHour.ResetsAt, now)
 	}
 	if p.SevenDay != nil {
 		if p.SevenDay.Utilization != nil {
@@ -228,21 +261,57 @@ func labelAt(t, now time.Time) string {
 // data is being served — and zero on the fresh paths; the render layer keys
 // its dim age marker on it. ok=false means no usable data — the limits row
 // must collapse.
+//
+// Fetch attempts are throttled independently of the TTL: once an attempt is
+// made — success, network error, rate limit or a rejected body alike — no
+// further attempt happens before MinFetchInterval has passed (or the
+// server's Retry-After, when longer). Renders in between serve the cache.
 func Resolve(cacheDir string, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) (raw []byte, staleFor time.Duration, ok bool) {
 	p := filepath.Join(cacheDir, "usage")
 	if s, ok := cache.ReadFresh(p, ttl); ok && !boundaryExpired(p, []byte(s), now) {
 		return []byte(s), 0, true
 	}
-	if b, err := fetch(); err == nil {
-		if _, perr := Parse(b, now, ""); perr == nil {
-			_ = cache.Write(p, string(b))
-			return b, 0, true
+	gate := filepath.Join(cacheDir, nextAttemptFile)
+	if mayAttempt(gate, now) {
+		b, err := fetch()
+		recordAttempt(gate, now, err)
+		if err == nil {
+			if _, perr := Parse(b, now, ""); perr == nil {
+				_ = cache.Write(p, string(b))
+				return b, 0, true
+			}
 		}
 	}
 	if s, ok := cache.ReadStale(p); ok {
 		return []byte(s), staleAge(p, now), true
 	}
 	return nil, 0, false
+}
+
+// mayAttempt reports whether the throttle gate allows a fetch at now. A
+// missing or unreadable gate file allows it: the gate only ever delays.
+func mayAttempt(gate string, now time.Time) bool {
+	s, ok := cache.ReadStale(gate)
+	if !ok {
+		return true
+	}
+	unix, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil {
+		return true
+	}
+	return !now.Before(time.Unix(unix, 0))
+}
+
+// recordAttempt writes the earliest moment the next fetch may run: the floor
+// after this attempt, stretched to the server's Retry-After when that is
+// longer. A write failure leaves the previous gate in place.
+func recordAttempt(gate string, now time.Time, err error) {
+	hold := MinFetchInterval
+	var ra *RetryAfterError
+	if errors.As(err, &ra) && ra.After > hold {
+		hold = ra.After
+	}
+	_ = cache.Write(gate, strconv.FormatInt(now.Add(hold).Unix(), 10))
 }
 
 // staleAge is the age of a fallback-served cache file: now minus its mtime,

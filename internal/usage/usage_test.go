@@ -500,3 +500,198 @@ func TestResetLabelUnix(t *testing.T) {
 		t.Errorf("zero epoch label = %q, want \"\"", got)
 	}
 }
+
+// nullFiveHourPayload is the shape the usage endpoint serves when no
+// five-hour window is in progress: five_hour is null while the weekly window
+// and the plan limits are still present. Captured live 2026-11-02.
+const nullFiveHourPayload = `{
+  "five_hour": null,
+  "seven_day": {"utilization": 43.0, "resets_at": "2026-11-06T22:00:00Z"},
+  "extra_usage": {"is_enabled": false},
+  "spend": {"used": {"amount_minor": 0, "exponent": 2}},
+  "limits": [
+    {"kind": "weekly_all", "percent": 43, "is_active": false, "resets_at": "2026-11-06T22:00:00Z", "scope": null},
+    {"kind": "weekly_scoped", "percent": 47, "is_active": true, "resets_at": "2026-11-06T22:00:00Z",
+     "scope": {"model": {"display_name": "Fable"}}}
+  ]
+}`
+
+func TestParseAcceptsNullFiveHour(t *testing.T) {
+	// A null five_hour means "no five-hour window in progress", not "not
+	// usage data": the weekly and scoped readings are real and must render,
+	// with the five-hour meter marked absent rather than fabricated as 0%.
+	u, err := Parse([]byte(nullFiveHourPayload), now, "")
+	if err != nil {
+		t.Fatalf("Parse rejected a null five_hour payload: %v", err)
+	}
+	if !u.FiveHourAbsent {
+		t.Error("FiveHourAbsent = false, want true")
+	}
+	if u.U5 != 0 || u.R5 != "" {
+		t.Errorf("U5/R5 = %d/%q, want zero values when the window is absent", u.U5, u.R5)
+	}
+	if u.U7 != 43 || u.R7 == "" {
+		t.Errorf("U7/R7 = %d/%q, want 43 with a reset label", u.U7, u.R7)
+	}
+	if u.MaxActive != 47 {
+		t.Errorf("MaxActive = %d, want 47 (the active scoped limit)", u.MaxActive)
+	}
+	if len(u.Scoped) != 1 || u.Scoped[0].Name != "Fable" || u.Scoped[0].Pct != 47 {
+		t.Errorf("Scoped = %+v, want one Fable limit at 47%%", u.Scoped)
+	}
+}
+
+func TestParseKeepsFiveHourPresentFlagOnFullPayload(t *testing.T) {
+	u, err := Parse([]byte(goodPayload), now, "")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if u.FiveHourAbsent {
+		t.Error("FiveHourAbsent = true on a payload that carries five_hour")
+	}
+}
+
+func TestParseRejectsPayloadWithoutAnyWindow(t *testing.T) {
+	// The shape gate must stay strict: JSON that carries neither a window
+	// nor a limit is not usage data, whatever else it contains.
+	for _, raw := range []string{
+		`{}`,
+		`{"five_hour": null, "seven_day": null}`,
+		`{"five_hour": null, "seven_day": null, "limits": []}`,
+		`{"type":"error","error":{"type":"rate_limit_error","message":"Rate limited."}}`,
+	} {
+		if _, err := Parse([]byte(raw), now, ""); err == nil {
+			t.Errorf("Parse accepted %s as usage data", raw)
+		}
+	}
+}
+
+func TestResolveReplacesStaleCacheWithNullFiveHourPayload(t *testing.T) {
+	// The bug this guards: a live payload with five_hour null was rejected
+	// by the shape gate, so the stale cache was served forever with a
+	// growing age marker. The live payload must be cached and served fresh.
+	realNow := time.Now().Truncate(time.Second)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "usage")
+	if err := os.WriteFile(p, []byte(goodPayload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := realNow.Add(-69 * time.Hour)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+	raw, staleFor, ok := Resolve(dir, time.Minute, realNow, func() ([]byte, error) { return []byte(nullFiveHourPayload), nil })
+	if !ok || staleFor != 0 {
+		t.Fatalf("Resolve: ok=%v staleFor=%v, want the live payload served with zero age", ok, staleFor)
+	}
+	if string(raw) != nullFiveHourPayload {
+		t.Errorf("Resolve served %q, want the live payload", raw)
+	}
+	cached, err := os.ReadFile(p)
+	if err != nil || string(cached) != nullFiveHourPayload {
+		t.Errorf("cache not replaced: err=%v content=%q", err, cached)
+	}
+}
+
+// staleFixture writes a cache file older than any TTL so every Resolve call
+// below must decide whether to attempt a fetch.
+func staleFixture(t *testing.T, realNow time.Time) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "usage")
+	if err := os.WriteFile(p, []byte(goodPayload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := realNow.Add(-2 * time.Hour)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestResolveNeverAttemptsFetchWithinMinFetchInterval(t *testing.T) {
+	// A failed fetch must not be retried on the next render: with the cache
+	// stale, renders arrive every few hundred milliseconds and the endpoint
+	// rate-limits the storm. One attempt per MinFetchInterval, no matter
+	// how the attempt ended; stale-good is served in between.
+	realNow := time.Now().Truncate(time.Second)
+	dir := staleFixture(t, realNow)
+	calls := 0
+	failing := func() ([]byte, error) { calls++; return nil, errors.New("network down") }
+
+	if _, _, ok := Resolve(dir, time.Minute, realNow, failing); !ok {
+		t.Fatal("stale-good fallback not served on the first failure")
+	}
+	Resolve(dir, time.Minute, realNow.Add(time.Second), failing)
+	Resolve(dir, time.Minute, realNow.Add(MinFetchInterval-time.Second), failing)
+	if calls != 1 {
+		t.Fatalf("fetch attempted %d times within MinFetchInterval, want exactly 1", calls)
+	}
+	Resolve(dir, time.Minute, realNow.Add(MinFetchInterval+time.Second), failing)
+	if calls != 2 {
+		t.Errorf("fetch attempted %d times after MinFetchInterval elapsed, want 2", calls)
+	}
+}
+
+func TestResolveThrottlesAfterRejectedPayloadToo(t *testing.T) {
+	// A fetch that "succeeds" with a non-usage body (an error payload) is an
+	// attempt like any other and must be throttled the same way.
+	realNow := time.Now().Truncate(time.Second)
+	dir := staleFixture(t, realNow)
+	calls := 0
+	errBody := func() ([]byte, error) { calls++; return []byte(`{"error":{"type":"rate_limit_error"}}`), nil }
+	Resolve(dir, time.Minute, realNow, errBody)
+	Resolve(dir, time.Minute, realNow.Add(5*time.Second), errBody)
+	if calls != 1 {
+		t.Errorf("fetch attempted %d times, want 1", calls)
+	}
+}
+
+func TestResolveHonorsRetryAfterLongerThanFloor(t *testing.T) {
+	// A 429 carrying Retry-After longer than the floor holds fetching off
+	// for the server's full interval; shorter values still get the floor.
+	realNow := time.Now().Truncate(time.Second)
+	dir := staleFixture(t, realNow)
+	calls := 0
+	limited := func() ([]byte, error) { calls++; return nil, &RetryAfterError{After: 15 * time.Minute} }
+	Resolve(dir, time.Minute, realNow, limited)
+	Resolve(dir, time.Minute, realNow.Add(MinFetchInterval+time.Second), limited)
+	if calls != 1 {
+		t.Fatalf("fetch attempted %d times inside the server's Retry-After, want 1", calls)
+	}
+	Resolve(dir, time.Minute, realNow.Add(15*time.Minute+time.Second), limited)
+	if calls != 2 {
+		t.Errorf("fetch attempted %d times after Retry-After elapsed, want 2", calls)
+	}
+
+	dir = staleFixture(t, realNow)
+	calls = 0
+	short := func() ([]byte, error) { calls++; return nil, &RetryAfterError{After: 5 * time.Second} }
+	Resolve(dir, time.Minute, realNow, short)
+	Resolve(dir, time.Minute, realNow.Add(10*time.Second), short)
+	if calls != 1 {
+		t.Errorf("fetch attempted %d times: a short Retry-After must not undercut the floor", calls)
+	}
+}
+
+func TestResolveSuccessfulFetchKeepsTTLCadence(t *testing.T) {
+	// After a good payload is cached the TTL governs as before: a fresh
+	// cache is served without any fetch, and the cadence is the larger of
+	// the configured TTL and the floor.
+	realNow := time.Now()
+	dir := t.TempDir()
+	calls := 0
+	good := func() ([]byte, error) { calls++; return []byte(goodPayload), nil }
+	if _, _, ok := Resolve(dir, MinFetchInterval, realNow, good); !ok || calls != 1 {
+		t.Fatalf("first resolve: ok=%v calls=%d", ok, calls)
+	}
+	if _, staleFor, ok := Resolve(dir, MinFetchInterval, realNow.Add(time.Second), good); !ok || staleFor != 0 || calls != 1 {
+		t.Errorf("fresh cache served with a fetch: ok=%v staleFor=%v calls=%d", ok, staleFor, calls)
+	}
+}
+
+func TestMinFetchIntervalFloor(t *testing.T) {
+	if MinFetchInterval < 200*time.Second {
+		t.Errorf("MinFetchInterval = %v, must be at least 200s (the endpoint's observed Retry-After)", MinFetchInterval)
+	}
+}

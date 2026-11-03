@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mitre/claude-statusline/internal/usage"
 )
 
 // fileCreds returns a credentialSource resolving from a real credentials
@@ -225,5 +228,43 @@ func TestConfigPathEmptyHomeReturnsEmpty(t *testing.T) {
 	got := configPath("", envMap(map[string]string{"HOME": ""}), nil)
 	if got != "" {
 		t.Errorf("configPath with empty HOME = %q; want empty string to avoid relative lookup", got)
+	}
+}
+
+func TestFetchUsageClassifies429WithRetryAfter(t *testing.T) {
+	// The usage endpoint answers 429 with a Retry-After in seconds when the
+	// statusline polls too fast. That must surface as a typed error carrying
+	// the interval so the resolver can hold off, never as a payload.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "199")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"Rate limited."}}`))
+	}))
+	defer srv.Close()
+	pointUsageAt(t, srv.URL)
+
+	body, err := fetchUsage(fileCreds(t, "sk-ant-oat01-e2e"))
+	var ra *usage.RetryAfterError
+	if !errors.As(err, &ra) {
+		t.Fatalf("fetchUsage = %q, %v; want *usage.RetryAfterError", body, err)
+	}
+	if ra.After != 199*time.Second {
+		t.Errorf("RetryAfterError.After = %v, want 199s from the header", ra.After)
+	}
+	if body != nil {
+		t.Errorf("body = %q, want nil on a rate-limit response", body)
+	}
+}
+
+func TestFetchUsage429WithoutRetryAfterStillTyped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	pointUsageAt(t, srv.URL)
+	_, err := fetchUsage(fileCreds(t, "sk-ant-oat01-e2e"))
+	var ra *usage.RetryAfterError
+	if !errors.As(err, &ra) || ra.After != 0 {
+		t.Errorf("429 without Retry-After: err=%v; want RetryAfterError with zero After (floor applies)", err)
 	}
 }

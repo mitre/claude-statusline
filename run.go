@@ -139,6 +139,9 @@ func run(d deps) (string, string) {
 		// usage) keep their stale-good semantics, and the render layer scopes
 		// the dim age marker to the stale data that remains visible.
 		if sess.RateLimitsOK && (!have || u.DataAge > 0) {
+			// The host's live five-hour reading supersedes an endpoint
+			// payload that reported no window in progress.
+			u.FiveHourAbsent = false
 			u.U5, u.R5 = sess.R5Pct, usage.ResetLabelUnix(sess.R5ResetUnix, now)
 			u.U7, u.R7 = sess.R7Pct, usage.ResetLabelUnix(sess.R7ResetUnix, now)
 			for _, sc := range sess.ScopedMeters {
