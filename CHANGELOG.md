@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Go toolchain 1.27.2 → 1.27.3, remediating GO-2026-6809 (`crypto/x509`:
+  distrust compromised intermediate certificates), reported by
+  `govulncheck` as reachable through the TLS path of the usage fetch.
 - Go toolchain 1.27.1 → 1.27.2 and `golang.org/x/net` v0.59.0 → v0.60.0,
   remediating GO-2026-6603, GO-2026-6605, GO-2026-6607, GO-2026-6608,
   GO-2026-6610, GO-2026-6611, GO-2026-6613 and GO-2026-6617 (`net/http`
