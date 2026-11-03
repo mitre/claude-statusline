@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,7 +19,7 @@ func TestLoadMissingFileGivesDefaults(t *testing.T) {
 	if !o.Model.ShowSession || !o.Project.ShowDirty || !o.Project.TildeHome {
 		t.Errorf("default segments not all enabled: %+v", o)
 	}
-	if !cfg.Usage.Enabled || cfg.Usage.TTLSeconds != 180 {
+	if !cfg.Usage.Enabled || cfg.Usage.TTLSeconds != 200 {
 		t.Errorf("usage defaults wrong: %+v", cfg.Usage)
 	}
 	// Full-Go contract: platform-correct per-user cache location, not the
@@ -383,17 +384,27 @@ func TestLoadUsageTTLSeconds(t *testing.T) {
 		return p
 	}
 
-	cfg, err := Load(write("a.toml", "[usage]\nttl_seconds = 60\n"))
-	if err != nil || cfg.Usage.TTLSeconds != 60 {
-		t.Errorf("ttl_seconds=60: err=%v got=%d", err, cfg.Usage.TTLSeconds)
+	cfg, err := Load(write("a.toml", "[usage]\nttl_seconds = 600\n"))
+	if err != nil || cfg.Usage.TTLSeconds != 600 {
+		t.Errorf("ttl_seconds=600: err=%v got=%d", err, cfg.Usage.TTLSeconds)
 	}
 
-	cfg, err = Load(write("b.toml", "[usage]\nttl_seconds = 0\n"))
-	if err != nil || cfg.Usage.TTLSeconds != 0 {
-		t.Errorf("ttl_seconds=0: err=%v got=%d", err, cfg.Usage.TTLSeconds)
+	cfg, err = Load(write("b.toml", "[usage]\nttl_seconds = 200\n"))
+	if err != nil || cfg.Usage.TTLSeconds != 200 {
+		t.Errorf("ttl_seconds=200 (the floor): err=%v got=%d", err, cfg.Usage.TTLSeconds)
 	}
 
-	if _, err = Load(write("c.toml", "[usage]\nttl_seconds = -5\n")); err == nil {
-		t.Error("negative ttl_seconds must surface an error")
+	// The usage endpoint rate-limits polling faster than ~200 s; a TTL below
+	// the floor would configure the storm back in. 0 (always refetch) and
+	// negatives fail for the same reason.
+	for _, bad := range []string{"199", "60", "0", "-5"} {
+		_, err := Load(write("bad-"+bad+".toml", "[usage]\nttl_seconds = "+bad+"\n"))
+		if err == nil {
+			t.Errorf("ttl_seconds=%s must surface an error (floor is 200)", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), "usage.ttl_seconds") || !strings.Contains(err.Error(), "200") {
+			t.Errorf("ttl_seconds=%s: error %q must name the field and the floor", bad, err)
+		}
 	}
 }

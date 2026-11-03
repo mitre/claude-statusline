@@ -14,7 +14,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"time"
+
+	"github.com/mitre/claude-statusline/internal/usage"
 )
 
 func main() {
@@ -111,9 +115,24 @@ func fetchUsage(creds credentialSource) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		_ = resp.Body.Close()
+		return nil, &usage.RetryAfterError{After: retryAfter(resp.Header.Get("Retry-After"))}
+	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if cerr := resp.Body.Close(); err == nil {
 		err = cerr
 	}
 	return body, err
+}
+
+// retryAfter parses the delay-seconds form of a Retry-After header. The
+// HTTP-date form and anything unparseable yield zero, which the resolver
+// treats as "apply the floor".
+func retryAfter(header string) time.Duration {
+	secs, err := strconv.Atoi(strings.TrimSpace(header))
+	if err != nil || secs <= 0 {
+		return 0
+	}
+	return time.Duration(secs) * time.Second
 }

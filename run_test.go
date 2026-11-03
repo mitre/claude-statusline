@@ -538,3 +538,49 @@ func TestRunAntigravityIgnoresAnthropicAPIKeyBadge(t *testing.T) {
 		t.Errorf("account meters must render despite ANTHROPIC_API_KEY in env: %q", out)
 	}
 }
+
+// e2eNullFiveHourPayload is the endpoint's shape when no five-hour window is
+// in progress: five_hour null, the weekly window and plan limits present.
+const e2eNullFiveHourPayload = `{
+  "five_hour": null,
+  "seven_day": {"utilization": 43, "resets_at": "2026-11-06T22:00:00Z"},
+  "extra_usage": {"is_enabled": false},
+  "spend": {"used": {"amount_minor": 0, "exponent": 2}},
+  "limits": [{"kind": "weekly_all", "percent": 43, "is_active": false, "scope": null}]
+}`
+
+func TestRunNullFiveHourPayloadOmitsTheMeter(t *testing.T) {
+	// A fresh payload with no five-hour window renders the week meter alone:
+	// no fabricated "5h 0%", no stale marker, and the stdin meters do not
+	// replace fresh endpoint data.
+	d := e2eDeps(t, "full.json")
+	d.fetchUsage = func() ([]byte, error) { return []byte(e2eNullFiveHourPayload), nil }
+
+	out, _ := run(d)
+	if !strings.Contains(out, "week 43%") || !strings.Contains(out, "dev@example.com") {
+		t.Errorf("account row must render the weekly window from a null-five_hour payload: %q", out)
+	}
+	if strings.Contains(out, "5h") || strings.Contains(out, "old)") {
+		t.Errorf("no 5h meter or age marker may render for a fresh null five_hour: %q", out)
+	}
+}
+
+func TestRunStdinFiveHourSupersedesAbsentWindow(t *testing.T) {
+	// Stale null-five_hour cache + failing fetch + stdin rate_limits: the
+	// host's live reading brings the 5h meter back (42%) beside week 77%.
+	d := e2eDeps(t, "full.json")
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+	p := filepath.Join(e2eCacheDir(t, d), "usage")
+	if err := os.WriteFile(p, []byte(e2eNullFiveHourPayload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-6 * time.Minute)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _ := run(d)
+	if !strings.Contains(out, "5h 42%") || !strings.Contains(out, "week 77%") {
+		t.Errorf("stdin five-hour reading must supersede the absent endpoint window: %q", out)
+	}
+}

@@ -8,9 +8,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/mitre/claude-statusline/internal/render"
+	"github.com/mitre/claude-statusline/internal/usage"
 )
 
 // Config is the full runtime configuration.
@@ -81,11 +83,15 @@ type fileSchema struct {
 	} `toml:"cache"`
 }
 
+// minUsageTTLSeconds is the usage fetch floor (usage.MinFetchInterval) as a
+// config value: the default TTL and the lowest one accepted.
+var minUsageTTLSeconds = int(usage.MinFetchInterval / time.Second)
+
 // Default returns the zero-config behavior.
 func Default() Config {
 	cfg := Config{Options: render.DefaultOptions()}
 	cfg.Usage.Enabled = true
-	cfg.Usage.TTLSeconds = 180
+	cfg.Usage.TTLSeconds = minUsageTTLSeconds
 	cfg.GitTimeoutMS = 150
 	cfg.GitEngine = "auto"
 	cfg.LockBadge = true
@@ -203,8 +209,8 @@ func Load(path string) (Config, error) {
 	}
 	setB(&cfg.Usage.Enabled, f.Usage.Enabled)
 	if f.Usage.TTLSeconds != nil {
-		if *f.Usage.TTLSeconds < 0 {
-			return cfg, fmt.Errorf("usage.ttl_seconds: %d is not valid (must be >= 0)", *f.Usage.TTLSeconds)
+		if *f.Usage.TTLSeconds < minUsageTTLSeconds {
+			return cfg, fmt.Errorf("usage.ttl_seconds: %d is not valid (must be >= %d; the usage endpoint rate-limits faster polling)", *f.Usage.TTLSeconds, minUsageTTLSeconds)
 		}
 		cfg.Usage.TTLSeconds = *f.Usage.TTLSeconds
 	}

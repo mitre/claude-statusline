@@ -76,7 +76,7 @@ show_stale_age = true
 # Usage-endpoint fetching for the account row.
 [usage]
 enabled = true     # set false to skip the usage endpoint entirely
-ttl_seconds = 180  # how long a fetched payload is served before re-fetching
+ttl_seconds = 200  # how long a fetched payload is served before re-fetching (floor 200: faster polling is rate-limited)
 
 # Cache location. Defaults to the platform user-cache dir (on macOS:
 # /Users/you/Library/Caches/claude-statusline); set an ABSOLUTE path to

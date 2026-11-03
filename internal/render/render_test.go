@@ -647,3 +647,17 @@ func TestAccountRowMixedSourceStaleMarker(t *testing.T) {
 		t.Errorf("stale endpoint meters must keep the marker: %q", got)
 	}
 }
+
+func TestAccountRowOmitsFiveHourMeterWhenAbsent(t *testing.T) {
+	// No five-hour window in progress: the week meter renders alone; the 5h
+	// meter must not appear as a fabricated 0%.
+	in := Usage{FiveHourAbsent: true, U7: 43, R7: "Fri 4:00p"}
+	got := AccountRow(in, DefaultOptions())
+	want := "\x1b[2maccount  \x1b[m\x1b[32mweek 43%\x1b[m \x1b[2m(resets Fri 4:00p)\x1b[m"
+	if got != want {
+		t.Errorf("AccountRow with five_hour absent:\n got %q\nwant %q", got, want)
+	}
+	if strings.Contains(got, "5h") {
+		t.Errorf("five-hour meter rendered despite being absent: %q", got)
+	}
+}

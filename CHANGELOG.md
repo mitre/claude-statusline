@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `[usage] ttl_seconds` defaults to 200 (was 180) and values below 200 are
+  rejected at config load, with the usual config-error diagnostic, so the
+  poll rate can never be configured below the endpoint's limit.
+
+### Fixed
+
+- The account row no longer freezes on a stale payload when the usage
+  endpoint reports no five-hour window in progress (`five_hour: null`).
+  That payload was rejected as "not usage data", so every refresh was
+  discarded and the last good cache was served forever behind a growing
+  `(data … old)` marker. The shape gate now requires at least one window or
+  plan limit; a null `five_hour` omits the `5h` meter instead of showing a
+  fabricated 0%, and a live stdin five-hour reading still supersedes it.
+- Fetch attempts are throttled independently of the TTL: after any attempt
+  (success, network error, rate limit or rejected body) no further fetch runs
+  for 200 s, or for the server's `Retry-After` when longer. Before this a
+  stale cache meant a fetch on every render, and the usage endpoint answered
+  the storm with HTTP 429 (`Retry-After: 199`), which was itself discarded
+  and retried on the next render. A 429 is now classified as a rate limit
+  rather than read as a payload.
+
 ### Security
 
 - Go toolchain 1.27.2 → 1.27.3, remediating GO-2026-6809 (`crypto/x509`:

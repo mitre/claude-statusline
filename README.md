@@ -124,7 +124,7 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | `[account] show_resets` | `"always"` | `"quiet"` shows reset times only on hot (≥80%) meters |
 | `[account] show_stale_age` | `true` | Dim age marker when stale known-good data is served |
 | `[usage] enabled` | `true` | `false` skips the usage endpoint entirely |
-| `[usage] ttl_seconds` | `180` | How long a fetched payload is served before re-fetching |
+| `[usage] ttl_seconds` | `200` | How long a fetched payload is served before re-fetching. Floor 200: the usage endpoint rate-limits faster polling, and a failed fetch is not retried before 200 s (or the server's `Retry-After`) have passed |
 | `[cache] dir` | platform user-cache dir | Cache location override |
 
 ## What each row means
