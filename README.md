@@ -149,8 +149,14 @@ subprocess, no lock taken. `lock_badge = false` hides it.
 
 The `account` row opens with the logged-in **account email** — it names
 whose pools the meters describe, which matters when you run multiple
-accounts. It is read from Claude Code's local state (`~/.claude.json`) or directly from the Antigravity session payload on
-every render — identity is deliberately never cached, so a login change
+accounts. It is read from Claude Code's account record, found the way Claude Code finds it:
+`.claude.json` in `$CLAUDE_CONFIG_DIR`, else in your home directory
+(`.claude-custom-oauth.json` when `CLAUDE_CODE_CUSTOM_OAUTH_URL` is set), unless a
+legacy `.config.json` in Claude Code's config directory takes precedence, as it does
+for Claude Code itself. A session started with its own `CLAUDE_CONFIG_DIR` therefore
+names that account. With neither `CLAUDE_CONFIG_DIR` nor `HOME` set to an absolute path,
+no identity is shown. Antigravity sessions read it directly from the session payload.
+It is read on every render — identity is deliberately never cached, so a login change
 shows immediately — and omitted when unavailable;
 `[account] show_email = false` hides it and `email_style = "dim"` quiets it to the furniture tier. For subscription plans carrying a recognized plan tier name (such as Antigravity's `Google AI Ultra`), the tier is rendered alongside the email. The meters are all **account-wide percent-of-plan-allotment**
 as reported by the usage API or session telemetry (shared by every session under your

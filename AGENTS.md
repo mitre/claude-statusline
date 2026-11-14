@@ -103,11 +103,11 @@ Every behavior change ends with the **live gate**: `make check` → `make dev-in
 
 ### Dependency injection at the edges — the load-bearing pattern
 
-`run.go` defines a `deps` struct holding every OS/network/env touchpoint: `stdin`, `getenv`, `runGit`, `keychainOK`, `fetchUsage`, `readFile`, `stat`, `now`. `main.go` wires the real implementations (keychain lookup, HTTP fetch to the OAuth usage endpoint, `exec.CommandContext` git, `os.Stat`, `time.Now`); tests wire fakes (a nil `stat` or `now` falls back to the real one). **Any new OS, network, or subprocess access must be added to `deps` and injected** — this is why `make test` needs no network and why `run_test.go` can golden-test full end-to-end renders.
+`run.go` defines a `deps` struct holding every OS/network/env touchpoint: `stdin`, `getenv`, `runGit`, `keychainOK`, `fetchUsage`, `readFile`, `stat`, `readDir`, `now`. `main.go` wires the real implementations (keychain lookup, HTTP fetch to the OAuth usage endpoint, `exec.CommandContext` git, `os.Stat`, `os.ReadDir`, `time.Now`); tests wire fakes (a nil `stat`, `readDir` or `now` falls back to the real one). **Any new OS, network, or subprocess access must be added to `deps` and injected** — this is why `make test` needs no network and why `run_test.go` can golden-test full end-to-end renders.
 
 ### Render pipeline (one frame per invocation)
 
-`run()` in `run.go`: `input.Parse` (stdin JSON) → `config.Load` (optional `~/.claude/statusline.toml`, `$CLAUDE_STATUSLINE_CONFIG` overrides path) → `auth.Detect` (Sub/API badge) → `gitinfo.Get` (branch/dirty/lock-age) → `usage.Resolve`/`Parse` + `account.Email` (Sub auth only) → `render.Build`.
+`run()` in `run.go`: `input.Parse` (stdin JSON) → `config.Load` (optional `~/.claude/statusline.toml`, `$CLAUDE_STATUSLINE_CONFIG` overrides path) → `auth.Detect` (Sub/API badge) → `gitinfo.Get` (branch/dirty/lock-age) → `usage.Resolve`/`Parse` + `account.Resolve` (Sub auth only) → `render.Build`.
 
 ### Packages
 
@@ -115,7 +115,7 @@ Every behavior change ends with the **live gate**: `make check` → `make dev-in
 - `internal/gitinfo` — two engines: in-process go-git by default (zero subprocesses, no git install required); a repo whose status walk blows the render budget (`[project] git_timeout_ms`, default 150 ms) is escalated per-repo to the git CLI via a cache marker, re-probed daily. The CLI child is killed on deadline expiry (`WaitDelay` closes pipes held by hook/fsmonitor descendants).
 - `internal/usage` — fetches/parses the subscription-limits payload. Rate-limit error bodies are valid JSON: they are **rejected by shape, never cached** — a failed fetch serves the last good payload with a dim age marker rather than fabricating `0%`.
 - `internal/auth` — Sub/API badge (cached 300 s); the `ANTHROPIC_API_KEY` metered-billing alarm is checked live, never cached.
-- `internal/account` — account email from `~/.claude.json`. Identity is deliberately **never cached** (a stale label once mislabeled a live session); read every render.
+- `internal/account` — account UUID and email (`oauthAccount` only) from one read of the account record Claude Code uses: `.claude[-custom-oauth].json` in `$CLAUDE_CONFIG_DIR` or the home directory, or a legacy `.config.json` in Claude Code's config home when its selector prefers it (ported from Claude Code's own path functions). Identity is deliberately **never cached** (a stale label once mislabeled a live session); read every render.
 - `internal/cache` — TTL file cache under the platform user-cache dir, keyed per-cwd by FNV-1a. Writes are atomic (temp file + rename); a bare `>` truncate caused torn reads in the bash version.
 - `internal/config` — TOML overlaid onto zero-config defaults; `internal/input` — stdin JSON subset.
 

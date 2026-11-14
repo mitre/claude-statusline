@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The account row names the account a session actually uses. The email
+  was always read from `~/.claude.json`, so a session started with its own
+  `CLAUDE_CONFIG_DIR` showed the default account. The record is now found
+  the way Claude Code finds it: `$CLAUDE_CONFIG_DIR/.claude.json`, else
+  `~/.claude.json` (`.claude-custom-oauth.json` under
+  `CLAUDE_CODE_CUSTOM_OAUTH_URL`), with Claude Code's own precedence for a
+  legacy `.config.json`. Without an absolute `CLAUDE_CONFIG_DIR` or `HOME`
+  no identity is read, rather than a path relative to the workspace.
 - The account row no longer freezes on a stale payload when the usage
   endpoint reports no five-hour window in progress (`five_hour: null`).
   That payload was rejected as "not usage data", so every refresh was
