@@ -549,6 +549,30 @@ func TestParseKeepsFiveHourPresentFlagOnFullPayload(t *testing.T) {
 	if u.FiveHourAbsent {
 		t.Error("FiveHourAbsent = true on a payload that carries five_hour")
 	}
+	if u.SevenDayAbsent {
+		t.Error("SevenDayAbsent = true on a payload that carries seven_day")
+	}
+}
+
+func TestParseMarksAbsentWeeklyWindow(t *testing.T) {
+	// A payload with neither window passes the shape gate on its plan
+	// limits; the weekly window is marked absent so no "week 0%" renders.
+	raw := `{"five_hour": null, "seven_day": null,
+	  "limits": [{"kind": "weekly_scoped", "percent": 40, "is_active": true,
+	    "resets_at": "2026-11-06T22:00:00Z", "scope": {"model": {"display_name": "Fable"}}}]}`
+	u, err := Parse([]byte(raw), now, "")
+	if err != nil {
+		t.Fatalf("Parse rejected a limits-only payload: %v", err)
+	}
+	if !u.SevenDayAbsent || !u.FiveHourAbsent {
+		t.Errorf("SevenDayAbsent/FiveHourAbsent = %v/%v, want true/true", u.SevenDayAbsent, u.FiveHourAbsent)
+	}
+	if u.U7 != 0 || u.R7 != "" {
+		t.Errorf("U7/R7 = %d/%q, want zero values when the window is absent", u.U7, u.R7)
+	}
+	if len(u.Scoped) != 1 || u.Scoped[0].Name != "Fable" || u.Scoped[0].Pct != 40 {
+		t.Errorf("Scoped = %+v, want one Fable limit at 40%%", u.Scoped)
+	}
 }
 
 func TestParseRejectsPayloadWithoutAnyWindow(t *testing.T) {

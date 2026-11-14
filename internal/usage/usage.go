@@ -162,10 +162,12 @@ func Parse(raw []byte, now time.Time, modelName string) (render.Usage, error) {
 		return render.Usage{}, errors.New("payload carries no usage window or limit — not usage data")
 	}
 
-	// A null five_hour is the endpoint's "no five-hour window in progress":
-	// the weekly readings are real, the 5h meter is absent — never 0%.
+	// A null five_hour or seven_day is the endpoint's "no window in
+	// progress": the other readings are real, that meter is absent — never
+	// 0%.
 	u := render.Usage{
 		FiveHourAbsent: !fiveHour,
+		SevenDayAbsent: !sevenDay,
 		ExtraEnabled:   p.ExtraUsage.IsEnabled,
 		CreditsMinor:   p.Spend.Used.AmountMinor,
 		CreditsExp:     2,

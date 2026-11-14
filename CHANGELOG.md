@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `(data … old)` marker. The shape gate now requires at least one window or
   plan limit; a null `five_hour` omits the `5h` meter instead of showing a
   fabricated 0%, and a live stdin five-hour reading still supersedes it.
+- A payload with no weekly window in progress (`seven_day: null`), which
+  passes the shape gate on its plan limits, omits the `week` meter instead
+  of showing a fabricated `week 0%`. A live stdin weekly reading supersedes
+  it; stdin without one leaves the meter omitted.
 - Fetch attempts are throttled independently of the TTL: after any attempt
   (success, network error, rate limit or rejected body) no further fetch runs
   for 200 s, or for the server's `Retry-After` when longer. Before this a

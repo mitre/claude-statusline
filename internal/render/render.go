@@ -61,9 +61,13 @@ type Usage struct {
 	// visible stale data: it renders solely when the model window shows.
 	MetersLive bool
 	// FiveHourAbsent: the endpoint reports no five-hour window in progress
-	// (five_hour is null) while the weekly window is present. The 5h meter
-	// is omitted; the week and scoped meters render as usual.
+	// (five_hour is null). The 5h meter is omitted; the other meters render
+	// as usual.
 	FiveHourAbsent bool
+	// SevenDayAbsent: the endpoint reports no weekly window in progress
+	// (seven_day is null). The week meter is omitted — never a fabricated
+	// 0%; the other meters render as usual.
+	SevenDayAbsent bool
 }
 
 // ScopedLimit is one plan limit narrowed to a scope the payload names — a
@@ -324,7 +328,9 @@ func AccountRow(u Usage, o Options) string {
 	if !u.FiveHourAbsent {
 		parts = append(parts, meter(fmt.Sprintf("5h %d%%", u.U5), u.U5, u.R5, always))
 	}
-	parts = append(parts, meter(fmt.Sprintf("week %d%%", u.U7), u.U7, u.R7, always))
+	if !u.SevenDayAbsent {
+		parts = append(parts, meter(fmt.Sprintf("week %d%%", u.U7), u.U7, u.R7, always))
+	}
 	for _, s := range u.Scoped {
 		parts = append(parts, meter(fmt.Sprintf("%s %d%%", s.Name, s.Pct), s.Pct, s.Reset, always))
 	}

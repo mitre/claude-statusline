@@ -584,3 +584,77 @@ func TestRunStdinFiveHourSupersedesAbsentWindow(t *testing.T) {
 		t.Errorf("stdin five-hour reading must supersede the absent endpoint window: %q", out)
 	}
 }
+
+// e2eLimitsOnlyPayload passes the shape gate on its plan limits alone: no
+// five-hour and no weekly window is in progress.
+const e2eLimitsOnlyPayload = `{
+  "five_hour": null,
+  "seven_day": null,
+  "extra_usage": {"is_enabled": false},
+  "spend": {"used": {"amount_minor": 0, "exponent": 2}},
+  "limits": [{"kind": "weekly_scoped", "percent": 40, "is_active": true,
+    "resets_at": "2026-11-06T22:00:00Z", "scope": {"model": {"display_name": "Fable"}}}]
+}`
+
+func TestRunLimitsOnlyPayloadOmitsTheWeekMeter(t *testing.T) {
+	// A fresh payload with neither window renders the scoped limit alone:
+	// no fabricated "week 0%" and no "5h 0%".
+	d := e2eDeps(t, "full.json")
+	d.fetchUsage = func() ([]byte, error) { return []byte(e2eLimitsOnlyPayload), nil }
+
+	out, _ := run(d)
+	if !strings.Contains(out, "Fable 40%") {
+		t.Errorf("account row must render the scoped limit from a limits-only payload: %q", out)
+	}
+	if strings.Contains(out, "week") || strings.Contains(out, "5h") {
+		t.Errorf("no week or 5h meter may render when the payload carries neither window: %q", out)
+	}
+}
+
+func TestRunStdinWeeklySupersedesAbsentWindow(t *testing.T) {
+	// Stale limits-only cache + failing fetch + stdin rate_limits carrying
+	// both windows: the host's live readings bring back 5h 42% and week 77%.
+	d := e2eDeps(t, "full.json")
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+	p := filepath.Join(e2eCacheDir(t, d), "usage")
+	if err := os.WriteFile(p, []byte(e2eLimitsOnlyPayload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-6 * time.Minute)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _ := run(d)
+	if !strings.Contains(out, "5h 42%") || !strings.Contains(out, "week 77%") {
+		t.Errorf("stdin readings must supersede the absent endpoint windows: %q", out)
+	}
+}
+
+func TestRunStdinWithoutWeeklyKeepsTheWeekMeterAbsent(t *testing.T) {
+	// Stale limits-only cache + failing fetch + stdin carrying only the
+	// five-hour window: the live 5h reading renders; the weekly window is
+	// absent on both sides, so no "week 0%".
+	d := e2eDeps(t, "full.json")
+	d.stdin = strings.NewReader(`{"session_id":"0a1b2c3d-0000-4000-8000-000000000000",` +
+		`"model":{"display_name":"Fable 5"},` +
+		`"workspace":{"current_dir":"/Users/dev/projects/demo-app"},` +
+		`"rate_limits":{"five_hour":{"used_percentage":42,"resets_at":0}}}`)
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+	p := filepath.Join(e2eCacheDir(t, d), "usage")
+	if err := os.WriteFile(p, []byte(e2eLimitsOnlyPayload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-6 * time.Minute)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _ := run(d)
+	if !strings.Contains(out, "5h 42%") {
+		t.Errorf("stdin five-hour reading must render: %q", out)
+	}
+	if strings.Contains(out, "week") {
+		t.Errorf("no week meter may render when neither side reports a weekly window: %q", out)
+	}
+}

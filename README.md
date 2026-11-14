@@ -158,8 +158,8 @@ subscription — two concurrent sessions correctly show the same pools):
 
 | Meter | Window |
 |---|---|
-| `5h N%` | rolling 5-hour, all models |
-| `week N%` | rolling 7-day, all models |
+| `5h N%` | rolling 5-hour, all models; omitted while no five-hour window is in progress (never shown as 0%) |
+| `week N%` | rolling 7-day, all models; omitted while no weekly window is in progress (never shown as 0%) |
 | `<model>/wk N%` | rolling 7-day pool for **this session's** model — a parallel weekly cap, not a slice of `week`; omitted when the payload has no window for it. The window is matched against the payload's own `seven_day_*` keys, so a model the vendor ships tomorrow is picked up with no code change. The usage endpoint values a per-model window only when that limit policy is active on your account (plans without model-specific caps report them as `null`, so the meter self-omits) |
 | `<scope> N%` | a plan limit the payload narrows to a **scope** — today a model, named by the payload (e.g. `Fable 100%`). A parallel cap like the one above, shown whenever the payload carries it, with its own reset time. This is how a model-specific weekly limit surfaces even when no `seven_day_*` window exists for it |
 

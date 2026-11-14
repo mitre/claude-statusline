@@ -36,6 +36,10 @@ type Session struct {
 	// valid quota windows (the same strict shape gate usage.Parse applies to
 	// endpoint payloads; never fabricated).
 	RateLimitsOK bool
+	// R7OK: the weekly window is present in this stdin payload. Within
+	// RateLimitsOK the five-hour window is always present; the weekly one
+	// may not be, and its absence must never read as 0%.
+	R7OK         bool
 	R5Pct, R7Pct int
 	// Reset moments as epoch seconds (the stdin encoding; the endpoint
 	// serves RFC3339). 0 = absent, no label.
@@ -142,6 +146,7 @@ func Parse(r io.Reader) (Session, error) {
 		s.R5Pct = int(math.Floor(max(0.0, min(100.0, *fh.UsedPercentage))))
 		s.R5ResetUnix = fh.ResetsAt
 		if sd := p.RateLimits.SevenDay; sd != nil && sd.UsedPercentage != nil {
+			s.R7OK = true
 			s.R7Pct = int(math.Floor(max(0.0, min(100.0, *sd.UsedPercentage))))
 			s.R7ResetUnix = sd.ResetsAt
 		}
@@ -191,6 +196,7 @@ func parseAgyQuota(s *Session, quota map[string]agyQuotaWindow) {
 			s.R5ResetUnix = rUnix
 			if sd, ok := quota[wKey]; ok {
 				if wpct, wrUnix, wvalid := parseAgyWindow(sd); wvalid {
+					s.R7OK = true
 					s.R7Pct = wpct
 					s.R7ResetUnix = wrUnix
 				}

@@ -661,3 +661,17 @@ func TestAccountRowOmitsFiveHourMeterWhenAbsent(t *testing.T) {
 		t.Errorf("five-hour meter rendered despite being absent: %q", got)
 	}
 }
+
+func TestAccountRowOmitsWeekMeterWhenAbsent(t *testing.T) {
+	// No weekly window in progress: the 5h and scoped meters render; the
+	// week meter must not appear as a fabricated 0%.
+	in := Usage{
+		SevenDayAbsent: true, U5: 12, R5: "6:00p",
+		Scoped: []ScopedLimit{{Name: "Fable", Pct: 40, Reset: "Fri 4:00p"}},
+	}
+	got := AccountRow(in, DefaultOptions())
+	want := "\x1b[2maccount  \x1b[m\x1b[32m5h 12%\x1b[m \x1b[2m(resets 6:00p)\x1b[m \x1b[2m·\x1b[m \x1b[32mFable 40%\x1b[m \x1b[2m(resets Fri 4:00p)\x1b[m"
+	if got != want {
+		t.Errorf("AccountRow with seven_day absent:\n got %q\nwant %q", got, want)
+	}
+}
