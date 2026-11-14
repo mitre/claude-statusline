@@ -55,7 +55,7 @@ type Usage struct {
 	// Non-zero renders the trailing dim age marker — the meters keep their
 	// true (old) values, the marker qualifies them.
 	DataAge time.Duration
-	// MetersLive marks the 5h/week meters as stdin-sourced (live this
+	// MetersLive marks both 5h/week meters as stdin-sourced (live this
 	// render) while DataAge still describes the stale endpoint payload
 	// behind the remaining segments. The age marker then qualifies only
 	// visible stale data: it renders solely when the model window shows.

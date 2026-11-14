@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passes the shape gate on its plan limits, omits the `week` meter instead
   of showing a fabricated `week 0%`. A live stdin weekly reading supersedes
   it; stdin without one leaves the meter omitted.
+- Stdin that carries a five-hour window but no weekly one no longer
+  overwrites a stale endpoint weekly reading with `week 0%`. The stale
+  reading stays, and the row keeps its `(data … old)` age marker whenever
+  stdin did not supply both windows.
 - Fetch attempts are throttled independently of the TTL: after any attempt
   (success, network error, rate limit or rejected body) no further fetch runs
   for 200 s, or for the server's `Retry-After` when longer. Before this a

@@ -139,15 +139,16 @@ func run(d deps) (string, string) {
 		// usage) keep their stale-good semantics, and the render layer scopes
 		// the dim age marker to the stale data that remains visible.
 		if sess.RateLimitsOK && (!have || u.DataAge > 0) {
-			// The host's live readings supersede an endpoint payload that
-			// reported no window in progress. The five-hour reading is
-			// always present within RateLimitsOK; the weekly one may not be.
+			// The host's live readings supersede the endpoint's. The
+			// five-hour reading is always present within RateLimitsOK; the
+			// weekly one may not be, and without it the endpoint's weekly
+			// reading (or its absence) stands — never replaced by 0%.
 			u.FiveHourAbsent = false
+			u.U5, u.R5 = sess.R5Pct, usage.ResetLabelUnix(sess.R5ResetUnix, now)
 			if sess.R7OK {
 				u.SevenDayAbsent = false
+				u.U7, u.R7 = sess.R7Pct, usage.ResetLabelUnix(sess.R7ResetUnix, now)
 			}
-			u.U5, u.R5 = sess.R5Pct, usage.ResetLabelUnix(sess.R5ResetUnix, now)
-			u.U7, u.R7 = sess.R7Pct, usage.ResetLabelUnix(sess.R7ResetUnix, now)
 			for _, sc := range sess.ScopedMeters {
 				u.Scoped = append(u.Scoped, render.ScopedLimit{
 					Name:  sc.Name,
@@ -155,7 +156,9 @@ func run(d deps) (string, string) {
 					Reset: usage.ResetLabelUnix(sc.ResetUnix, now),
 				})
 			}
-			u.MetersLive = true
+			// Live only when stdin carried both windows; otherwise stale
+			// endpoint data stays visible and keeps the age marker.
+			u.MetersLive = sess.R7OK
 			have = true
 		}
 		if have {

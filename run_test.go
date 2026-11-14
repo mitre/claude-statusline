@@ -657,4 +657,38 @@ func TestRunStdinWithoutWeeklyKeepsTheWeekMeterAbsent(t *testing.T) {
 	if strings.Contains(out, "week") {
 		t.Errorf("no week meter may render when neither side reports a weekly window: %q", out)
 	}
+	if !strings.Contains(out, "(data 6m old)") {
+		t.Errorf("the stale scoped limit must carry the age marker: %q", out)
+	}
+}
+
+func TestRunStdinWithoutWeeklyKeepsTheStaleWeeklyReading(t *testing.T) {
+	// Stale cache with a real weekly reading (13%) + failing fetch + stdin
+	// carrying only the five-hour window: the live 5h reading replaces the
+	// stale one, and the stale weekly reading stays — never "week 0%".
+	d := e2eDeps(t, "full.json")
+	d.stdin = strings.NewReader(`{"session_id":"0a1b2c3d-0000-4000-8000-000000000000",` +
+		`"model":{"display_name":"Fable 5"},` +
+		`"workspace":{"current_dir":"/Users/dev/projects/demo-app"},` +
+		`"rate_limits":{"five_hour":{"used_percentage":42,"resets_at":0}}}`)
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+	p := filepath.Join(e2eCacheDir(t, d), "usage")
+	if err := os.WriteFile(p, []byte(e2eUsagePayload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-6 * time.Minute)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _ := run(d)
+	if !strings.Contains(out, "5h 42%") || !strings.Contains(out, "week 13%") {
+		t.Errorf("live 5h and the stale weekly reading must both render: %q", out)
+	}
+	if strings.Contains(out, "week 0%") {
+		t.Errorf("stdin without a weekly window must not overwrite the stale reading with 0%%: %q", out)
+	}
+	if !strings.Contains(out, "(data 6m old)") {
+		t.Errorf("the stale weekly reading must carry the age marker: %q", out)
+	}
 }
