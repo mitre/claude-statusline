@@ -28,6 +28,11 @@ type deps struct {
 	fetchUsage func() ([]byte, error)
 	readFile   func(string) ([]byte, error)
 	stat       func(string) (os.FileInfo, error)
+	// now is the render's clock, handed to the usage resolver and parser
+	// (fetch gate, reset-boundary expiry, stale age, reset labels); nil
+	// means time.Now. The TTL check inside cache.ReadFresh reads the wall
+	// clock itself.
+	now func() time.Time
 }
 
 // runGitCtx executes git under a context so a deadline can actually kill the
@@ -64,6 +69,10 @@ func run(d deps) (string, string) {
 	stat := d.stat
 	if stat == nil {
 		stat = os.Stat
+	}
+	clock := d.now
+	if clock == nil {
+		clock = time.Now
 	}
 	cfg, err := config.Load(configPath(sess.Product, d.getenv, stat))
 	if err != nil {
@@ -124,7 +133,7 @@ func run(d deps) (string, string) {
 
 	if cfg.Usage.Enabled && badge != "API" && badge != "?" {
 		ttl := time.Duration(cfg.Usage.TTLSeconds) * time.Second
-		now := time.Now()
+		now := clock()
 		var u render.Usage
 		have := false
 		if sess.Product != "antigravity" {
