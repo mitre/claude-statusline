@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Go toolchain 1.27.3 → 1.27.4, remediating GO-2026-6859 (`net/http`:
+  HTTP/1 server crash due to a `MaxBytesReader` header race), reported by
+  `govulncheck` as reachable through the usage fetch's HTTP client.
 - Go toolchain 1.27.2 → 1.27.3, remediating GO-2026-6809 (`crypto/x509`:
   distrust compromised intermediate certificates), reported by
   `govulncheck` as reachable through the TLS path of the usage fetch.
