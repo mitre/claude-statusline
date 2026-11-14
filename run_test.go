@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -279,7 +280,7 @@ func TestRunStaleUsageDataShowsDimAgeMarker(t *testing.T) {
 	if err := os.WriteFile(p, []byte(e2eUsagePayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	old := time.Now().Add(-6 * time.Minute) // past the default 180s TTL
+	old := time.Now().Add(-6 * time.Minute) // past the default 200 s TTL
 	if err := os.Chtimes(p, old, old); err != nil {
 		t.Fatal(err)
 	}
@@ -348,14 +349,7 @@ func TestRunStaleAgeMarkerToggleOff(t *testing.T) {
 	d.stdin = strings.NewReader(e2eStdinNoRateLimits) // endpoint-stale semantics, no fallback
 	appendConfig(t, d, "[account]\nshow_stale_age = false\n")
 
-	p := filepath.Join(e2eCacheDir(t, d), "usage")
-	if err := os.WriteFile(p, []byte(e2eUsagePayload), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	old := time.Now().Add(-6 * time.Minute)
-	if err := os.Chtimes(p, old, old); err != nil {
-		t.Fatal(err)
-	}
+	seedStaleUsage(t, d, e2eUsagePayload)
 
 	out, _ := run(d)
 	want := "\x1b[2maccount  \x1b[mdev@example.com \x1b[2m·\x1b[m \x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m"
@@ -378,14 +372,7 @@ func TestRunStaleFallbackUsesStdinMeters(t *testing.T) {
 	// marker disappears — nothing stale remains visible (no model window).
 	d := e2eDeps(t, "full.json")
 	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
-	p := filepath.Join(e2eCacheDir(t, d), "usage")
-	if err := os.WriteFile(p, []byte(e2eUsagePayload), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	old := time.Now().Add(-6 * time.Minute)
-	if err := os.Chtimes(p, old, old); err != nil {
-		t.Fatal(err)
-	}
+	seedStaleUsage(t, d, e2eUsagePayload)
 
 	out, _ := run(d)
 	if !strings.Contains(out, "5h 42%") || !strings.Contains(out, "week 77%") {
@@ -536,5 +523,351 @@ func TestRunAntigravityIgnoresAnthropicAPIKeyBadge(t *testing.T) {
 	// Account meters must render!
 	if !strings.Contains(out, "account") || !strings.Contains(out, "5h 5%") {
 		t.Errorf("account meters must render despite ANTHROPIC_API_KEY in env: %q", out)
+	}
+}
+
+// e2eNullFiveHourPayload is the endpoint's shape when no five-hour window is
+// in progress: five_hour null, the weekly window and plan limits present.
+const e2eNullFiveHourPayload = `{
+  "five_hour": null,
+  "seven_day": {"utilization": 43, "resets_at": "2026-11-06T22:00:00Z"},
+  "extra_usage": {"is_enabled": false},
+  "spend": {"used": {"amount_minor": 0, "exponent": 2}},
+  "limits": [{"kind": "weekly_all", "percent": 43, "is_active": false, "scope": null}]
+}`
+
+func TestRunNullFiveHourPayloadOmitsTheMeter(t *testing.T) {
+	// A fresh payload with no five-hour window and no live stdin reading
+	// renders the week meter alone: no fabricated "5h 0%", no stale marker.
+	d := e2eDeps(t, "full.json")
+	d.stdin = strings.NewReader(e2eStdinNoRateLimits)
+	d.fetchUsage = func() ([]byte, error) { return []byte(e2eNullFiveHourPayload), nil }
+
+	out, _ := run(d)
+	if !strings.Contains(out, "week 43%") || !strings.Contains(out, "dev@example.com") {
+		t.Errorf("account row must render the weekly window from a null-five_hour payload: %q", out)
+	}
+	if strings.Contains(out, "5h") || strings.Contains(out, "old)") {
+		t.Errorf("no 5h meter or age marker may render for a fresh null five_hour: %q", out)
+	}
+}
+
+func TestRunStdinFiveHourSupersedesAbsentWindow(t *testing.T) {
+	// Stale null-five_hour cache + failing fetch + stdin rate_limits: the
+	// host's live reading brings the 5h meter back (42%) beside week 77%.
+	d := e2eDeps(t, "full.json")
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+	seedStaleUsage(t, d, e2eNullFiveHourPayload)
+
+	out, _ := run(d)
+	if !strings.Contains(out, "5h 42%") || !strings.Contains(out, "week 77%") {
+		t.Errorf("stdin five-hour reading must supersede the absent endpoint window: %q", out)
+	}
+}
+
+func TestRunTTLBelowFloorKeepsTheRestOfTheConfig(t *testing.T) {
+	// The v0.3.0 example config shipped ttl_seconds = 180. Upgrading must
+	// raise it to the floor and keep every other setting in the file, with
+	// one diagnostic — not fall back to the defaults wholesale.
+	d := e2eDeps(t, "full.json")
+	appendConfig(t, d, "[rows]\nproject = false\n[usage]\nttl_seconds = 180\n")
+
+	out, errOut := run(d)
+	if strings.Contains(out, "project") {
+		t.Errorf("rows.project = false from the same file must still apply: %q", out)
+	}
+	if !strings.Contains(out, "account") {
+		t.Errorf("the account row must still render: %q", out)
+	}
+	if strings.Contains(errOut, "config error") || !strings.Contains(errOut, "usage.ttl_seconds") ||
+		!strings.Contains(errOut, "180") || !strings.Contains(errOut, "200") {
+		t.Errorf("stderr must carry one adjustment note, not a config error: %q", errOut)
+	}
+}
+
+// e2eLimitsOnlyPayload passes the shape gate on its plan limits alone: no
+// five-hour and no weekly window is in progress.
+const e2eLimitsOnlyPayload = `{
+  "five_hour": null,
+  "seven_day": null,
+  "extra_usage": {"is_enabled": false},
+  "spend": {"used": {"amount_minor": 0, "exponent": 2}},
+  "limits": [{"kind": "weekly_scoped", "percent": 40, "is_active": true,
+    "resets_at": "2026-11-06T22:00:00Z", "scope": {"model": {"display_name": "Fable"}}}]
+}`
+
+// e2eStdinFiveHourOnly is a stdin payload whose rate_limits carry the
+// five-hour window (42%) and no weekly window.
+const e2eStdinFiveHourOnly = `{"session_id":"0a1b2c3d-0000-4000-8000-000000000000",` +
+	`"model":{"display_name":"Fable 5"},` +
+	`"workspace":{"current_dir":"/Users/dev/projects/demo-app"},` +
+	`"rate_limits":{"five_hour":{"used_percentage":42,"resets_at":0}}}`
+
+// seedStaleUsage writes payload as the usage cache, six minutes old, so the
+// render serves it through the stale fallback.
+func seedStaleUsage(t *testing.T, d deps, payload string) {
+	t.Helper()
+	p := filepath.Join(e2eCacheDir(t, d), "usage")
+	if err := os.WriteFile(p, []byte(payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-6 * time.Minute)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunLimitsOnlyPayloadOmitsTheWeekMeter(t *testing.T) {
+	// A fresh payload with neither window and no live stdin reading renders
+	// the scoped limit alone: no fabricated "week 0%" and no "5h 0%".
+	d := e2eDeps(t, "full.json")
+	d.stdin = strings.NewReader(e2eStdinNoRateLimits)
+	d.fetchUsage = func() ([]byte, error) { return []byte(e2eLimitsOnlyPayload), nil }
+
+	out, _ := run(d)
+	if !strings.Contains(out, "Fable 40%") {
+		t.Errorf("account row must render the scoped limit from a limits-only payload: %q", out)
+	}
+	if strings.Contains(out, "week") || strings.Contains(out, "5h") {
+		t.Errorf("no week or 5h meter may render when the payload carries neither window: %q", out)
+	}
+}
+
+func TestRunLiveStdinFillsWindowsAFreshPayloadMarksAbsent(t *testing.T) {
+	// A fresh endpoint payload that reports a window as not in progress
+	// loses to a live stdin reading of that window; windows the payload
+	// does report keep the fresh endpoint value. Nothing is stale: no marker.
+	for _, c := range []struct {
+		name, payload, stdin string
+		want, absent         []string
+	}{
+		{
+			"null five_hour, stdin both windows", e2eNullFiveHourPayload, "",
+			[]string{"5h 42%", "week 43%"},
+			[]string{"week 77%", "old)"},
+		},
+		{
+			"limits only, stdin both windows", e2eLimitsOnlyPayload, "",
+			[]string{"5h 42%", "week 77%", "Fable 40%"},
+			[]string{"old)"},
+		},
+		{
+			"limits only, stdin five-hour only", e2eLimitsOnlyPayload, e2eStdinFiveHourOnly,
+			[]string{"5h 42%", "Fable 40%"},
+			[]string{"week", "old)"},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d := e2eDeps(t, "full.json")
+			if c.stdin != "" {
+				d.stdin = strings.NewReader(c.stdin)
+			}
+			payload := c.payload
+			d.fetchUsage = func() ([]byte, error) { return []byte(payload), nil }
+
+			out, _ := run(d)
+			for _, w := range c.want {
+				if !strings.Contains(out, w) {
+					t.Errorf("want %q in the account row: %q", w, out)
+				}
+			}
+			for _, a := range c.absent {
+				if strings.Contains(out, a) {
+					t.Errorf("%q must not render: %q", a, out)
+				}
+			}
+		})
+	}
+}
+
+func TestRunStdinWeeklySupersedesAbsentWindow(t *testing.T) {
+	// Stale limits-only cache + failing fetch + stdin rate_limits carrying
+	// both windows: the host's live readings bring back 5h 42% and week 77%.
+	d := e2eDeps(t, "full.json")
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+	seedStaleUsage(t, d, e2eLimitsOnlyPayload)
+
+	out, _ := run(d)
+	if !strings.Contains(out, "5h 42%") || !strings.Contains(out, "week 77%") {
+		t.Errorf("stdin readings must supersede the absent endpoint windows: %q", out)
+	}
+	if !strings.Contains(out, "Fable 40%") || !strings.Contains(out, "(data 6m old)") {
+		t.Errorf("the stale endpoint scoped limit must stay visible with the age marker: %q", out)
+	}
+}
+
+func TestRunStdinWithoutWeeklyKeepsTheWeekMeterAbsent(t *testing.T) {
+	// Stale limits-only cache + failing fetch + stdin carrying only the
+	// five-hour window: the live 5h reading renders; the weekly window is
+	// absent on both sides, so no "week 0%".
+	d := e2eDeps(t, "full.json")
+	d.stdin = strings.NewReader(e2eStdinFiveHourOnly)
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+	seedStaleUsage(t, d, e2eLimitsOnlyPayload)
+
+	out, _ := run(d)
+	if !strings.Contains(out, "5h 42%") {
+		t.Errorf("stdin five-hour reading must render: %q", out)
+	}
+	if strings.Contains(out, "week") {
+		t.Errorf("no week meter may render when neither side reports a weekly window: %q", out)
+	}
+	if !strings.Contains(out, "Fable 40%") || !strings.Contains(out, "(data 6m old)") {
+		t.Errorf("the stale scoped limit must stay visible with the age marker: %q", out)
+	}
+}
+
+// e2eNoWeeklyPayload carries a five-hour window, no weekly window and no
+// scoped limit.
+const e2eNoWeeklyPayload = `{"five_hour": {"utilization": 5.9}, "seven_day": null,
+  "extra_usage": {"is_enabled": false}, "spend": {"used": {"amount_minor": 0, "exponent": 2}},
+  "limits": []}`
+
+func TestRunLiveMetersOverAbsentEndpointWeekHaveNoAgeMarker(t *testing.T) {
+	// Stale cache with no weekly window and no scoped limit + failing fetch
+	// + stdin carrying only the five-hour window: the only visible meter is
+	// the live 5h reading, so nothing stale is shown and no marker renders.
+	d := e2eDeps(t, "full.json")
+	d.stdin = strings.NewReader(e2eStdinFiveHourOnly)
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+	seedStaleUsage(t, d, e2eNoWeeklyPayload)
+
+	out, _ := run(d)
+	if !strings.Contains(out, "5h 42%") {
+		t.Errorf("the live 5h reading must render: %q", out)
+	}
+	if strings.Contains(out, "week") || strings.Contains(out, "old)") {
+		t.Errorf("no week meter and no age marker may render over only-live meters: %q", out)
+	}
+}
+
+// e2eUnscopedLimitsOnlyPayload passes the shape gate on an unscoped plan
+// limit alone: it carries nothing the account row can show.
+const e2eUnscopedLimitsOnlyPayload = `{"five_hour": null, "seven_day": null,
+  "extra_usage": {"is_enabled": false}, "spend": {"used": {"amount_minor": 0, "exponent": 2}},
+  "limits": [{"kind": "weekly_all", "percent": 40, "is_active": true, "scope": null}]}`
+
+func TestRunPayloadWithoutAccountMetersRendersNoAccountRow(t *testing.T) {
+	// No renderable meter, fresh or stale, and no stdin windows: no account
+	// row — never the identity alone, never an age marker on nothing.
+	for _, stale := range []bool{false, true} {
+		d := e2eDeps(t, "full.json")
+		d.stdin = strings.NewReader(e2eStdinNoRateLimits)
+		if stale {
+			d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+			seedStaleUsage(t, d, e2eUnscopedLimitsOnlyPayload)
+		} else {
+			d.fetchUsage = func() ([]byte, error) { return []byte(e2eUnscopedLimitsOnlyPayload), nil }
+		}
+
+		out, _ := run(d)
+		if strings.Contains(out, "account") {
+			t.Errorf("stale=%v: no account row may render without a meter: %q", stale, out)
+		}
+	}
+}
+
+var ansiSeq = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func TestRunLiveStdinReadingsKeepTheirResetTimes(t *testing.T) {
+	// A live stdin reading carries its own reset moment; whichever merge
+	// path brings it in (filling a window a fresh payload reports absent,
+	// or replacing stale endpoint meters), the meter shows that reset.
+	resets := time.Now().Add(3 * time.Hour).Unix()
+	stdin := fmt.Sprintf(`{"session_id":"0a1b2c3d-0000-4000-8000-000000000000",`+
+		`"model":{"display_name":"Fable 5"},`+
+		`"workspace":{"current_dir":"/Users/dev/projects/demo-app"},`+
+		`"rate_limits":{"five_hour":{"used_percentage":42,"resets_at":%d},`+
+		`"seven_day":{"used_percentage":77,"resets_at":%d}}}`, resets, resets)
+	withReset := regexp.MustCompile(`5h 42% \(resets [^)]+\).*week 77% \(resets [^)]+\)`)
+	for _, c := range []struct {
+		name  string
+		setup func(t *testing.T, d *deps)
+	}{
+		{"fresh payload with both windows absent", func(_ *testing.T, d *deps) {
+			d.fetchUsage = func() ([]byte, error) { return []byte(e2eLimitsOnlyPayload), nil }
+		}},
+		{"stale payload replaced by stdin", func(t *testing.T, d *deps) {
+			d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+			seedStaleUsage(t, *d, e2eUsagePayload)
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d := e2eDeps(t, "full.json")
+			d.stdin = strings.NewReader(stdin)
+			c.setup(t, &d)
+
+			out, _ := run(d)
+			if plain := ansiSeq.ReplaceAllString(out, ""); !withReset.MatchString(plain) {
+				t.Errorf("live 5h and week meters must carry their reset times: %q", plain)
+			}
+		})
+	}
+}
+
+// e2eStdinQuota is a stdin payload without a product whose quota yields
+// live 5h 42%, week 77% and a scoped "3p-5h 25%" meter.
+const e2eStdinQuota = `{"session_id":"0a1b2c3d-0000-4000-8000-000000000000",` +
+	`"model":{"display_name":"Fable 5"},` +
+	`"workspace":{"current_dir":"/Users/dev/projects/demo-app"},` +
+	`"quota":{"gemini-5h":{"remaining_fraction":0.58},` +
+	`"gemini-weekly":{"remaining_fraction":0.23},"3p-5h":{"remaining_fraction":0.75}}}`
+
+// e2eGlobalsOnlyPayload carries both windows and no scoped limit.
+const e2eGlobalsOnlyPayload = `{"five_hour": {"utilization": 5.9}, "seven_day": {"utilization": 13},
+  "extra_usage": {"is_enabled": false}, "spend": {"used": {"amount_minor": 0, "exponent": 2}},
+  "limits": []}`
+
+func TestRunLiveStdinScopedMetersAreNotStale(t *testing.T) {
+	// Live stdin scoped meters merged over a stale endpoint payload never
+	// count as stale data; the endpoint's own scoped limits still do.
+	for _, c := range []struct {
+		name, payload string
+		wantScoped    string // stale endpoint scoped meter that must stay; "" = none
+		wantMarker    bool
+	}{
+		{"endpoint without scoped limits", e2eGlobalsOnlyPayload, "", false},
+		{"endpoint with a scoped limit", e2eLimitsOnlyPayload, "Fable 40%", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d := e2eDeps(t, "full.json")
+			d.stdin = strings.NewReader(e2eStdinQuota)
+			d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+			seedStaleUsage(t, d, c.payload)
+
+			out, _ := run(d)
+			for _, want := range []string{"5h 42%", "week 77%", "3p-5h 25%"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("live stdin meter %q must render: %q", want, out)
+				}
+			}
+			if c.wantScoped != "" && !strings.Contains(out, c.wantScoped) {
+				t.Errorf("stale endpoint scoped meter %q must stay visible: %q", c.wantScoped, out)
+			}
+			if got := strings.Contains(out, "(data 6m old)"); got != c.wantMarker {
+				t.Errorf("age marker present = %v, want %v: %q", got, c.wantMarker, out)
+			}
+		})
+	}
+}
+
+func TestRunStdinWithoutWeeklyKeepsTheStaleWeeklyReading(t *testing.T) {
+	// Stale cache with a real weekly reading (13%) + failing fetch + stdin
+	// carrying only the five-hour window: the live 5h reading replaces the
+	// stale one, and the stale weekly reading stays — never "week 0%".
+	d := e2eDeps(t, "full.json")
+	d.stdin = strings.NewReader(e2eStdinFiveHourOnly)
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+	seedStaleUsage(t, d, e2eUsagePayload)
+
+	out, _ := run(d)
+	if !strings.Contains(out, "5h 42%") || !strings.Contains(out, "week 13%") {
+		t.Errorf("live 5h and the stale weekly reading must both render: %q", out)
+	}
+	if strings.Contains(out, "week 0%") {
+		t.Errorf("stdin without a weekly window must not overwrite the stale reading with 0%%: %q", out)
+	}
+	if !strings.Contains(out, "(data 6m old)") {
+		t.Errorf("the stale weekly reading must carry the age marker: %q", out)
 	}
 }

@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `[usage] ttl_seconds` defaults to 200 (was 180), and a value below 200
+  is raised to 200 with a one-line stderr note, so the poll rate can never
+  be configured below the endpoint's limit. The rest of the config file
+  still applies (the v0.3.0 example config shipped `ttl_seconds = 180`).
+
+### Fixed
+
+- The account row no longer freezes on a stale payload when the usage
+  endpoint reports no five-hour window in progress (`five_hour: null`).
+  That payload was rejected as "not usage data", so every refresh was
+  discarded and the last good cache was served forever behind a growing
+  `(data … old)` marker. The shape gate now requires at least one window or
+  plan limit; a null `five_hour` omits the `5h` meter instead of showing a
+  fabricated 0%, and a live stdin five-hour reading still supersedes it.
+- A payload with no weekly window in progress (`seven_day: null`), which
+  passes the shape gate on its plan limits, omits the `week` meter instead
+  of showing a fabricated `week 0%`. A live stdin weekly reading supersedes
+  it; stdin without one leaves the meter omitted.
+- A live stdin reading fills a window that a fresh endpoint payload reports
+  as not in progress; windows the fresh payload does report keep the
+  endpoint's value.
+- Stdin that carries a five-hour window but no weekly one no longer
+  overwrites a stale endpoint weekly reading with `week 0%`. The stale
+  reading stays with its `(data … old)` age marker.
+- The account row's age marker renders exactly when a visible account
+  meter comes from stale endpoint data: a stale weekly reading or a stale
+  plan-scoped limit now keeps the marker beside live stdin meters, live
+  stdin scoped meters never count as stale, and a row of only live meters
+  carries none.
+- A usage payload with no meter the account row can show (only unscoped
+  plan limits) renders no account row instead of the account identity
+  alone with an age marker qualifying nothing.
+- Fetch attempts are throttled independently of the TTL: after any attempt
+  (success, network error, rate limit or rejected body) no further fetch runs
+  for 200 s, or for the server's `Retry-After` when longer. Before this a
+  stale cache meant a fetch on every render, and the usage endpoint answered
+  the storm with HTTP 429 (`Retry-After: 199`), which was itself discarded
+  and retried on the next render. A 429 is now classified as a rate limit
+  rather than read as a payload.
+
 ### Security
 
 - Go toolchain 1.27.3 → 1.27.4, remediating GO-2026-6859 (`net/http`:

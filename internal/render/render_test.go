@@ -418,7 +418,7 @@ func TestExtraBadgeBudgetGatesTheAlarm(t *testing.T) {
 	o := DefaultOptions()
 	o.Model.ExtraBudget = 5.0 // five major currency units
 
-	below := Usage{ExtraEnabled: true, CreditsMinor: 242, CreditsExp: 2, U5: 100, MaxActive: 100}
+	below := Usage{ExtraEnabled: true, CreditsMinor: 242, CreditsExp: 2, U5: 100}
 	if got, want := ExtraBadge(below, o), "\x1b[2m · extra $2.42\x1b[m"; got != want {
 		t.Errorf("below budget:\n got %q\nwant %q", got, want)
 	}
@@ -435,7 +435,7 @@ func TestExtraBadgeBudgetGatesTheAlarm(t *testing.T) {
 	}
 
 	// Zero spend still renders nothing whatever the budget is.
-	none := Usage{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2, MaxActive: 100}
+	none := Usage{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2}
 	if got := ExtraBadge(none, o); got != "" {
 		t.Errorf("zero spend = %q, want empty", got)
 	}
@@ -466,7 +466,7 @@ func TestExtraBadgeSilentAtLimitWithoutSpend(t *testing.T) {
 	// its reset, and the badge stays silent rather than showing an alarm
 	// with a zero amount. The alarm means money is leaving, nothing else.
 	cases := []Usage{
-		{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2, U5: 40, MaxActive: 100},
+		{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2, U5: 40},
 		{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2, U5: 100},
 		{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2, U7: 100},
 	}
@@ -645,5 +645,45 @@ func TestAccountRowMixedSourceStaleMarker(t *testing.T) {
 	u = Usage{Email: "dev@example.com", U5: 5, U7: 13, DataAge: 6 * time.Minute}
 	if got := AccountRow(u, DefaultOptions()); !strings.Contains(got, "(data 6m old)") {
 		t.Errorf("stale endpoint meters must keep the marker: %q", got)
+	}
+}
+
+func TestAccountRowOmitsFiveHourMeterWhenAbsent(t *testing.T) {
+	// No five-hour window in progress: the week meter renders alone; the 5h
+	// meter must not appear as a fabricated 0%.
+	in := Usage{FiveHourAbsent: true, U7: 43, R7: "Fri 4:00p"}
+	got := AccountRow(in, DefaultOptions())
+	want := "\x1b[2maccount  \x1b[m\x1b[32mweek 43%\x1b[m \x1b[2m(resets Fri 4:00p)\x1b[m"
+	if got != want {
+		t.Errorf("AccountRow with five_hour absent:\n got %q\nwant %q", got, want)
+	}
+	if strings.Contains(got, "5h") {
+		t.Errorf("five-hour meter rendered despite being absent: %q", got)
+	}
+}
+
+func TestAccountRowRendersNothingWithoutAMeter(t *testing.T) {
+	// Identity alone is not a reading: with no 5h, week, scoped or model
+	// meter there is no row — and no age marker qualifying nothing.
+	in := Usage{
+		Email: "dev@example.com", PlanTier: "Max",
+		FiveHourAbsent: true, SevenDayAbsent: true, DataAge: 6 * time.Minute,
+	}
+	if got := AccountRow(in, DefaultOptions()); got != "" {
+		t.Errorf("AccountRow without a meter = %q, want no row", got)
+	}
+}
+
+func TestAccountRowOmitsWeekMeterWhenAbsent(t *testing.T) {
+	// No weekly window in progress: the 5h and scoped meters render; the
+	// week meter must not appear as a fabricated 0%.
+	in := Usage{
+		SevenDayAbsent: true, U5: 12, R5: "6:00p",
+		Scoped: []ScopedLimit{{Name: "Fable", Pct: 40, Reset: "Fri 4:00p"}},
+	}
+	got := AccountRow(in, DefaultOptions())
+	want := "\x1b[2maccount  \x1b[m\x1b[32m5h 12%\x1b[m \x1b[2m(resets 6:00p)\x1b[m \x1b[2m·\x1b[m \x1b[32mFable 40%\x1b[m \x1b[2m(resets Fri 4:00p)\x1b[m"
+	if got != want {
+		t.Errorf("AccountRow with seven_day absent:\n got %q\nwant %q", got, want)
 	}
 }

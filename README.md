@@ -124,7 +124,7 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | `[account] show_resets` | `"always"` | `"quiet"` shows reset times only on hot (≥80%) meters |
 | `[account] show_stale_age` | `true` | Dim age marker when stale known-good data is served |
 | `[usage] enabled` | `true` | `false` skips the usage endpoint entirely |
-| `[usage] ttl_seconds` | `180` | How long a fetched payload is served before re-fetching |
+| `[usage] ttl_seconds` | `200` | How long a fetched payload is served before re-fetching. Floor 200 (a lower value is raised to 200, with a stderr note): the usage endpoint rate-limits faster polling, and a failed fetch is not retried before 200 s (or the server's `Retry-After`) have passed |
 | `[cache] dir` | platform user-cache dir | Cache location override |
 
 ## What each row means
@@ -158,8 +158,8 @@ subscription — two concurrent sessions correctly show the same pools):
 
 | Meter | Window |
 |---|---|
-| `5h N%` | rolling 5-hour, all models |
-| `week N%` | rolling 7-day, all models |
+| `5h N%` | rolling 5-hour, all models; omitted while no five-hour window is in progress (never shown as 0%) |
+| `week N%` | rolling 7-day, all models; omitted while the usage endpoint reports no weekly window in progress and stdin carries none |
 | `<model>/wk N%` | rolling 7-day pool for **this session's** model — a parallel weekly cap, not a slice of `week`; omitted when the payload has no window for it. The window is matched against the payload's own `seven_day_*` keys, so a model the vendor ships tomorrow is picked up with no code change. The usage endpoint values a per-model window only when that limit policy is active on your account (plans without model-specific caps report them as `null`, so the meter self-omits) |
 | `<scope> N%` | a plan limit the payload narrows to a **scope** — today a model, named by the payload (e.g. `Fable 100%`). A parallel cap like the one above, shown whenever the payload carries it, with its own reset time. This is how a model-specific weekly limit surfaces even when no `seven_day_*` window exists for it |
 
@@ -168,13 +168,19 @@ the hot-only (≥80%) behavior.
 
 When the usage endpoint can't be reached, the row degrades in two stages.
 Claude Code v2.1.210+ sends the two all-model meters in the statusline
-payload itself, so `5h`/`week` switch to those **live** values (no network
-needed — even when no cached payload exists at all). Endpoint-only segments
-(the per-model window, the extra-usage badge) keep serving the last
-known-good payload, qualified by a trailing dim `(data 6m old)` age marker
-whenever such stale data is actually visible. On hosts whose payload lacks
+payload itself, so `5h` switches to the **live** value, and `week` too when
+the payload carries a weekly window (no network needed — even when no cached
+payload exists at all). A fresh payload keeps its readings; a live stdin
+reading only fills a window that payload reports as not in progress.
+Endpoint-only account segments (a weekly reading
+stdin did not replace, plan-scoped limits, the per-model window) keep
+serving the last known-good payload, qualified by a trailing dim
+`(data 6m old)` age marker whenever such stale data is actually visible; a
+row of only live meters carries no marker, and a row with no meter is not
+rendered. The model row's extra-usage badge also comes from that payload
+and carries no age marker. On hosts whose payload lacks
 `rate_limits`, the old behavior remains: the whole row serves the stale
-payload with the marker, and collapses only when there is no data at all —
+payload with the marker, and is omitted when there is no data it can show —
 values are never fabricated. `show_stale_age = false` hides the marker.
 
 ## Design notes

@@ -140,6 +140,32 @@ func TestParseRateLimits(t *testing.T) {
 	}
 }
 
+func TestParseRateLimitsWeeklyPresence(t *testing.T) {
+	for _, c := range []struct {
+		name, j string
+		want    bool
+	}{
+		{"claude both windows", `{"rate_limits":{"five_hour":{"used_percentage":19},"seven_day":{"used_percentage":45}}}`, true},
+		{"claude five-hour only", `{"rate_limits":{"five_hour":{"used_percentage":19}}}`, false},
+		{"claude null weekly", `{"rate_limits":{"five_hour":{"used_percentage":19},"seven_day":null}}`, false},
+		{"antigravity both buckets", `{"product":"antigravity","model":{"display_name":"Gemini 3.5 Pro"},"quota":{` +
+			`"gemini-5h":{"remaining_fraction":0.9},"gemini-weekly":{"remaining_fraction":0.8}}}`, true},
+		{"antigravity five-hour only", `{"product":"antigravity","model":{"display_name":"Gemini 3.5 Pro"},"quota":{` +
+			`"gemini-5h":{"remaining_fraction":0.9}}}`, false},
+	} {
+		s, err := Parse(strings.NewReader(c.j))
+		if err != nil {
+			t.Fatalf("%s: Parse: %v", c.name, err)
+		}
+		if !s.RateLimitsOK {
+			t.Fatalf("%s: RateLimitsOK = false; the five-hour window is present", c.name)
+		}
+		if s.R7OK != c.want {
+			t.Errorf("%s: R7OK = %v, want %v", c.name, s.R7OK, c.want)
+		}
+	}
+}
+
 func TestParseRateLimitsAbsentOrMalformed(t *testing.T) {
 	for _, j := range []string{
 		`{"model":{"display_name":"Fable 5"}}`,

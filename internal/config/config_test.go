@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,7 +19,7 @@ func TestLoadMissingFileGivesDefaults(t *testing.T) {
 	if !o.Model.ShowSession || !o.Project.ShowDirty || !o.Project.TildeHome {
 		t.Errorf("default segments not all enabled: %+v", o)
 	}
-	if !cfg.Usage.Enabled || cfg.Usage.TTLSeconds != 180 {
+	if !cfg.Usage.Enabled || cfg.Usage.TTLSeconds != 200 {
 		t.Errorf("usage defaults wrong: %+v", cfg.Usage)
 	}
 	// Full-Go contract: platform-correct per-user cache location, not the
@@ -383,17 +384,39 @@ func TestLoadUsageTTLSeconds(t *testing.T) {
 		return p
 	}
 
-	cfg, err := Load(write("a.toml", "[usage]\nttl_seconds = 60\n"))
-	if err != nil || cfg.Usage.TTLSeconds != 60 {
-		t.Errorf("ttl_seconds=60: err=%v got=%d", err, cfg.Usage.TTLSeconds)
+	cfg, err := Load(write("a.toml", "[usage]\nttl_seconds = 600\n"))
+	if err != nil || cfg.Usage.TTLSeconds != 600 {
+		t.Errorf("ttl_seconds=600: err=%v got=%d", err, cfg.Usage.TTLSeconds)
 	}
 
-	cfg, err = Load(write("b.toml", "[usage]\nttl_seconds = 0\n"))
-	if err != nil || cfg.Usage.TTLSeconds != 0 {
-		t.Errorf("ttl_seconds=0: err=%v got=%d", err, cfg.Usage.TTLSeconds)
+	cfg, err = Load(write("b.toml", "[usage]\nttl_seconds = 200\n"))
+	if err != nil || cfg.Usage.TTLSeconds != 200 {
+		t.Errorf("ttl_seconds=200 (the floor): err=%v got=%d", err, cfg.Usage.TTLSeconds)
 	}
 
-	if _, err = Load(write("c.toml", "[usage]\nttl_seconds = -5\n")); err == nil {
-		t.Error("negative ttl_seconds must surface an error")
+	// The usage endpoint rate-limits polling faster than ~200 s, so a TTL
+	// below the floor is raised to it — with a diagnostic, and without
+	// discarding the rest of the file (the v0.3.0 example shipped 180).
+	for _, low := range []string{"180", "199", "60", "0", "-5"} {
+		cfg, err := Load(write("low-"+low+".toml", "[usage]\nenabled = false\nttl_seconds = "+low+"\n"))
+		if err != nil {
+			t.Errorf("ttl_seconds=%s: err=%v, want the value raised, not the file rejected", low, err)
+			continue
+		}
+		if cfg.Usage.TTLSeconds != 200 {
+			t.Errorf("ttl_seconds=%s: got %d, want 200 (the floor)", low, cfg.Usage.TTLSeconds)
+		}
+		if cfg.Usage.Enabled {
+			t.Errorf("ttl_seconds=%s: usage.enabled=false from the same file was lost", low)
+		}
+		if len(cfg.Diagnostics) != 1 || !strings.Contains(cfg.Diagnostics[0], "usage.ttl_seconds") ||
+			!strings.Contains(cfg.Diagnostics[0], low) || !strings.Contains(cfg.Diagnostics[0], "200") {
+			t.Errorf("ttl_seconds=%s: diagnostics %q must name the field, the value and the floor", low, cfg.Diagnostics)
+		}
+	}
+	for _, ok := range []string{"200", "600"} {
+		if cfg, _ := Load(write("ok-"+ok+".toml", "[usage]\nttl_seconds = "+ok+"\n")); len(cfg.Diagnostics) != 0 {
+			t.Errorf("ttl_seconds=%s is valid and must produce no diagnostic: %q", ok, cfg.Diagnostics)
+		}
 	}
 }

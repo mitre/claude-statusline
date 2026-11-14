@@ -27,7 +27,7 @@ func benchState() State {
 			U5:    85, R5: "1:30p", U7: 82, R7: "Mon 10:00a",
 			ModelFamily: "opus", ModelPct: 41, ModelReset: "Tue 3:00p",
 			ExtraEnabled: true, CreditsMinor: 1250, CreditsExp: 2,
-			MaxActive: 85, DataAge: 6 * time.Minute,
+			DataAge: 6 * time.Minute,
 		},
 		DurationMS: 62580000, LinesAdded: 1598, LinesRemoved: 8,
 	}

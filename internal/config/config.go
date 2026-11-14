@@ -8,15 +8,21 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/mitre/claude-statusline/internal/render"
+	"github.com/mitre/claude-statusline/internal/usage"
 )
 
 // Config is the full runtime configuration.
 type Config struct {
-	Options render.Options
-	Usage   struct {
+	// Diagnostics are adjustments Load made to a value it could correct
+	// without discarding the file (e.g. a TTL raised to the fetch floor);
+	// the caller reports them on stderr.
+	Diagnostics []string
+	Options     render.Options
+	Usage       struct {
 		Enabled    bool
 		TTLSeconds int
 	}
@@ -81,11 +87,15 @@ type fileSchema struct {
 	} `toml:"cache"`
 }
 
+// minUsageTTLSeconds is the usage fetch floor (usage.MinFetchInterval) as a
+// config value: the default TTL and the lowest one accepted.
+var minUsageTTLSeconds = int(usage.MinFetchInterval / time.Second)
+
 // Default returns the zero-config behavior.
 func Default() Config {
 	cfg := Config{Options: render.DefaultOptions()}
 	cfg.Usage.Enabled = true
-	cfg.Usage.TTLSeconds = 180
+	cfg.Usage.TTLSeconds = minUsageTTLSeconds
 	cfg.GitTimeoutMS = 150
 	cfg.GitEngine = "auto"
 	cfg.LockBadge = true
@@ -203,10 +213,15 @@ func Load(path string) (Config, error) {
 	}
 	setB(&cfg.Usage.Enabled, f.Usage.Enabled)
 	if f.Usage.TTLSeconds != nil {
-		if *f.Usage.TTLSeconds < 0 {
-			return cfg, fmt.Errorf("usage.ttl_seconds: %d is not valid (must be >= 0)", *f.Usage.TTLSeconds)
-		}
 		cfg.Usage.TTLSeconds = *f.Usage.TTLSeconds
+		if *f.Usage.TTLSeconds < minUsageTTLSeconds {
+			// Raised, not rejected: the v0.3.0 example shipped 180, and a
+			// rejection would discard every other setting in the file.
+			cfg.Usage.TTLSeconds = minUsageTTLSeconds
+			cfg.Diagnostics = append(cfg.Diagnostics, fmt.Sprintf(
+				"usage.ttl_seconds: %d raised to %d (the usage endpoint rate-limits faster polling)",
+				*f.Usage.TTLSeconds, minUsageTTLSeconds))
+		}
 	}
 	if f.Cache.Dir != nil {
 		cfg.CacheDir = *f.Cache.Dir

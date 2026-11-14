@@ -45,7 +45,6 @@ type Usage struct {
 	ExtraEnabled bool
 	CreditsMinor int // spend in minor units
 	CreditsExp   int // exponent for minor units (2 → cents)
-	MaxActive    int // max percent among active plan limits
 	// Scoped carries plan limits the payload narrows to a scope (today a
 	// model), one account-row meter each. Labels come from the payload, so
 	// a newly scoped model needs no change here.
@@ -55,11 +54,20 @@ type Usage struct {
 	// Non-zero renders the trailing dim age marker — the meters keep their
 	// true (old) values, the marker qualifies them.
 	DataAge time.Duration
-	// MetersLive marks the 5h/week meters as stdin-sourced (live this
-	// render) while DataAge still describes the stale endpoint payload
-	// behind the remaining segments. The age marker then qualifies only
-	// visible stale data: it renders solely when the model window shows.
+	// MetersLive: after the stdin merge, every visible 5h, week and
+	// scoped meter is live (from stdin, or absent), while DataAge still
+	// describes the stale endpoint payload. False whenever a stale weekly
+	// reading or an endpoint scoped limit stays visible. The model window
+	// is always endpoint-sourced and qualifies for the age marker on its own.
 	MetersLive bool
+	// FiveHourAbsent: the endpoint reports no five-hour window in progress
+	// (five_hour is null). The 5h meter is omitted; the other meters render
+	// as usual.
+	FiveHourAbsent bool
+	// SevenDayAbsent: the endpoint reports no weekly window in progress
+	// (seven_day is null). The week meter is omitted — never a fabricated
+	// 0%; the other meters render as usual.
+	SevenDayAbsent bool
 }
 
 // ScopedLimit is one plan limit narrowed to a scope the payload names — a
@@ -317,22 +325,29 @@ func AccountRow(u Usage, o Options) string {
 	if u.PlanTier != "" {
 		parts = append(parts, u.PlanTier)
 	}
-	parts = append(parts,
-		meter(fmt.Sprintf("5h %d%%", u.U5), u.U5, u.R5, always),
-		meter(fmt.Sprintf("week %d%%", u.U7), u.U7, u.R7, always),
-	)
+	identity := len(parts)
+	if !u.FiveHourAbsent {
+		parts = append(parts, meter(fmt.Sprintf("5h %d%%", u.U5), u.U5, u.R5, always))
+	}
+	if !u.SevenDayAbsent {
+		parts = append(parts, meter(fmt.Sprintf("week %d%%", u.U7), u.U7, u.R7, always))
+	}
 	for _, s := range u.Scoped {
 		parts = append(parts, meter(fmt.Sprintf("%s %d%%", s.Name, s.Pct), s.Pct, s.Reset, always))
 	}
 	if u.ModelFamily != "" {
 		parts = append(parts, meter(fmt.Sprintf("%s/wk %d%%", u.ModelFamily, u.ModelPct), u.ModelPct, u.ModelReset, always))
 	}
+	if len(parts) == identity {
+		// Identity alone is not a reading: no meter, no row.
+		return ""
+	}
 	if u.DataAge > 0 && o.Account.ShowStaleAge && (!u.MetersLive || u.ModelFamily != "") {
 		// Stale-good fallback engaged: qualify the stale data with a
 		// factual, dim age — informational tier, never alarm styling (red
-		// stays reserved for billing/API alarms). With live stdin meters
-		// the marker applies only to the endpoint-sourced model window, so
-		// it renders only while that segment is visible.
+		// stays reserved for billing/API alarms). MetersLive is false
+		// while a stale weekly or endpoint scoped meter is visible; the
+		// endpoint-sourced model window always qualifies.
 		parts = append(parts, dimS.Render("(data "+ageLabel(u.DataAge)+" old)"))
 	}
 	return lbl("account") + strings.Join(parts, sepDot)
