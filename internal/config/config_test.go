@@ -414,7 +414,9 @@ func TestLoadUsageTTLSeconds(t *testing.T) {
 			t.Errorf("ttl_seconds=%s: diagnostics %q must name the field, the value and the floor", low, cfg.Diagnostics)
 		}
 	}
-	if cfg, _ := Load(write("c.toml", "[usage]\nttl_seconds = 600\n")); len(cfg.Diagnostics) != 0 {
-		t.Errorf("a valid TTL must produce no diagnostic: %q", cfg.Diagnostics)
+	for _, ok := range []string{"200", "600"} {
+		if cfg, _ := Load(write("ok-"+ok+".toml", "[usage]\nttl_seconds = "+ok+"\n")); len(cfg.Diagnostics) != 0 {
+			t.Errorf("ttl_seconds=%s is valid and must produce no diagnostic: %q", ok, cfg.Diagnostics)
+		}
 	}
 }

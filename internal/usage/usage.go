@@ -61,7 +61,6 @@ type payload struct {
 		} `json:"used"`
 	} `json:"spend"`
 	Limits []struct {
-		IsActive bool        `json:"is_active"`
 		Percent  int         `json:"percent"`
 		ResetsAt string      `json:"resets_at"`
 		Scope    *limitScope `json:"scope"`
@@ -147,10 +146,12 @@ func modelWindowKey(fields map[string]json.RawMessage, modelName string) (key, f
 // Parse validates and extracts a usage payload. Payloads without the
 // expected shape (e.g. rate-limit error bodies) return an error — they must
 // never be rendered as zeros. The shape gate is "at least one window or
-// limit": a null five_hour alone does not fail it (see FiveHourAbsent). modelName is the session model's display name:
-// when the payload carries a weekly window whose own key matches it, the
-// model segment fields are populated; otherwise they stay zero and the
-// segment is omitted.
+// limit". A null window, or one whose utilization is null, is absent rather
+// than invalid: it sets FiveHourAbsent / SevenDayAbsent and never renders
+// as 0%. modelName is the session model's display name: when the payload
+// carries a weekly window whose own key matches it, the model segment
+// fields are populated; otherwise they stay zero and the segment is
+// omitted.
 func Parse(raw []byte, now time.Time, modelName string) (render.Usage, error) {
 	var p payload
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -186,9 +187,6 @@ func Parse(raw []byte, now time.Time, modelName string) (render.Usage, error) {
 		u.R7 = resetLabel(p.SevenDay.ResetsAt, now)
 	}
 	for _, l := range p.Limits {
-		if l.IsActive && l.Percent > u.MaxActive {
-			u.MaxActive = l.Percent
-		}
 		if l.Scope != nil {
 			u.Scoped = append(u.Scoped, render.ScopedLimit{
 				Name:  scopeLabel(l.Scope),

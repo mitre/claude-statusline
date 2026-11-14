@@ -45,7 +45,6 @@ type Usage struct {
 	ExtraEnabled bool
 	CreditsMinor int // spend in minor units
 	CreditsExp   int // exponent for minor units (2 → cents)
-	MaxActive    int // max percent among active plan limits
 	// Scoped carries plan limits the payload narrows to a scope (today a
 	// model), one account-row meter each. Labels come from the payload, so
 	// a newly scoped model needs no change here.

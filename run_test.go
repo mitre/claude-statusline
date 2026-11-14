@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -279,7 +280,7 @@ func TestRunStaleUsageDataShowsDimAgeMarker(t *testing.T) {
 	if err := os.WriteFile(p, []byte(e2eUsagePayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	old := time.Now().Add(-6 * time.Minute) // past the default 180s TTL
+	old := time.Now().Add(-6 * time.Minute) // past the default 200 s TTL
 	if err := os.Chtimes(p, old, old); err != nil {
 		t.Fatal(err)
 	}
@@ -763,6 +764,44 @@ func TestRunPayloadWithoutAccountMetersRendersNoAccountRow(t *testing.T) {
 		if strings.Contains(out, "account") {
 			t.Errorf("stale=%v: no account row may render without a meter: %q", stale, out)
 		}
+	}
+}
+
+var ansiSeq = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func TestRunLiveStdinReadingsKeepTheirResetTimes(t *testing.T) {
+	// A live stdin reading carries its own reset moment; whichever merge
+	// path brings it in (filling a window a fresh payload reports absent,
+	// or replacing stale endpoint meters), the meter shows that reset.
+	resets := time.Now().Add(3 * time.Hour).Unix()
+	stdin := fmt.Sprintf(`{"session_id":"0a1b2c3d-0000-4000-8000-000000000000",`+
+		`"model":{"display_name":"Fable 5"},`+
+		`"workspace":{"current_dir":"/Users/dev/projects/demo-app"},`+
+		`"rate_limits":{"five_hour":{"used_percentage":42,"resets_at":%d},`+
+		`"seven_day":{"used_percentage":77,"resets_at":%d}}}`, resets, resets)
+	withReset := regexp.MustCompile(`5h 42% \(resets [^)]+\).*week 77% \(resets [^)]+\)`)
+	for _, c := range []struct {
+		name  string
+		setup func(t *testing.T, d *deps)
+	}{
+		{"fresh payload with both windows absent", func(_ *testing.T, d *deps) {
+			d.fetchUsage = func() ([]byte, error) { return []byte(e2eLimitsOnlyPayload), nil }
+		}},
+		{"stale payload replaced by stdin", func(t *testing.T, d *deps) {
+			d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+			seedStaleUsage(t, *d, e2eUsagePayload)
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d := e2eDeps(t, "full.json")
+			d.stdin = strings.NewReader(stdin)
+			c.setup(t, &d)
+
+			out, _ := run(d)
+			if plain := ansiSeq.ReplaceAllString(out, ""); !withReset.MatchString(plain) {
+				t.Errorf("live 5h and week meters must carry their reset times: %q", plain)
+			}
+		})
 	}
 }
 

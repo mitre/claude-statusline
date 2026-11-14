@@ -418,7 +418,7 @@ func TestExtraBadgeBudgetGatesTheAlarm(t *testing.T) {
 	o := DefaultOptions()
 	o.Model.ExtraBudget = 5.0 // five major currency units
 
-	below := Usage{ExtraEnabled: true, CreditsMinor: 242, CreditsExp: 2, U5: 100, MaxActive: 100}
+	below := Usage{ExtraEnabled: true, CreditsMinor: 242, CreditsExp: 2, U5: 100}
 	if got, want := ExtraBadge(below, o), "\x1b[2m · extra $2.42\x1b[m"; got != want {
 		t.Errorf("below budget:\n got %q\nwant %q", got, want)
 	}
@@ -435,7 +435,7 @@ func TestExtraBadgeBudgetGatesTheAlarm(t *testing.T) {
 	}
 
 	// Zero spend still renders nothing whatever the budget is.
-	none := Usage{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2, MaxActive: 100}
+	none := Usage{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2}
 	if got := ExtraBadge(none, o); got != "" {
 		t.Errorf("zero spend = %q, want empty", got)
 	}
@@ -466,7 +466,7 @@ func TestExtraBadgeSilentAtLimitWithoutSpend(t *testing.T) {
 	// its reset, and the badge stays silent rather than showing an alarm
 	// with a zero amount. The alarm means money is leaving, nothing else.
 	cases := []Usage{
-		{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2, U5: 40, MaxActive: 100},
+		{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2, U5: 40},
 		{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2, U5: 100},
 		{ExtraEnabled: true, CreditsMinor: 0, CreditsExp: 2, U7: 100},
 	}

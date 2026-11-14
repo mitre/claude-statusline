@@ -46,9 +46,6 @@ func TestParseExtractsFields(t *testing.T) {
 	if !u.ExtraEnabled || u.CreditsMinor != 150 || u.CreditsExp != 2 {
 		t.Errorf("extra usage fields: %+v", u)
 	}
-	if u.MaxActive != 40 {
-		t.Errorf("MaxActive = %d, want 40 (max over active limits only)", u.MaxActive)
-	}
 }
 
 func TestParseResetLabels(t *testing.T) {
@@ -532,9 +529,6 @@ func TestParseAcceptsNullFiveHour(t *testing.T) {
 	}
 	if u.U7 != 43 || u.R7 == "" {
 		t.Errorf("U7/R7 = %d/%q, want 43 with a reset label", u.U7, u.R7)
-	}
-	if u.MaxActive != 47 {
-		t.Errorf("MaxActive = %d, want 47 (the active scoped limit)", u.MaxActive)
 	}
 	if len(u.Scoped) != 1 || u.Scoped[0].Name != "Fable" || u.Scoped[0].Pct != 47 {
 		t.Errorf("Scoped = %+v, want one Fable limit at 47%%", u.Scoped)
