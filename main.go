@@ -44,6 +44,7 @@ func main() {
 		fetchUsage: func() ([]byte, error) { return fetchUsage(creds) },
 		readFile:   os.ReadFile,
 		stat:       os.Stat,
+		now:        time.Now,
 	})
 	if diag != "" {
 		fmt.Fprint(os.Stderr, diag)

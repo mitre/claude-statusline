@@ -769,17 +769,18 @@ func TestRunPayloadWithoutAccountMetersRendersNoAccountRow(t *testing.T) {
 
 var ansiSeq = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
-func TestRunLiveStdinReadingsKeepTheirResetTimes(t *testing.T) {
-	// A live stdin reading carries its own reset moment; whichever merge
-	// path brings it in (filling a window a fresh payload reports absent,
-	// or replacing stale endpoint meters), the meter shows that reset.
-	resets := time.Now().Add(3 * time.Hour).Unix()
+func TestRunLiveStdinResetTimesBelongToTheirOwnWindows(t *testing.T) {
+	// Fixed clock: Monday 2026-11-02 12:00 UTC. The five-hour window resets
+	// the same day at 15:00 ("3:00p"); the weekly window resets Thursday at
+	// 22:00 ("Thu 10:00p"). Each live meter shows its own window's reset.
+	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	five := time.Date(2026, 11, 2, 15, 0, 0, 0, time.UTC).Unix()
+	week := time.Date(2026, 11, 5, 22, 0, 0, 0, time.UTC).Unix()
 	stdin := fmt.Sprintf(`{"session_id":"0a1b2c3d-0000-4000-8000-000000000000",`+
 		`"model":{"display_name":"Fable 5"},`+
 		`"workspace":{"current_dir":"/Users/dev/projects/demo-app"},`+
 		`"rate_limits":{"five_hour":{"used_percentage":42,"resets_at":%d},`+
-		`"seven_day":{"used_percentage":77,"resets_at":%d}}}`, resets, resets)
-	withReset := regexp.MustCompile(`5h 42% \(resets [^)]+\).*week 77% \(resets [^)]+\)`)
+		`"seven_day":{"used_percentage":77,"resets_at":%d}}}`, five, week)
 	for _, c := range []struct {
 		name  string
 		setup func(t *testing.T, d *deps)
@@ -790,16 +791,25 @@ func TestRunLiveStdinReadingsKeepTheirResetTimes(t *testing.T) {
 		{"stale payload replaced by stdin", func(t *testing.T, d *deps) {
 			d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
 			seedStaleUsage(t, *d, e2eUsagePayload)
+			// Six minutes old on the render's clock, not the wall clock.
+			old := now.Add(-6 * time.Minute)
+			if err := os.Chtimes(filepath.Join(e2eCacheDir(t, *d), "usage"), old, old); err != nil {
+				t.Fatal(err)
+			}
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			d := e2eDeps(t, "full.json")
 			d.stdin = strings.NewReader(stdin)
+			d.now = func() time.Time { return now }
 			c.setup(t, &d)
 
 			out, _ := run(d)
-			if plain := ansiSeq.ReplaceAllString(out, ""); !withReset.MatchString(plain) {
-				t.Errorf("live 5h and week meters must carry their reset times: %q", plain)
+			plain := ansiSeq.ReplaceAllString(out, "")
+			for _, want := range []string{"5h 42% (resets 3:00p)", "week 77% (resets Thu 10:00p)"} {
+				if !strings.Contains(plain, want) {
+					t.Errorf("want %q in the account row: %q", want, plain)
+				}
 			}
 		})
 	}
