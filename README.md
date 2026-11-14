@@ -258,6 +258,7 @@ make vuln     # govulncheck
 make race     # full suite under the race detector
 make cover    # coverage floors: 90% total, 85% per package (override: COVER_MIN / PKG_COVER_MIN)
 make build    # local binary (claude-statusline --version reports build identity; "dev" on un-injected builds)
+make dev-install # build HEAD and install it as the dev copy ~/.claude/claude-statusline-dev (run make check first; see AGENTS.md "Live Binary")
 make snapshot # local no-publish proof of the release pipeline: darwin/linux × arm64/amd64 archives + checksums into dist/
 make preflight TAG=v0.2.0  # the release gate, runnable locally: tag shape, manifest parity, CHANGELOG section, tag-on-main
 ```

@@ -729,3 +729,290 @@ func TestRenderFormulaRefusesIncompleteChecksums(t *testing.T) {
 		t.Fatal("render-formula.sh must fail when a platform asset is missing")
 	}
 }
+
+// The dev-install script puts a local build where only this repo's sessions
+// run it (~/.claude/claude-statusline-dev), never at a release install path.
+
+func devBin(home string) string {
+	return filepath.Join(home, ".claude", "claude-statusline-dev")
+}
+
+// fakeBuild writes an executable stand-in for a local build reporting tag.
+func fakeBuild(t *testing.T, tag string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "claude-statusline")
+	if err := os.WriteFile(p, []byte("#!/bin/sh\necho \"claude-statusline dev ("+tag+", today)\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func runDevInstall(t *testing.T, src string) (string, error) {
+	t.Helper()
+	out, err := exec.Command("sh", "scripts/dev-install.sh", src).CombinedOutput()
+	return string(out), err
+}
+
+func fileSHA(t *testing.T, p string) string {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(b))
+}
+
+// shimPath puts executable stand-ins for the named commands first on PATH.
+func shimPath(t *testing.T, scripts map[string]string) {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range scripts {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// shimDate makes the script's backup timestamps deterministic: every call
+// returns the same second (fixed) or the next second (increasing).
+func shimDate(t *testing.T, fixed bool) {
+	t.Helper()
+	if fixed {
+		shimPath(t, map[string]string{"date": "echo 20261114-120000\n"})
+		return
+	}
+	counter := filepath.Join(t.TempDir(), "n")
+	shimPath(t, map[string]string{"date": `n=$(cat "` + counter + `" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" > "` + counter + `"
+printf '20261114-12%04d\n' "$n"
+`})
+}
+
+func TestDevInstallSwapsAtomicallyAndKeepsThreeBackups(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		fixed bool
+	}{
+		{"installs in distinct seconds", false},
+		{"installs within one second", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			shimDate(t, tc.fixed)
+			if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			release := []byte("#!/bin/sh\necho claude-statusline 1.0.0 (rel, rel)\n")
+			if err := os.WriteFile(installedBin(home), release, 0o700); err != nil {
+				t.Fatal(err)
+			}
+
+			// Seven installs: builds 0..5 are each replaced in turn, so the
+			// newest three backups hold builds 3, 4 and 5.
+			var srcs []string
+			for i := 0; i < 7; i++ {
+				src := fakeBuild(t, fmt.Sprintf("b%d", i))
+				srcs = append(srcs, src)
+				if out, err := runDevInstall(t, src); err != nil {
+					t.Fatalf("dev-install.sh b%d: %v: %s", i, err, out)
+				}
+			}
+
+			if got, want := fileSHA(t, devBin(home)), fileSHA(t, srcs[6]); got != want {
+				t.Errorf("dev copy sha = %s, want the last build's %s", got, want)
+			}
+			if info, err := os.Lstat(devBin(home)); err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o100 == 0 {
+				t.Errorf("dev copy must be an executable regular file: %v %v", info, err)
+			}
+			if staged, _ := filepath.Glob(devBin(home) + ".new*"); len(staged) != 0 {
+				t.Errorf("no staging file may remain after the swap, got %v", staged)
+			}
+			if _, err := os.Stat(devBin(home) + ".lock"); !os.IsNotExist(err) {
+				t.Error("each install must release its lock")
+			}
+
+			backups, err := filepath.Glob(devBin(home) + ".backup-*")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := map[string]bool{}
+			for _, b := range backups {
+				got[fileSHA(t, b)] = true
+			}
+			if len(backups) != 3 {
+				t.Errorf("want exactly the newest 3 backups, got %d: %v", len(backups), backups)
+			}
+			for _, i := range []int{3, 4, 5} {
+				if !got[fileSHA(t, srcs[i])] {
+					t.Errorf("backup of build b%d missing; kept %v", i, backups)
+				}
+			}
+
+			if b, err := os.ReadFile(installedBin(home)); err != nil || !bytes.Equal(b, release) {
+				t.Error("dev-install must never touch the release install path")
+			}
+		})
+	}
+}
+
+func TestDevInstallIgnoresPlantedStagingSymlink(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	release := []byte("#!/bin/sh\necho claude-statusline 1.0.0 (rel, rel)\n")
+	if err := os.WriteFile(installedBin(home), release, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(installedBin(home), devBin(home)+".new"); err != nil {
+		t.Fatal(err)
+	}
+
+	src := fakeBuild(t, "b1")
+	if out, err := runDevInstall(t, src); err != nil {
+		t.Fatalf("dev-install.sh: %v: %s", err, out)
+	}
+	if b, err := os.ReadFile(installedBin(home)); err != nil || !bytes.Equal(b, release) {
+		t.Error("a symlink at the staging name must never lead the install onto the release copy")
+	}
+	if info, err := os.Lstat(devBin(home)); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("dev copy must be a regular file, got %v %v", info, err)
+	}
+	if got, want := fileSHA(t, devBin(home)), fileSHA(t, src); got != want {
+		t.Errorf("dev copy sha = %s, want %s", got, want)
+	}
+}
+
+func TestDevInstallRefusesWhenHashingFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prior := []byte("#!/bin/sh\necho claude-statusline dev (prior, today)\n")
+	if err := os.WriteFile(devBin(home), prior, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	shimPath(t, map[string]string{"sha256sum": "exit 1\n", "shasum": "exit 1\n"})
+
+	out, err := runDevInstall(t, fakeBuild(t, "b1"))
+	if err == nil {
+		t.Fatalf("dev-install.sh must refuse when no checksum can be computed, output: %s", out)
+	}
+	if got, rerr := os.ReadFile(devBin(home)); rerr != nil || !bytes.Equal(got, prior) {
+		t.Error("a refused install must leave the existing dev copy untouched")
+	}
+	if staged, _ := filepath.Glob(devBin(home) + ".new*"); len(staged) != 0 {
+		t.Errorf("a refused install must clean up its staging file, got %v", staged)
+	}
+}
+
+func TestDevInstallRefusesWhileAnotherInstallRuns(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(devBin(home)+".lock", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prior := []byte("#!/bin/sh\necho claude-statusline dev (prior, today)\n")
+	if err := os.WriteFile(devBin(home), prior, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runDevInstall(t, fakeBuild(t, "b1"))
+	if err == nil {
+		t.Fatalf("dev-install.sh must refuse while another install holds the lock, output: %s", out)
+	}
+	if got, rerr := os.ReadFile(devBin(home)); rerr != nil || !bytes.Equal(got, prior) {
+		t.Error("a refused install must leave the existing dev copy untouched")
+	}
+
+	if !strings.Contains(out, devBin(home)+".lock") {
+		t.Errorf("refusal must name the lock to remove, got: %s", out)
+	}
+
+	// A lock left by a killed install is never cleared automatically: two
+	// installers reclaiming it at once could both proceed.
+	old := time.Now().Add(-24 * time.Hour)
+	if err := os.Chtimes(devBin(home)+".lock", old, old); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runDevInstall(t, fakeBuild(t, "b2")); err == nil {
+		t.Fatalf("an old lock must still be refused, output: %s", out)
+	}
+	if got, rerr := os.ReadFile(devBin(home)); rerr != nil || !bytes.Equal(got, prior) {
+		t.Error("a refused install must leave the existing dev copy untouched")
+	}
+}
+
+func TestDevInstallRefusesPastNinetyNineBackupsInOneSecond(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	shimDate(t, true)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prior := []byte("#!/bin/sh\necho claude-statusline dev (prior, today)\n")
+	if err := os.WriteFile(devBin(home), prior, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	last := devBin(home) + ".backup-20261114-120000-99"
+	if err := os.WriteFile(last, prior, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := runDevInstall(t, fakeBuild(t, "b1")); err == nil {
+		t.Fatalf("a 100th backup name in one second would sort out of order and must be refused, output: %s", out)
+	}
+	if got, rerr := os.ReadFile(devBin(home)); rerr != nil || !bytes.Equal(got, prior) {
+		t.Error("a refused install must leave the existing dev copy untouched")
+	}
+	if backups, _ := filepath.Glob(devBin(home) + ".backup-*"); len(backups) != 1 {
+		t.Errorf("a refused install must not add a backup, got %v", backups)
+	}
+}
+
+func TestDevInstallFirstInstallMakesNoBackup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	src := fakeBuild(t, "b1")
+	if out, err := runDevInstall(t, src); err != nil {
+		t.Fatalf("dev-install.sh: %v: %s", err, out)
+	}
+	if got, want := fileSHA(t, devBin(home)), fileSHA(t, src); got != want {
+		t.Errorf("dev copy sha = %s, want %s", got, want)
+	}
+	if backups, _ := filepath.Glob(devBin(home) + ".backup-*"); len(backups) != 0 {
+		t.Errorf("first install has nothing to back up, got %v", backups)
+	}
+}
+
+func TestDevInstallRefusesMissingBuild(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prior := []byte("#!/bin/sh\necho claude-statusline dev (prior, today)\n")
+	if err := os.WriteFile(devBin(home), prior, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runDevInstall(t, filepath.Join(t.TempDir(), "claude-statusline"))
+	if err == nil {
+		t.Fatalf("dev-install.sh must fail when the build is missing, output: %s", out)
+	}
+	if !strings.Contains(out, "make build") {
+		t.Errorf("refusal should say how to produce the build, got: %s", out)
+	}
+	if got, rerr := os.ReadFile(devBin(home)); rerr != nil || !bytes.Equal(got, prior) {
+		t.Error("a refused install must leave the existing dev copy untouched")
+	}
+	if backups, _ := filepath.Glob(devBin(home) + ".backup-*"); len(backups) != 0 {
+		t.Errorf("a refused install must not create backups, got %v", backups)
+	}
+}

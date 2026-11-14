@@ -2,7 +2,7 @@ BINARY := claude-statusline
 DIST   := dist
 
 .PHONY: build test vet lint vuln race cover fuzz bench check release snapshot clean \
-	tools hooks preflight release-checksums publish-formula \
+	tools hooks preflight release-checksums publish-formula dev-install \
 	require-golangci-lint require-govulncheck require-goreleaser
 
 COVER_MIN ?= 90
@@ -97,6 +97,14 @@ vuln: require-govulncheck
 
 build: vet
 	go build -trimpath -ldflags="-s -w" -o $(BINARY) .
+
+# Builds HEAD and installs it as the dev copy, ~/.claude/claude-statusline-dev
+# (backup, staged swap, sha256 check, newest 3 backups kept); a failed build
+# stops here and leaves the dev copy alone. Run `make check` first so only a
+# gated build reaches the live line. Release copies (Homebrew, the plugin's
+# ~/.claude/claude-statusline) are never touched.
+dev-install: build
+	sh scripts/dev-install.sh $(BINARY)
 
 test:
 	go test ./...
