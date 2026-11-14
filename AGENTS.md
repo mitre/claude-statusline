@@ -61,6 +61,7 @@ make vuln     # govulncheck
 make race     # full suite under the race detector
 make cover    # coverage floors: 90% total, 85% per package (override: COVER_MIN / PKG_COVER_MIN)
 make build    # local binary (claude-statusline --version reports build identity; "dev" on un-injected builds)
+make dev-install # build HEAD and install it as the dev copy ~/.claude/claude-statusline-dev (backup, staged swap, sha256 check; run make check first)
 make snapshot # local no-publish proof of the release pipeline: darwin/linux × arm64/amd64 archives + checksums into dist/
 make release  # publish via goreleaser — tag + GITHUB_TOKEN required (the v* tag workflow's job, gated by its preflight and make-check jobs)
 
@@ -82,13 +83,27 @@ The release pipeline (tag → preflight → gates → release → Homebrew formu
 
 ## Live Binary — this repo IS the owner's statusline
 
-The binary installed at `~/.claude/claude-statusline` is the owner's live status line, kept at a HEAD build. Every behavior change ends with the **live gate**: `make check` → back up the installed binary (`cp` to a timestamped `.backup-*` beside it) → atomic swap (`cp` to `.new`, then `mv`) → verify shas match → the owner eyeballs the result. Rollback = the previous backup binary. Live verification is non-negotiable — it has caught real bugs unit fakes cannot see (orphaned-pipe hangs, index-lock races, cache-boundary staleness, real-cache test pollution).
+The owner runs this binary as the status line in every Claude Code session. There are two copies, and they never mix:
+
+- **Release copy** — `/opt/homebrew/bin/claude-statusline` (Homebrew, `mitre/tap`). The owner's user settings (`~/.claude/settings.json`) point at it, so every session outside this repo runs it. It changes only through a tagged release and `brew upgrade claude-statusline`. Never copy a build into Homebrew's bin or Cellar: a dev build once sat in the 0.3.0 keg reporting `dev`, and `brew reinstall mitre/tap/claude-statusline` restored it. The plugin route (`/claude-statusline:setup`) installs a release at `~/.claude/claude-statusline`, and its SessionStart hook re-pins that path to the plugin's version whenever it reports anything other than that version or `dev`; that path is a release copy too, never a dev target (the hook silently reverted three earlier live-gate installs).
+- **Dev copy** — `~/.claude/claude-statusline-dev`, written only by `make dev-install`. Only sessions in this repo run it, through the owner's `.claude/settings.local.json` (project-local settings override user settings and apply without a restart):
+
+  ```json
+  "statusLine": {"type": "command", "command": "~/.claude/claude-statusline-dev", "padding": 0}
+  ```
+
+Every behavior change ends with the **live gate**: `make check` → `make dev-install` (builds HEAD; a failed build leaves the dev copy alone; one install at a time; backs up the previous dev copy beside itself as `.backup-<timestamp>`, copies the build into a freshly created staging file and renames it into place, checks the installed sha256 against `./claude-statusline`, keeps the newest 3 backups, refuses when there is no build) → the owner looks at the status line in a session in this repo → PR → merge → release → `brew upgrade`. Live verification is non-negotiable — it has caught real bugs unit fakes cannot see (orphaned-pipe hangs, index-lock races, cache-boundary staleness, real-cache test pollution).
+
+- **Rollback:** copy the newest `~/.claude/claude-statusline-dev.backup-*` to a temporary name beside the dev copy, then `mv` it over the dev copy; or remove the `statusLine` key from `.claude/settings.local.json` to fall back to the release copy.
+- **Stuck lock:** an install killed mid-run leaves `~/.claude/claude-statusline-dev.lock`; `make dev-install` then refuses and names it. If no install is running, `rmdir` it. The lock is never cleared automatically, because two installers clearing it at once could both proceed.
+- **One session outside this repo:** `claude --settings '{"statusLine":{"type":"command","command":"~/.claude/claude-statusline-dev","padding":0}}'` runs the dev copy for that session only; no settings file changes.
+- **Which build is live:** local builds report `dev (none, unknown)` from `--version`; `go version -m ~/.claude/claude-statusline-dev` shows the commit it was built from (`vcs.revision`, `vcs.modified`), and `shasum -a 256` ties it to `./claude-statusline`. For the release copy, compare `claude-statusline --version` with the latest release tag. Check this before diagnosing a display bug.
 
 ## Architecture
 
 ### Dependency injection at the edges — the load-bearing pattern
 
-`run.go` defines a `deps` struct holding every OS/network/env touchpoint: `stdin`, `getenv`, `runGit`, `keychainOK`, `fetchUsage`, `readFile`. `main.go` wires the real implementations (keychain lookup, HTTP fetch to the OAuth usage endpoint, `exec.CommandContext` git); tests wire fakes. **Any new OS, network, or subprocess access must be added to `deps` and injected** — this is why `make test` needs no network and why `run_test.go` can golden-test full end-to-end renders.
+`run.go` defines a `deps` struct holding every OS/network/env touchpoint: `stdin`, `getenv`, `runGit`, `keychainOK`, `fetchUsage`, `readFile`, `stat`, `now`. `main.go` wires the real implementations (keychain lookup, HTTP fetch to the OAuth usage endpoint, `exec.CommandContext` git, `os.Stat`, `time.Now`); tests wire fakes (a nil `stat` or `now` falls back to the real one). **Any new OS, network, or subprocess access must be added to `deps` and injected** — this is why `make test` needs no network and why `run_test.go` can golden-test full end-to-end renders.
 
 ### Render pipeline (one frame per invocation)
 
@@ -111,13 +126,13 @@ Unparseable stdin renders nothing (empty stdout, empty stderr). A malformed conf
 ## Conventions
 
 - Display changes = golden-test changes, made intentionally in the same commit. If a golden fails unexpectedly, the code is wrong, not the golden.
-- **Neutral fixture identity, always**: fixtures/goldens use `/Users/dev`, `~/projects/demo-app`, `dev@example.com`, session `0a1b2c3d-0000-4000-8000-000000000000` (cwd FNV key `e6531ce5fc09ac4f`) — never real paths, emails, or session ids. Attribution metadata (git author identity, `Authored by:` trailers) is standard and stays.
+- **Neutral fixture identity, always**: fixtures/goldens use `/Users/dev`, `~/projects/demo-app`, `dev@example.com`, session `0a1b2c3d-0000-4000-8000-000000000000` (cwd FNV key `e6531ce5fc09ac4f`) — never real paths, emails, or session ids. Attribution metadata (git author identity, `Signed-off-by:` trailers) is standard and stays.
 - **Config keys land in three places in one commit**: `fileSchema` in `internal/config`, `statusline.example.toml`, and the README — 1:1 parity, with defaults and invalid-value errors tested.
 - Session state for Claude sessions lives in `.beads/recovery-context.md` (archives under `.beads/archive/`); cards are worked via `/project-tdd lite <card-id>`.
 - Security posture: stdin JSON and the workspace path are untrusted. Subprocess arguments are compile-time constants; the workspace path is only ever passed as a directory argument via direct `exec` (no shell). The OAuth token is resolved per fetch from Claude Code's credential stores (credentials file, then macOS keychain), sent only in the Authorization header, never logged or cached.
 - gosec/lint suppressions live in `.golangci.yml` as narrow per-path exclusions with a written justification each — follow that pattern; no inline `//nolint` without the same treatment.
 - `AGENTS.md` is the single source of truth for agent guidance; `CLAUDE.md` is a symlink to it — edit `AGENTS.md` only, never a separate CLAUDE.md.
-- Commit authorship: `Authored by: Aaron Lippold<lippold@gmail.com>` — no AI attribution. The owner controls all commits and pushes.
+- Commit authorship: `Signed-off-by: Aaron Lippold <lippold@gmail.com>` — no AI attribution. The owner controls all commits and pushes.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
 ## Beads Issue Tracker
