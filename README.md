@@ -168,11 +168,15 @@ the hot-only (≥80%) behavior.
 
 When the usage endpoint can't be reached, the row degrades in two stages.
 Claude Code v2.1.210+ sends the two all-model meters in the statusline
-payload itself, so `5h`/`week` switch to those **live** values (no network
-needed — even when no cached payload exists at all). Endpoint-only segments
-(the per-model window, the extra-usage badge) keep serving the last
-known-good payload, qualified by a trailing dim `(data 6m old)` age marker
-whenever such stale data is actually visible. On hosts whose payload lacks
+payload itself, so `5h` switches to the **live** value, and `week` too when
+the payload carries a weekly window (no network needed — even when no cached
+payload exists at all). Endpoint-only account segments (a weekly reading
+stdin did not replace, plan-scoped limits, the per-model window) keep
+serving the last known-good payload, qualified by a trailing dim
+`(data 6m old)` age marker whenever such stale data is actually visible; a
+row of only live meters carries no marker, and a row with no meter is not
+rendered. The model row's extra-usage badge also comes from that payload
+and carries no age marker. On hosts whose payload lacks
 `rate_limits`, the old behavior remains: the whole row serves the stale
 payload with the marker, and collapses only when there is no data at all —
 values are never fabricated. `show_stale_age = false` hides the marker.

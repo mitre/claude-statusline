@@ -662,6 +662,18 @@ func TestAccountRowOmitsFiveHourMeterWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestAccountRowRendersNothingWithoutAMeter(t *testing.T) {
+	// Identity alone is not a reading: with no 5h, week, scoped or model
+	// meter there is no row — and no age marker qualifying nothing.
+	in := Usage{
+		Email: "dev@example.com", PlanTier: "Max",
+		FiveHourAbsent: true, SevenDayAbsent: true, DataAge: 6 * time.Minute,
+	}
+	if got := AccountRow(in, DefaultOptions()); got != "" {
+		t.Errorf("AccountRow without a meter = %q, want no row", got)
+	}
+}
+
 func TestAccountRowOmitsWeekMeterWhenAbsent(t *testing.T) {
 	// No weekly window in progress: the 5h and scoped meters render; the
 	// week meter must not appear as a fabricated 0%.

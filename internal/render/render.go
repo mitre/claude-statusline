@@ -325,6 +325,7 @@ func AccountRow(u Usage, o Options) string {
 	if u.PlanTier != "" {
 		parts = append(parts, u.PlanTier)
 	}
+	identity := len(parts)
 	if !u.FiveHourAbsent {
 		parts = append(parts, meter(fmt.Sprintf("5h %d%%", u.U5), u.U5, u.R5, always))
 	}
@@ -337,12 +338,16 @@ func AccountRow(u Usage, o Options) string {
 	if u.ModelFamily != "" {
 		parts = append(parts, meter(fmt.Sprintf("%s/wk %d%%", u.ModelFamily, u.ModelPct), u.ModelPct, u.ModelReset, always))
 	}
+	if len(parts) == identity {
+		// Identity alone is not a reading: no meter, no row.
+		return ""
+	}
 	if u.DataAge > 0 && o.Account.ShowStaleAge && (!u.MetersLive || u.ModelFamily != "") {
 		// Stale-good fallback engaged: qualify the stale data with a
 		// factual, dim age — informational tier, never alarm styling (red
-		// stays reserved for billing/API alarms). With live stdin meters
-		// the marker applies only to the endpoint-sourced model window, so
-		// it renders only while that segment is visible.
+		// stays reserved for billing/API alarms). MetersLive is false
+		// while a stale weekly or endpoint scoped meter is visible; the
+		// endpoint-sourced model window always qualifies.
 		parts = append(parts, dimS.Render("(data "+ageLabel(u.DataAge)+" old)"))
 	}
 	return lbl("account") + strings.Join(parts, sepDot)

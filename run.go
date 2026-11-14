@@ -149,6 +149,9 @@ func run(d deps) (string, string) {
 				u.SevenDayAbsent = false
 				u.U7, u.R7 = sess.R7Pct, usage.ResetLabelUnix(sess.R7ResetUnix, now)
 			}
+			// Taken before the stdin scoped meters are appended: only the
+			// endpoint's own scoped limits are stale.
+			endpointScoped := len(u.Scoped) > 0
 			for _, sc := range sess.ScopedMeters {
 				u.Scoped = append(u.Scoped, render.ScopedLimit{
 					Name:  sc.Name,
@@ -156,9 +159,10 @@ func run(d deps) (string, string) {
 					Reset: usage.ResetLabelUnix(sc.ResetUnix, now),
 				})
 			}
-			// Live only when stdin carried both windows; otherwise stale
-			// endpoint data stays visible and keeps the age marker.
-			u.MetersLive = sess.R7OK
+			// Every visible 5h/week/scoped meter is live when the weekly
+			// window came from stdin or is absent, and no endpoint scoped
+			// limit remains. The model window qualifies separately.
+			u.MetersLive = (sess.R7OK || u.SevenDayAbsent) && !endpointScoped
 			have = true
 		}
 		if have {

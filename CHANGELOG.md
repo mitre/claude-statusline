@@ -28,8 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it; stdin without one leaves the meter omitted.
 - Stdin that carries a five-hour window but no weekly one no longer
   overwrites a stale endpoint weekly reading with `week 0%`. The stale
-  reading stays, and the row keeps its `(data … old)` age marker whenever
-  stdin did not supply both windows.
+  reading stays with its `(data … old)` age marker.
+- The account row's age marker renders exactly when a visible account
+  meter comes from stale endpoint data: a stale weekly reading or a stale
+  plan-scoped limit now keeps the marker beside live stdin meters, live
+  stdin scoped meters never count as stale, and a row of only live meters
+  carries none.
+- A usage payload with no meter the account row can show (only unscoped
+  plan limits) renders no account row instead of the account identity
+  alone with an age marker qualifying nothing.
 - Fetch attempts are throttled independently of the TTL: after any attempt
   (success, network error, rate limit or rejected body) no further fetch runs
   for 200 s, or for the server's `Retry-After` when longer. Before this a
