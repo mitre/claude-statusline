@@ -536,10 +536,10 @@ const e2eNullFiveHourPayload = `{
 }`
 
 func TestRunNullFiveHourPayloadOmitsTheMeter(t *testing.T) {
-	// A fresh payload with no five-hour window renders the week meter alone:
-	// no fabricated "5h 0%", no stale marker, and the stdin meters do not
-	// replace fresh endpoint data.
+	// A fresh payload with no five-hour window and no live stdin reading
+	// renders the week meter alone: no fabricated "5h 0%", no stale marker.
 	d := e2eDeps(t, "full.json")
+	d.stdin = strings.NewReader(e2eStdinNoRateLimits)
 	d.fetchUsage = func() ([]byte, error) { return []byte(e2eNullFiveHourPayload), nil }
 
 	out, _ := run(d)
@@ -561,6 +561,26 @@ func TestRunStdinFiveHourSupersedesAbsentWindow(t *testing.T) {
 	out, _ := run(d)
 	if !strings.Contains(out, "5h 42%") || !strings.Contains(out, "week 77%") {
 		t.Errorf("stdin five-hour reading must supersede the absent endpoint window: %q", out)
+	}
+}
+
+func TestRunTTLBelowFloorKeepsTheRestOfTheConfig(t *testing.T) {
+	// The v0.3.0 example config shipped ttl_seconds = 180. Upgrading must
+	// raise it to the floor and keep every other setting in the file, with
+	// one diagnostic — not fall back to the defaults wholesale.
+	d := e2eDeps(t, "full.json")
+	appendConfig(t, d, "[rows]\nproject = false\n[usage]\nttl_seconds = 180\n")
+
+	out, errOut := run(d)
+	if strings.Contains(out, "project") {
+		t.Errorf("rows.project = false from the same file must still apply: %q", out)
+	}
+	if !strings.Contains(out, "account") {
+		t.Errorf("the account row must still render: %q", out)
+	}
+	if strings.Contains(errOut, "config error") || !strings.Contains(errOut, "usage.ttl_seconds") ||
+		!strings.Contains(errOut, "180") || !strings.Contains(errOut, "200") {
+		t.Errorf("stderr must carry one adjustment note, not a config error: %q", errOut)
 	}
 }
 
@@ -597,9 +617,10 @@ func seedStaleUsage(t *testing.T, d deps, payload string) {
 }
 
 func TestRunLimitsOnlyPayloadOmitsTheWeekMeter(t *testing.T) {
-	// A fresh payload with neither window renders the scoped limit alone:
-	// no fabricated "week 0%" and no "5h 0%".
+	// A fresh payload with neither window and no live stdin reading renders
+	// the scoped limit alone: no fabricated "week 0%" and no "5h 0%".
 	d := e2eDeps(t, "full.json")
+	d.stdin = strings.NewReader(e2eStdinNoRateLimits)
 	d.fetchUsage = func() ([]byte, error) { return []byte(e2eLimitsOnlyPayload), nil }
 
 	out, _ := run(d)
@@ -608,6 +629,53 @@ func TestRunLimitsOnlyPayloadOmitsTheWeekMeter(t *testing.T) {
 	}
 	if strings.Contains(out, "week") || strings.Contains(out, "5h") {
 		t.Errorf("no week or 5h meter may render when the payload carries neither window: %q", out)
+	}
+}
+
+func TestRunLiveStdinFillsWindowsAFreshPayloadMarksAbsent(t *testing.T) {
+	// A fresh endpoint payload that reports a window as not in progress
+	// loses to a live stdin reading of that window; windows the payload
+	// does report keep the fresh endpoint value. Nothing is stale: no marker.
+	for _, c := range []struct {
+		name, payload, stdin string
+		want, absent         []string
+	}{
+		{
+			"null five_hour, stdin both windows", e2eNullFiveHourPayload, "",
+			[]string{"5h 42%", "week 43%"},
+			[]string{"week 77%", "old)"},
+		},
+		{
+			"limits only, stdin both windows", e2eLimitsOnlyPayload, "",
+			[]string{"5h 42%", "week 77%", "Fable 40%"},
+			[]string{"old)"},
+		},
+		{
+			"limits only, stdin five-hour only", e2eLimitsOnlyPayload, e2eStdinFiveHourOnly,
+			[]string{"5h 42%", "Fable 40%"},
+			[]string{"week", "old)"},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d := e2eDeps(t, "full.json")
+			if c.stdin != "" {
+				d.stdin = strings.NewReader(c.stdin)
+			}
+			payload := c.payload
+			d.fetchUsage = func() ([]byte, error) { return []byte(payload), nil }
+
+			out, _ := run(d)
+			for _, w := range c.want {
+				if !strings.Contains(out, w) {
+					t.Errorf("want %q in the account row: %q", w, out)
+				}
+			}
+			for _, a := range c.absent {
+				if strings.Contains(out, a) {
+					t.Errorf("%q must not render: %q", a, out)
+				}
+			}
+		})
 	}
 }
 

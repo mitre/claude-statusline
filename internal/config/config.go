@@ -17,8 +17,12 @@ import (
 
 // Config is the full runtime configuration.
 type Config struct {
-	Options render.Options
-	Usage   struct {
+	// Diagnostics are adjustments Load made to a value it could correct
+	// without discarding the file (e.g. a TTL raised to the fetch floor);
+	// the caller reports them on stderr.
+	Diagnostics []string
+	Options     render.Options
+	Usage       struct {
 		Enabled    bool
 		TTLSeconds int
 	}
@@ -209,10 +213,15 @@ func Load(path string) (Config, error) {
 	}
 	setB(&cfg.Usage.Enabled, f.Usage.Enabled)
 	if f.Usage.TTLSeconds != nil {
-		if *f.Usage.TTLSeconds < minUsageTTLSeconds {
-			return cfg, fmt.Errorf("usage.ttl_seconds: %d is not valid (must be >= %d; the usage endpoint rate-limits faster polling)", *f.Usage.TTLSeconds, minUsageTTLSeconds)
-		}
 		cfg.Usage.TTLSeconds = *f.Usage.TTLSeconds
+		if *f.Usage.TTLSeconds < minUsageTTLSeconds {
+			// Raised, not rejected: the v0.3.0 example shipped 180, and a
+			// rejection would discard every other setting in the file.
+			cfg.Usage.TTLSeconds = minUsageTTLSeconds
+			cfg.Diagnostics = append(cfg.Diagnostics, fmt.Sprintf(
+				"usage.ttl_seconds: %d raised to %d (the usage endpoint rate-limits faster polling)",
+				*f.Usage.TTLSeconds, minUsageTTLSeconds))
+		}
 	}
 	if f.Cache.Dir != nil {
 		cfg.CacheDir = *f.Cache.Dir

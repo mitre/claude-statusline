@@ -394,17 +394,27 @@ func TestLoadUsageTTLSeconds(t *testing.T) {
 		t.Errorf("ttl_seconds=200 (the floor): err=%v got=%d", err, cfg.Usage.TTLSeconds)
 	}
 
-	// The usage endpoint rate-limits polling faster than ~200 s; a TTL below
-	// the floor would configure the storm back in. 0 (always refetch) and
-	// negatives fail for the same reason.
-	for _, bad := range []string{"199", "60", "0", "-5"} {
-		_, err := Load(write("bad-"+bad+".toml", "[usage]\nttl_seconds = "+bad+"\n"))
-		if err == nil {
-			t.Errorf("ttl_seconds=%s must surface an error (floor is 200)", bad)
+	// The usage endpoint rate-limits polling faster than ~200 s, so a TTL
+	// below the floor is raised to it — with a diagnostic, and without
+	// discarding the rest of the file (the v0.3.0 example shipped 180).
+	for _, low := range []string{"180", "199", "60", "0", "-5"} {
+		cfg, err := Load(write("low-"+low+".toml", "[usage]\nenabled = false\nttl_seconds = "+low+"\n"))
+		if err != nil {
+			t.Errorf("ttl_seconds=%s: err=%v, want the value raised, not the file rejected", low, err)
 			continue
 		}
-		if !strings.Contains(err.Error(), "usage.ttl_seconds") || !strings.Contains(err.Error(), "200") {
-			t.Errorf("ttl_seconds=%s: error %q must name the field and the floor", bad, err)
+		if cfg.Usage.TTLSeconds != 200 {
+			t.Errorf("ttl_seconds=%s: got %d, want 200 (the floor)", low, cfg.Usage.TTLSeconds)
 		}
+		if cfg.Usage.Enabled {
+			t.Errorf("ttl_seconds=%s: usage.enabled=false from the same file was lost", low)
+		}
+		if len(cfg.Diagnostics) != 1 || !strings.Contains(cfg.Diagnostics[0], "usage.ttl_seconds") ||
+			!strings.Contains(cfg.Diagnostics[0], low) || !strings.Contains(cfg.Diagnostics[0], "200") {
+			t.Errorf("ttl_seconds=%s: diagnostics %q must name the field, the value and the floor", low, cfg.Diagnostics)
+		}
+	}
+	if cfg, _ := Load(write("c.toml", "[usage]\nttl_seconds = 600\n")); len(cfg.Diagnostics) != 0 {
+		t.Errorf("a valid TTL must produce no diagnostic: %q", cfg.Diagnostics)
 	}
 }

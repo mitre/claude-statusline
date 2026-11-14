@@ -55,10 +55,11 @@ type Usage struct {
 	// Non-zero renders the trailing dim age marker — the meters keep their
 	// true (old) values, the marker qualifies them.
 	DataAge time.Duration
-	// MetersLive marks both 5h/week meters as stdin-sourced (live this
-	// render) while DataAge still describes the stale endpoint payload
-	// behind the remaining segments. The age marker then qualifies only
-	// visible stale data: it renders solely when the model window shows.
+	// MetersLive: after the stdin merge, every visible 5h, week and
+	// scoped meter is live (from stdin, or absent), while DataAge still
+	// describes the stale endpoint payload. False whenever a stale weekly
+	// reading or an endpoint scoped limit stays visible. The model window
+	// is always endpoint-sourced and qualifies for the age marker on its own.
 	MetersLive bool
 	// FiveHourAbsent: the endpoint reports no five-hour window in progress
 	// (five_hour is null). The 5h meter is omitted; the other meters render

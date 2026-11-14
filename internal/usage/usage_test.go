@@ -554,6 +554,33 @@ func TestParseKeepsFiveHourPresentFlagOnFullPayload(t *testing.T) {
 	}
 }
 
+func TestParseTreatsNullUtilizationAsAbsentWindow(t *testing.T) {
+	// A window object whose utilization is null carries no reading: it is
+	// absent, exactly like a null window — never rendered as 0%.
+	raw := `{"five_hour": {"utilization": null}, "seven_day": {"utilization": null, "resets_at": "2026-11-06T22:00:00Z"},
+	  "limits": [{"kind": "weekly_scoped", "percent": 40, "is_active": true,
+	    "scope": {"model": {"display_name": "Fable"}}}]}`
+	u, err := Parse([]byte(raw), now, "")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !u.FiveHourAbsent || !u.SevenDayAbsent {
+		t.Errorf("FiveHourAbsent/SevenDayAbsent = %v/%v, want true/true", u.FiveHourAbsent, u.SevenDayAbsent)
+	}
+}
+
+func TestParseAcceptsWeeklyWindowAlone(t *testing.T) {
+	// The shape gate admits a payload whose only reading is the weekly
+	// window; rejecting it would freeze the row on a stale cache.
+	u, err := Parse([]byte(`{"five_hour": null, "seven_day": {"utilization": 43.0}}`), now, "")
+	if err != nil {
+		t.Fatalf("Parse rejected a weekly-only payload: %v", err)
+	}
+	if u.SevenDayAbsent || u.U7 != 43 || !u.FiveHourAbsent {
+		t.Errorf("SevenDayAbsent/U7/FiveHourAbsent = %v/%d/%v, want false/43/true", u.SevenDayAbsent, u.U7, u.FiveHourAbsent)
+	}
+}
+
 func TestParseMarksAbsentWeeklyWindow(t *testing.T) {
 	// A payload with neither window passes the shape gate on its plan
 	// limits; the weekly window is marked absent so no "week 0%" renders.

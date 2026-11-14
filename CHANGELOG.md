@@ -9,9 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `[usage] ttl_seconds` defaults to 200 (was 180) and values below 200 are
-  rejected at config load, with the usual config-error diagnostic, so the
-  poll rate can never be configured below the endpoint's limit.
+- `[usage] ttl_seconds` defaults to 200 (was 180), and a value below 200
+  is raised to 200 with a one-line stderr note, so the poll rate can never
+  be configured below the endpoint's limit. The rest of the config file
+  still applies (the v0.3.0 example config shipped `ttl_seconds = 180`).
 
 ### Fixed
 
@@ -26,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passes the shape gate on its plan limits, omits the `week` meter instead
   of showing a fabricated `week 0%`. A live stdin weekly reading supersedes
   it; stdin without one leaves the meter omitted.
+- A live stdin reading fills a window that a fresh endpoint payload reports
+  as not in progress; windows the fresh payload does report keep the
+  endpoint's value.
 - Stdin that carries a five-hour window but no weekly one no longer
   overwrites a stale endpoint weekly reading with `week 0%`. The stale
   reading stays with its `(data … old)` age marker.

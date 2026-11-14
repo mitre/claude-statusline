@@ -70,6 +70,9 @@ func run(d deps) (string, string) {
 		cfg = config.Default()
 		diag = fmt.Sprintf("claude-statusline: config error: %v\n", err)
 	}
+	for _, note := range cfg.Diagnostics {
+		diag += "claude-statusline: config: " + note + "\n"
+	}
 	_ = os.MkdirAll(cfg.CacheDir, 0o700)
 
 	badge, apiKeySet := auth.Detect(cfg.CacheDir, d.getenv, d.keychainOK)
@@ -132,13 +135,26 @@ func run(d deps) (string, string) {
 				}
 			}
 		}
-		// The stdin payload carries the two all-model meters since v2.1.210.
+		// The stdin payload carries the all-model meters since v2.1.210.
 		// When the endpoint data is stale — or absent entirely (the row used
 		// to collapse) — this render's live values replace those meters:
-		// fresher by definition. Endpoint-only segments (model window, extra
+		// fresher by definition. Endpoint-only segments (a weekly reading
+		// stdin did not replace, scoped limits, the model window, extra
 		// usage) keep their stale-good semantics, and the render layer scopes
-		// the dim age marker to the stale data that remains visible.
-		if sess.RateLimitsOK && (!have || u.DataAge > 0) {
+		// the dim age marker to the stale account data that remains visible.
+		// Fresh endpoint data keeps its readings; a live stdin reading only
+		// fills a window the fresh payload reports as not in progress.
+		switch {
+		case sess.RateLimitsOK && have && u.DataAge == 0:
+			if u.FiveHourAbsent {
+				u.FiveHourAbsent = false
+				u.U5, u.R5 = sess.R5Pct, usage.ResetLabelUnix(sess.R5ResetUnix, now)
+			}
+			if u.SevenDayAbsent && sess.R7OK {
+				u.SevenDayAbsent = false
+				u.U7, u.R7 = sess.R7Pct, usage.ResetLabelUnix(sess.R7ResetUnix, now)
+			}
+		case sess.RateLimitsOK:
 			// The host's live readings supersede the endpoint's. The
 			// five-hour reading is always present within RateLimitsOK; the
 			// weekly one may not be, and without it the endpoint's weekly
