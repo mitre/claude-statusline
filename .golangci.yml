@@ -43,9 +43,13 @@ linters:
       - path: internal/gitinfo/
         linters: [gosec]
         text: "G304"
-      # runGit's purpose is executing git with a variable working directory.
-      # Arguments are compile-time constants from internal/gitinfo; the dir is
-      # the host-provided workspace path. No shell is involved (direct exec).
+      # Two direct execs, no shell anywhere. runGit executes git with a
+      # variable working directory: arguments are compile-time constants from
+      # internal/gitinfo; the dir is the host-provided workspace path.
+      # keychainCredentialJSON passes the keychain service and account names
+      # Claude Code derives from the environment; each is checked against its
+      # exact ported pattern (keychainServicePattern, keychainAccountPattern)
+      # before the exec and refused otherwise.
       - path: main\.go
         linters: [gosec]
         text: "G204"

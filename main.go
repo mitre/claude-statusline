@@ -9,11 +9,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"strconv"
 	"strings"
 	"time"
@@ -30,11 +32,13 @@ func main() {
 		return
 	}
 	// Subscription credentials resolve through Claude Code's own store
-	// precedence (credentials file, then macOS keychain) — see credentials.go.
-	creds := credentialSource{
-		getenv:   os.Getenv,
-		readFile: os.ReadFile,
-		keychain: keychainCredentialJSON,
+	// precedence (macOS keychain item, then the plaintext store) — see
+	// tokensource.go.
+	creds := tokenSource{
+		lookupEnv: os.LookupEnv,
+		readFile:  os.ReadFile,
+		username:  loginName,
+		keychain:  keychainCredentialJSON,
 	}
 	out, diag := run(deps{
 		stdin:      os.Stdin,
@@ -70,21 +74,38 @@ func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 var keychainTimeout = 1 * time.Second
 
 // keychainCredentialJSON reads Claude Code's credential JSON from the macOS
-// keychain item. On hosts without the `security` binary (Linux, containers)
-// the exec fails cleanly and the credential chain treats it as a miss.
-// A timeout bounds the exec so an unresponsive keychain or prompt never
-// blocks the statusline render.
-func keychainCredentialJSON() (string, error) {
+// keychain item for service and account, as Claude Code does:
+// security find-generic-password -a <account> -w -s <service>. Both values
+// are derived from the environment, so each must match its exact ported
+// shape (keychainServicePattern, keychainAccountPattern) before the direct
+// exec; anything else is refused without running security. On hosts
+// without the security binary (Linux, containers) the exec fails cleanly
+// and the token source treats it as a miss. A timeout bounds the exec so
+// an unresponsive keychain or prompt never blocks the render.
+func keychainCredentialJSON(service, account string) (string, error) {
+	if !keychainServicePattern.MatchString(service) || !keychainAccountPattern.MatchString(account) {
+		return "", errors.New("keychain lookup refused: service or account outside the expected shape")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), keychainTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "security", "find-generic-password",
-		"-s", "Claude Code-credentials", "-w")
+		"-a", account, "-w", "-s", service)
 	cmd.WaitDelay = 100 * time.Millisecond
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// loginName is the OS account name, Claude Code's fallback when USER is
+// unset (os.userInfo().username).
+func loginName() (string, error) {
+	u, err := user.Current()
+	if err != nil {
+		return "", err
+	}
+	return u.Username, nil
 }
 
 // usageEndpoint and usageHTTPTimeout are test seams: main_test points them
@@ -99,7 +120,7 @@ var (
 // fetchUsage pulls the subscription-limits payload from the OAuth usage
 // endpoint, resolving the access token through the credential chain per
 // fetch — never cached, never logged.
-func fetchUsage(creds credentialSource) ([]byte, error) {
+func fetchUsage(creds tokenSource) ([]byte, error) {
 	token, err := creds.token()
 	if err != nil {
 		return nil, err
