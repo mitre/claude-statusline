@@ -28,6 +28,9 @@ type deps struct {
 	fetchUsage func() ([]byte, error)
 	readFile   func(string) ([]byte, error)
 	stat       func(string) (os.FileInfo, error)
+	// readDir lists a directory for the account resolver's exact-name
+	// check on the legacy record; nil means os.ReadDir.
+	readDir func(string) ([]os.DirEntry, error)
 	// now is the render's clock, handed to the usage resolver and parser
 	// (fetch gate, reset-boundary expiry, stale age, reset labels); nil
 	// means time.Now. The TTL check inside cache.ReadFresh reads the wall
@@ -69,6 +72,10 @@ func run(d deps) (string, string) {
 	stat := d.stat
 	if stat == nil {
 		stat = os.Stat
+	}
+	readDir := d.readDir
+	if readDir == nil {
+		readDir = os.ReadDir
 	}
 	clock := d.now
 	if clock == nil {
@@ -194,7 +201,7 @@ func run(d deps) (string, string) {
 			if sess.Email != "" {
 				u.Email = sess.Email
 			} else {
-				u.Email = account.Email(d.getenv("HOME"), d.readFile)
+				u.Email = account.Resolve(d.getenv, account.FS{ReadFile: d.readFile, Stat: stat, ReadDir: readDir}).Email
 			}
 			u.PlanTier = sess.PlanTier
 			st.Usage = &u

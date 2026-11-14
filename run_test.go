@@ -62,6 +62,9 @@ func e2eDeps(t testing.TB, stdinFixture string) deps {
 			}
 			return []byte(`{"oauthAccount":{"emailAddress":"dev@example.com"}}`), nil
 		},
+		// Hermetic: no legacy account record and no Antigravity config exist.
+		stat:    func(string) (os.FileInfo, error) { return nil, os.ErrNotExist },
+		readDir: func(string) ([]os.DirEntry, error) { return nil, os.ErrNotExist },
 	}
 }
 
@@ -450,36 +453,50 @@ func TestRunAntigravityConfigLoaded(t *testing.T) {
 	d.readFile = func(_ string) ([]byte, error) { return nil, os.ErrNotExist }
 
 	home := t.TempDir()
+	// The Antigravity config sets no cache dir, so config.Default resolves
+	// it from the PROCESS HOME: sandbox it, or the renders write the
+	// developer's real user cache.
+	t.Setenv("HOME", home)
 	agDir := filepath.Join(home, ".gemini", "antigravity-cli")
 	if err := os.MkdirAll(agDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// Hide activity row via Antigravity config file
-	agConfig := "[rows]\nactivity = false\n"
-	if err := os.WriteFile(filepath.Join(agDir, "statusline.toml"), []byte(agConfig), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
 	d.getenv = func(k string) string {
 		if k == "HOME" {
 			return home
 		}
 		return ""
 	}
-	d.stdin = strings.NewReader(`{
+	// The config file lives on the real filesystem under a temp HOME.
+	d.stat = os.Stat
+	const stdin = `{
 		"session_id": "9233d019-88e0-4ce2-a28c-6de1295fad0a",
 		"product": "antigravity",
 		"plan_tier": "Google AI Ultra",
 		"email": "lippold@gmail.com",
 		"cwd": "/Users/dev/projects/demo-app",
-		"lines_added": 12,
-		"lines_removed": 5,
+		"cost": {"total_lines_added": 12, "total_lines_removed": 5},
 		"quota": {
 			"gemini-5h": {"remaining_fraction": 0.95, "reset_time": "2026-10-04T18:43:54Z"}
 		}
-	}`)
+	}`
 
-	out, _ := run(d)
+	// Control: without the Antigravity config the activity row renders.
+	d.stdin = strings.NewReader(stdin)
+	if out, errOut := run(d); !strings.Contains(out, "activity") || errOut != "" {
+		t.Fatalf("without the Antigravity config the activity row must render: out %q stderr %q", out, errOut)
+	}
+
+	// Hide activity row via Antigravity config file
+	agConfig := "[rows]\nactivity = false\n"
+	if err := os.WriteFile(filepath.Join(agDir, "statusline.toml"), []byte(agConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d.stdin = strings.NewReader(stdin)
+	out, errOut := run(d)
+	if errOut != "" {
+		t.Errorf("unexpected stderr: %q", errOut)
+	}
 	if strings.Contains(out, "activity") || strings.Contains(out, "+12/-5") {
 		t.Errorf("activity row should have been disabled by ~/.gemini/antigravity-cli/statusline.toml: %q", out)
 	}
@@ -879,5 +896,35 @@ func TestRunStdinWithoutWeeklyKeepsTheStaleWeeklyReading(t *testing.T) {
 	}
 	if !strings.Contains(out, "(data 6m old)") {
 		t.Errorf("the stale weekly reading must carry the age marker: %q", out)
+	}
+}
+
+func TestRunAccountRowUsesTheConfigDirRecord(t *testing.T) {
+	// A second account run through CLAUDE_CONFIG_DIR keeps its record in
+	// that directory; the row must name that account, not the default one.
+	d := e2eDeps(t, "full.json")
+	base := d.getenv
+	d.getenv = func(k string) string {
+		if k == "CLAUDE_CONFIG_DIR" {
+			return "/Users/dev/second"
+		}
+		return base(k)
+	}
+	d.readFile = func(p string) ([]byte, error) {
+		switch p {
+		case "/Users/dev/.claude.json":
+			return []byte(`{"oauthAccount":{"emailAddress":"dev@example.com"}}`), nil
+		case "/Users/dev/second/.claude.json":
+			return []byte(`{"oauthAccount":{"emailAddress":"second@example.com"}}`), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	out, errOut := run(d)
+	if !strings.Contains(out, "second@example.com") || strings.Contains(out, "dev@example.com") {
+		t.Errorf("account row must name the CLAUDE_CONFIG_DIR account only: %q", out)
+	}
+	if errOut != "" {
+		t.Errorf("unexpected stderr: %q", errOut)
 	}
 }

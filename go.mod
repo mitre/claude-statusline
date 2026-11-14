@@ -6,6 +6,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/BurntSushi/toml v1.6.0
 	github.com/go-git/go-git/v5 v5.19.2
+	golang.org/x/text v0.42.0
 )
 
 require (

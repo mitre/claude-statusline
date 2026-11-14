@@ -44,6 +44,7 @@ func main() {
 		fetchUsage: func() ([]byte, error) { return fetchUsage(creds) },
 		readFile:   os.ReadFile,
 		stat:       os.Stat,
+		readDir:    os.ReadDir,
 		now:        time.Now,
 	})
 	if diag != "" {
