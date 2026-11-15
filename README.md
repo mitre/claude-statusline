@@ -235,11 +235,18 @@ values are never fabricated. `show_stale_age = false` hides the marker.
 - **Security posture:** stdin JSON and the workspace path are untrusted input —
   bad JSON renders nothing, and the path is only ever passed to direct `exec`
   as a directory argument (no shell anywhere; every subprocess argument is a
-  compile-time constant). The usage fetch is bounded (2 s timeout, 1 MB body
-  cap) and the OAuth token is resolved per fetch through Claude Code's own
-  credential stores — the `.credentials.json` file when present (honoring
-  `CLAUDE_CONFIG_DIR`), else the macOS keychain — mirroring Claude Code's
-  documented precedence. Only the access token is read; it is sent only in
+  compile-time constant or, for the keychain lookup, a derived name that must
+  match its exact expected pattern before `security` runs). The usage fetch
+  is bounded (2 s timeout, 1 MB body cap) and the OAuth token is resolved per
+  fetch the way Claude Code resolves it. First the macOS keychain item: its
+  account is your user name, and its service name carries a hash of the
+  config directory in effect — `CLAUDE_SECURESTORAGE_CONFIG_DIR` when that
+  is set (set but empty means no hash), else a non-empty
+  `CLAUDE_CONFIG_DIR`. An item that parses as a non-null JSON value is final,
+  whether or not it holds a token. Otherwise the plaintext `.credentials.json` in the
+  storage directory: `CLAUDE_SECURESTORAGE_CONFIG_DIR` when set (set but
+  empty means `~/.claude`), else `CLAUDE_CONFIG_DIR`, else `~/.claude`; a
+  relative directory is never read. Only the access token is read; it is sent only in
   the Authorization header, never logged and never cached. `make vuln`
   (govulncheck) and gosec (inside `make lint`) gate every change.
 

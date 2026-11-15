@@ -14,15 +14,15 @@ import (
 	"github.com/mitre/claude-statusline/internal/usage"
 )
 
-// fileCreds returns a credentialSource resolving from a real credentials
+// fileCreds returns a tokenSource resolving from a real credentials
 // file under a sandboxed HOME — the production file path, fixture token.
-func fileCreds(t *testing.T, token string) credentialSource {
+func fileCreds(t *testing.T, token string) tokenSource {
 	t.Helper()
 	home := t.TempDir()
 	writeCredFile(t, filepath.Join(home, ".claude"), token)
-	return credentialSource{
-		getenv:   envMap(map[string]string{"HOME": home}),
-		readFile: os.ReadFile,
+	return tokenSource{
+		lookupEnv: lookupMap(map[string]string{"HOME": home}),
+		readFile:  os.ReadFile,
 	}
 }
 
@@ -46,11 +46,11 @@ func TestFetchUsageServesPayloadWithAuthHeaders(t *testing.T) {
 	defer srv.Close()
 	pointUsageAt(t, srv.URL)
 
-	body, err := fetchUsage(fileCreds(t, "sk-ant-oat01-e2e"))
+	body, err := fetchUsage(fileCreds(t, "fixture-access-e2e"))
 	if err != nil || string(body) != payload {
 		t.Fatalf("fetchUsage = %q, %v; want the payload", body, err)
 	}
-	if gotAuth != "Bearer sk-ant-oat01-e2e" {
+	if gotAuth != "Bearer fixture-access-e2e" {
 		t.Errorf("Authorization = %q; want the bearer token", gotAuth)
 	}
 	if gotBeta != "oauth-2025-04-20" {
@@ -65,9 +65,9 @@ func TestFetchUsageNoCredentialsSkipsNetwork(t *testing.T) {
 	defer srv.Close()
 	pointUsageAt(t, srv.URL)
 
-	creds := credentialSource{
-		getenv:   envMap(map[string]string{"HOME": t.TempDir()}),
-		readFile: os.ReadFile,
+	creds := tokenSource{
+		lookupEnv: lookupMap(map[string]string{"HOME": t.TempDir()}),
+		readFile:  os.ReadFile,
 	}
 	if _, err := fetchUsage(creds); err == nil {
 		t.Fatal("fetchUsage = nil error; want credential-resolution failure")
@@ -81,7 +81,7 @@ func TestFetchUsageCapsBodyAtOneMiB(t *testing.T) {
 	defer srv.Close()
 	pointUsageAt(t, srv.URL)
 
-	body, err := fetchUsage(fileCreds(t, "sk-ant-oat01-e2e"))
+	body, err := fetchUsage(fileCreds(t, "fixture-access-e2e"))
 	if err != nil {
 		t.Fatalf("fetchUsage error = %v; want capped body", err)
 	}
@@ -101,7 +101,7 @@ func TestFetchUsageTimesOut(t *testing.T) {
 	usageHTTPTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { usageHTTPTimeout = prod })
 
-	if _, err := fetchUsage(fileCreds(t, "sk-ant-oat01-e2e")); err == nil {
+	if _, err := fetchUsage(fileCreds(t, "fixture-access-e2e")); err == nil {
 		t.Fatal("fetchUsage = nil error; want client timeout")
 	}
 }
@@ -117,20 +117,59 @@ func shimSecurity(t *testing.T, script string) {
 }
 
 func TestKeychainCredentialJSONReadsItem(t *testing.T) {
-	shimSecurity(t, "#!/bin/sh\necho '"+fixtureCredJSON("sk-ant-oat01-keychain")+"'\n")
-	raw, err := keychainCredentialJSON()
+	shimSecurity(t, "#!/bin/sh\necho '"+fixtureCredJSON("fixture-access-keychain")+"'\n")
+	raw, err := keychainCredentialJSON("Claude Code-credentials", "dev")
 	if err != nil {
 		t.Fatalf("keychainCredentialJSON error = %v", err)
 	}
-	if strings.TrimSpace(raw) != fixtureCredJSON("sk-ant-oat01-keychain") {
+	if strings.TrimSpace(raw) != fixtureCredJSON("fixture-access-keychain") {
 		t.Errorf("keychainCredentialJSON = %q; want the shim's credential JSON", raw)
+	}
+}
+
+func TestKeychainCredentialJSONAsksForServiceAndAccount(t *testing.T) {
+	// Claude Code's lookup: security find-generic-password -a <account> -w
+	// -s <service>, each value one argv entry.
+	argv := filepath.Join(t.TempDir(), "argv")
+	shimSecurity(t, "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '"+argv+"'; done\necho '"+fixtureCredJSON("fixture-access-keychain")+"'\n")
+	if _, err := keychainCredentialJSON("Claude Code-credentials-2e96833a", "dev.user"); err != nil {
+		t.Fatalf("keychainCredentialJSON error = %v", err)
+	}
+	got, err := os.ReadFile(argv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "find-generic-password\n-a\ndev.user\n-w\n-s\nClaude Code-credentials-2e96833a\n"
+	if string(got) != want {
+		t.Errorf("security argv = %q, want %q", got, want)
+	}
+}
+
+func TestKeychainCredentialJSONRefusesUnvalidatedArguments(t *testing.T) {
+	// Derived arguments reach security only in the exact ported shapes.
+	ran := filepath.Join(t.TempDir(), "ran")
+	shimSecurity(t, "#!/bin/sh\ntouch '"+ran+"'\n")
+	for _, tc := range []struct{ service, account string }{
+		{"Claude Code-credentials; rm -rf ~", "dev"},
+		{"Other-credentials", "dev"},
+		{"Claude Code-credentials-2E96833A", "dev"},
+		{"Claude Code-credentials-2e96833a0", "dev"},
+		{"Claude Code-credentials", "dev user"},
+		{"Claude Code-credentials", ""},
+	} {
+		if _, err := keychainCredentialJSON(tc.service, tc.account); err == nil {
+			t.Errorf("keychainCredentialJSON(%q, %q) = nil error; want refusal", tc.service, tc.account)
+		}
+	}
+	if _, err := os.Stat(ran); !os.IsNotExist(err) {
+		t.Error("security must not run for an argument outside the ported shapes")
 	}
 }
 
 func TestKeychainCredentialJSONMissingItem(t *testing.T) {
 	// security exits 44 when the item is absent; the chain treats it as a miss.
 	shimSecurity(t, "#!/bin/sh\nexit 44\n")
-	if _, err := keychainCredentialJSON(); err == nil {
+	if _, err := keychainCredentialJSON("Claude Code-credentials", "dev"); err == nil {
 		t.Fatal("keychainCredentialJSON = nil error; want exec failure")
 	}
 }
@@ -142,7 +181,7 @@ func TestKeychainCredentialJSONTimeoutBoundsCall(t *testing.T) {
 
 	shimSecurity(t, "#!/bin/sh\nsleep 5\n")
 	start := time.Now()
-	_, err := keychainCredentialJSON()
+	_, err := keychainCredentialJSON("Claude Code-credentials", "dev")
 	if err == nil {
 		t.Fatal("keychainCredentialJSON = nil error; want timeout kill")
 	}
@@ -243,7 +282,7 @@ func TestFetchUsageClassifies429WithRetryAfter(t *testing.T) {
 	defer srv.Close()
 	pointUsageAt(t, srv.URL)
 
-	body, err := fetchUsage(fileCreds(t, "sk-ant-oat01-e2e"))
+	body, err := fetchUsage(fileCreds(t, "fixture-access-e2e"))
 	var ra *usage.RetryAfterError
 	if !errors.As(err, &ra) {
 		t.Fatalf("fetchUsage = %q, %v; want *usage.RetryAfterError", body, err)
@@ -262,7 +301,7 @@ func TestFetchUsage429WithoutRetryAfterStillTyped(t *testing.T) {
 	}))
 	defer srv.Close()
 	pointUsageAt(t, srv.URL)
-	_, err := fetchUsage(fileCreds(t, "sk-ant-oat01-e2e"))
+	_, err := fetchUsage(fileCreds(t, "fixture-access-e2e"))
 	var ra *usage.RetryAfterError
 	if !errors.As(err, &ra) || ra.After != 0 {
 		t.Errorf("429 without Retry-After: err=%v; want RetryAfterError with zero After (floor applies)", err)

@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The subscription token is read the way Claude Code reads it, so a stale
+  `.credentials.json` from an earlier login no longer decides whose usage
+  is fetched. The macOS keychain item is read first; the plaintext file is
+  read only when there is no item, or the item is empty, `null` or not
+  JSON (an item that parses to a non-null value is final, even without a
+  token). The keychain lookup passes Claude
+  Code's account name and service name (with the config-directory hash
+  under `CLAUDE_CONFIG_DIR` or `CLAUDE_SECURESTORAGE_CONFIG_DIR`); the
+  plaintext file honours `CLAUDE_SECURESTORAGE_CONFIG_DIR`. A relative
+  storage directory is never read.
 - The account row names the account a session actually uses. The email
   was always read from `~/.claude.json`, so a session started with its own
   `CLAUDE_CONFIG_DIR` showed the default account. The record is now found
