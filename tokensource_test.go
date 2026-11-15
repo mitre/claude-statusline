@@ -11,7 +11,7 @@ import (
 // fixtureCredJSON is the documented credential shape — identical in the
 // keychain item and the plaintext store.
 func fixtureCredJSON(token string) string {
-	return `{"claudeAiOauth":{"accessToken":"` + token + `","refreshToken":"sk-ant-ort01-fixture","expiresAt":1899999999999,"scopes":["user:inference","user:profile"]}}`
+	return `{"claudeAiOauth":{"accessToken":"` + token + `","refreshToken":"fixture-refresh","expiresAt":1899999999999,"scopes":["user:inference","user:profile"]}}`
 }
 
 // writeCredFile places a plaintext credential store exactly where Claude
@@ -61,9 +61,9 @@ func TestTokenKeychainWinsOverThePlaintextStore(t *testing.T) {
 	// Claude Code reads the keychain first; a plaintext file left by an
 	// earlier login must not decide the token.
 	home := t.TempDir()
-	writeCredFile(t, filepath.Join(home, ".claude"), "sk-ant-oat01-stale-file")
+	writeCredFile(t, filepath.Join(home, ".claude"), "fixture-access-stale-file")
 	kc := &fakeKeychain{reply: func(string, string) (string, error) {
-		return fixtureCredJSON("sk-ant-oat01-from-keychain"), nil
+		return fixtureCredJSON("fixture-access-from-keychain"), nil
 	}}
 	src := tokenSource{
 		lookupEnv: lookupMap(map[string]string{"HOME": home, "USER": "dev"}),
@@ -71,7 +71,7 @@ func TestTokenKeychainWinsOverThePlaintextStore(t *testing.T) {
 		keychain:  kc.read,
 	}
 	tok, err := src.token()
-	if err != nil || tok != "sk-ant-oat01-from-keychain" {
+	if err != nil || tok != "fixture-access-from-keychain" {
 		t.Errorf("token() = %q, %v; want the keychain token", tok, err)
 	}
 }
@@ -84,14 +84,14 @@ func TestTokenPlaintextStoreWhenTheKeychainHasNoItem(t *testing.T) {
 		"null":         func(string, string) (string, error) { return "null", nil },
 	} {
 		home := t.TempDir()
-		writeCredFile(t, filepath.Join(home, ".claude"), "sk-ant-oat01-from-file")
+		writeCredFile(t, filepath.Join(home, ".claude"), "fixture-access-from-file")
 		src := tokenSource{
 			lookupEnv: lookupMap(map[string]string{"HOME": home, "USER": "dev"}),
 			readFile:  os.ReadFile,
 			keychain:  (&fakeKeychain{reply: reply}).read,
 		}
 		tok, err := src.token()
-		if err != nil || tok != "sk-ant-oat01-from-file" {
+		if err != nil || tok != "fixture-access-from-file" {
 			t.Errorf("%s: token() = %q, %v; want the plaintext token", name, tok, err)
 		}
 	}
@@ -101,7 +101,7 @@ func TestTokenParsedKeychainItemIsFinal(t *testing.T) {
 	// A keychain item that parses is the store Claude Code uses, even with
 	// no OAuth token in it: the plaintext file is not consulted.
 	home := t.TempDir()
-	writeCredFile(t, filepath.Join(home, ".claude"), "sk-ant-oat01-stale-file")
+	writeCredFile(t, filepath.Join(home, ".claude"), "fixture-access-stale-file")
 	src := tokenSource{
 		lookupEnv: lookupMap(map[string]string{"HOME": home, "USER": "dev"}),
 		readFile:  os.ReadFile,
@@ -117,17 +117,17 @@ func TestTokenAnyParsedKeychainValueIsFinal(t *testing.T) {
 	// is a present item, including primitives and numbers JavaScript reads
 	// as Infinity. None of them falls back to the plaintext store.
 	for _, item := range []string{
-		`{"claudeAiOauth":{"accessToken":"sk-ant-oat01-from-keychain"},"unused":1e400}`,
+		`{"claudeAiOauth":{"accessToken":"fixture-access-from-keychain"},"unused":1e400}`,
 		`false`, `0`, `"text"`, `[]`, `1e400`,
 	} {
 		home := t.TempDir()
-		writeCredFile(t, filepath.Join(home, ".claude"), "sk-ant-oat01-stale-file")
+		writeCredFile(t, filepath.Join(home, ".claude"), "fixture-access-stale-file")
 		src := tokenSource{
 			lookupEnv: lookupMap(map[string]string{"HOME": home, "USER": "dev"}),
 			readFile:  os.ReadFile,
 			keychain:  (&fakeKeychain{reply: func(string, string) (string, error) { return item, nil }}).read,
 		}
-		if tok, _ := src.token(); tok == "sk-ant-oat01-stale-file" {
+		if tok, _ := src.token(); tok == "fixture-access-stale-file" {
 			t.Errorf("keychain item %s: the plaintext store must not be read once an item parses", item)
 		}
 	}
@@ -140,19 +140,19 @@ func TestTokenKeychainItemIsTrimmedLikeJavaScript(t *testing.T) {
 		name, item string
 		final      bool
 	}{
-		{"leading byte-order mark", "\ufeff" + fixtureCredJSON("sk-ant-oat01-from-keychain"), true},
-		{"surrounding U+0085", "\u0085" + fixtureCredJSON("sk-ant-oat01-from-keychain") + "\u0085", false},
+		{"leading byte-order mark", "\ufeff" + fixtureCredJSON("fixture-access-from-keychain"), true},
+		{"surrounding U+0085", "\u0085" + fixtureCredJSON("fixture-access-from-keychain") + "\u0085", false},
 	} {
 		home := t.TempDir()
-		writeCredFile(t, filepath.Join(home, ".claude"), "sk-ant-oat01-from-file")
+		writeCredFile(t, filepath.Join(home, ".claude"), "fixture-access-from-file")
 		src := tokenSource{
 			lookupEnv: lookupMap(map[string]string{"HOME": home, "USER": "dev"}),
 			readFile:  os.ReadFile,
 			keychain:  (&fakeKeychain{reply: func(string, string) (string, error) { return tc.item, nil }}).read,
 		}
-		want := "sk-ant-oat01-from-file"
+		want := "fixture-access-from-file"
 		if tc.final {
-			want = "sk-ant-oat01-from-keychain"
+			want = "fixture-access-from-keychain"
 		}
 		if tok, err := src.token(); tok != want {
 			t.Errorf("%s: token() = %q, %v; want %q", tc.name, tok, err, want)
@@ -168,7 +168,7 @@ func TestTokenPlaintextStoreIsNotTrimmed(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body := "\ufeff" + fixtureCredJSON("sk-ant-oat01-from-file")
+	body := "\ufeff" + fixtureCredJSON("fixture-access-from-file")
 	if err := os.WriteFile(filepath.Join(dir, ".credentials.json"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -249,18 +249,18 @@ func TestTokenPlaintextStoreLocation(t *testing.T) {
 	home := t.TempDir()
 	cfg := t.TempDir()
 	secure := t.TempDir()
-	writeCredFile(t, filepath.Join(home, ".claude"), "sk-ant-oat01-home")
-	writeCredFile(t, cfg, "sk-ant-oat01-config-dir")
-	writeCredFile(t, secure, "sk-ant-oat01-secure")
+	writeCredFile(t, filepath.Join(home, ".claude"), "fixture-access-home")
+	writeCredFile(t, cfg, "fixture-access-config-dir")
+	writeCredFile(t, secure, "fixture-access-secure")
 	for _, tc := range []struct {
 		name string
 		env  map[string]string
 		want string
 	}{
-		{"default", map[string]string{}, "sk-ant-oat01-home"},
-		{"config dir", map[string]string{"CLAUDE_CONFIG_DIR": cfg}, "sk-ant-oat01-config-dir"},
-		{"secure-storage dir", map[string]string{"CLAUDE_CONFIG_DIR": cfg, "CLAUDE_SECURESTORAGE_CONFIG_DIR": secure}, "sk-ant-oat01-secure"},
-		{"empty secure-storage dir means ~/.claude", map[string]string{"CLAUDE_CONFIG_DIR": cfg, "CLAUDE_SECURESTORAGE_CONFIG_DIR": ""}, "sk-ant-oat01-home"},
+		{"default", map[string]string{}, "fixture-access-home"},
+		{"config dir", map[string]string{"CLAUDE_CONFIG_DIR": cfg}, "fixture-access-config-dir"},
+		{"secure-storage dir", map[string]string{"CLAUDE_CONFIG_DIR": cfg, "CLAUDE_SECURESTORAGE_CONFIG_DIR": secure}, "fixture-access-secure"},
+		{"empty secure-storage dir means ~/.claude", map[string]string{"CLAUDE_CONFIG_DIR": cfg, "CLAUDE_SECURESTORAGE_CONFIG_DIR": ""}, "fixture-access-home"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env := map[string]string{"HOME": home, "USER": "dev"}
@@ -279,7 +279,7 @@ func TestTokenPlaintextStoreLocation(t *testing.T) {
 func TestTokenPlaintextStoreIsNFCNormalized(t *testing.T) {
 	root := t.TempDir()
 	nfc := filepath.Join(root, "café")
-	writeCredFile(t, nfc, "sk-ant-oat01-nfc")
+	writeCredFile(t, nfc, "fixture-access-nfc")
 	var read []string
 	src := tokenSource{
 		lookupEnv: lookupMap(map[string]string{"HOME": root, "USER": "dev", "CLAUDE_CONFIG_DIR": filepath.Join(root, "café")}),
@@ -335,7 +335,7 @@ func TestTokenNoSourceErrors(t *testing.T) {
 	if err := src.ok(); err == nil {
 		t.Error("ok() must error when no store resolves")
 	}
-	if err != nil && strings.Contains(err.Error(), "sk-ant") {
+	if err != nil && strings.Contains(err.Error(), "fixture-") {
 		t.Errorf("error text leaks token material: %q", err)
 	}
 }
@@ -343,10 +343,10 @@ func TestTokenNoSourceErrors(t *testing.T) {
 func TestTokenWithoutAKeychainUsesThePlaintextStore(t *testing.T) {
 	// A nil keychain seam (no OS keychain mechanism) is a clean miss.
 	home := t.TempDir()
-	writeCredFile(t, filepath.Join(home, ".claude"), "sk-ant-oat01-from-file")
+	writeCredFile(t, filepath.Join(home, ".claude"), "fixture-access-from-file")
 	src := tokenSource{lookupEnv: lookupMap(map[string]string{"HOME": home}), readFile: os.ReadFile}
 	tok, err := src.token()
-	if err != nil || tok != "sk-ant-oat01-from-file" {
+	if err != nil || tok != "fixture-access-from-file" {
 		t.Errorf("token() = %q, %v; want the plaintext token", tok, err)
 	}
 }
