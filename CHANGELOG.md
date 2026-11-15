@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-15
+
 ### Changed
 
 - `[usage] ttl_seconds` defaults to 200 (was 180), and a value below 200
@@ -21,11 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is fetched. The macOS keychain item is read first; the plaintext file is
   read only when there is no item, or the item is empty, `null` or not
   JSON (an item that parses to a non-null value is final, even without a
-  token). The keychain lookup passes Claude
-  Code's account name and service name (with the config-directory hash
-  under `CLAUDE_CONFIG_DIR` or `CLAUDE_SECURESTORAGE_CONFIG_DIR`); the
-  plaintext file honours `CLAUDE_SECURESTORAGE_CONFIG_DIR`. A relative
-  storage directory is never read.
+  token). The keychain lookup passes Claude Code's account name and service
+  name (with the config-directory hash under `CLAUDE_CONFIG_DIR` or
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR`); the plaintext file honours
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR`. A relative storage directory is never
+  read.
 - The account row names the account a session actually uses. The email
   was always read from `~/.claude.json`, so a session started with its own
   `CLAUDE_CONFIG_DIR` showed the default account. The record is now found
@@ -386,7 +388,8 @@ regression tests:
   observe-only guards for the ~90 ms wall budget, which itself includes
   real IO the benchmarks deliberately exclude.
 
-[Unreleased]: https://github.com/mitre/claude-statusline/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/mitre/claude-statusline/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/mitre/claude-statusline/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/mitre/claude-statusline/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mitre/claude-statusline/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/mitre/claude-statusline/compare/v0.1.0...v0.1.1
