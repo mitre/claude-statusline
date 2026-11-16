@@ -170,6 +170,17 @@ subscription — two concurrent sessions correctly show the same pools):
 | `<model>/wk N%` | rolling 7-day pool for **this session's** model — a parallel weekly cap, not a slice of `week`; omitted when the payload has no window for it. The window is matched against the payload's own `seven_day_*` keys, so a model the vendor ships tomorrow is picked up with no code change. The usage endpoint values a per-model window only when that limit policy is active on your account (plans without model-specific caps report them as `null`, so the meter self-omits) |
 | `<scope> N%` | a plan limit the payload narrows to a **scope** — today a model, named by the payload (e.g. `Fable 100%`). A parallel cap like the one above, shown whenever the payload carries it, with its own reset time. This is how a model-specific weekly limit surfaces even when no `seven_day_*` window exists for it |
 
+`[account] bars = true` draws every meter (`5h`, `week`, the per-model
+window and scoped limits) with the context row's 10-segment bar between its
+name and percentage, one segment per full 10%:
+
+```
+account  dev@example.com · 5h ▓▓░░░░░░░░ 28% (resets 1:30p) · week ▓░░░░░░░░░ 18% (resets Mon 10a) · Fable ▓▓▓▓▓▓▓▓▓▓ 100% (resets Mon 10a)
+```
+
+Each bar takes its meter's color (green below 50%, yellow from 50%, red from
+80%). The default, `false`, keeps the text-only row.
+
 Reset times show on every meter by default; `show_resets = "quiet"` restores
 the hot-only (≥80%) behavior.
 
