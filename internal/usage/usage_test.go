@@ -248,14 +248,14 @@ func TestResolveCachesGoodPayload(t *testing.T) {
 	if string(got) != goodPayload {
 		t.Errorf("payload altered")
 	}
-	if b, err := readOwned(payloadPath(dir, testOwner.Account)); err != nil || string(b) != goodPayload {
+	if b, err := readOwned(payloadPath(dir, testOwner)); err != nil || string(b) != goodPayload {
 		t.Errorf("good payload not cached: %v %q", err, b)
 	}
 }
 
 func TestResolveFallsBackToStaleOnBadFetch(t *testing.T) {
 	dir := t.TempDir()
-	p := payloadPath(dir, testOwner.Account)
+	p := payloadPath(dir, testOwner)
 	if err := writeOwned(p, []byte(goodPayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestResolveFallsBackToStaleOnBadFetch(t *testing.T) {
 
 func TestResolveFreshCacheSkipsFetch(t *testing.T) {
 	dir := t.TempDir()
-	if err := writeOwned(payloadPath(dir, testOwner.Account), []byte(goodPayload), 0o600); err != nil {
+	if err := writeOwned(payloadPath(dir, testOwner), []byte(goodPayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, _, ok := resolveAs(dir, time.Minute, now, func() ([]byte, error) {
@@ -298,7 +298,7 @@ func TestResolveReportsServedPayloadAgeOnStaleFallback(t *testing.T) {
 	// times so the mtime round-trips exactly through the filesystem.
 	realNow := time.Now().Truncate(time.Second)
 	dir := t.TempDir()
-	p := payloadPath(dir, testOwner.Account)
+	p := payloadPath(dir, testOwner)
 	if err := writeOwned(p, []byte(goodPayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestResolveFreshAndLivePathsReportZeroAge(t *testing.T) {
 	// live-fetch serves report a zero age.
 	realNow := time.Now()
 	dir := t.TempDir()
-	if err := writeOwned(payloadPath(dir, testOwner.Account), []byte(goodPayload), 0o600); err != nil {
+	if err := writeOwned(payloadPath(dir, testOwner), []byte(goodPayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, staleFor, ok := resolveAs(dir, time.Minute, realNow, func() ([]byte, error) {
@@ -347,7 +347,7 @@ func boundaryFixture(t *testing.T, realNow time.Time, fiveHourReset, sevenDayRes
 	  "five_hour": {"utilization": 55, "resets_at": "` + fiveHourReset.Format(time.RFC3339) + `"},
 	  "seven_day": {"utilization": 23, "resets_at": "` + sevenDayReset.Format(time.RFC3339) + `"}
 	}`
-	p := payloadPath(dir, testOwner.Account)
+	p := payloadPath(dir, testOwner)
 	if err := writeOwned(p, []byte(payload), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +370,7 @@ func TestResolveRefetchesWhenResetsAtPassed(t *testing.T) {
 	if !ok || string(got) != rolled || calls != 1 {
 		t.Errorf("five_hour boundary: ok=%v calls=%d got=%q; want refetched rolled payload", ok, calls, got)
 	}
-	if b, _ := readOwned(payloadPath(dir, testOwner.Account)); string(b) != rolled {
+	if b, _ := readOwned(payloadPath(dir, testOwner)); string(b) != rolled {
 		t.Errorf("rolled payload not cached: %q", b)
 	}
 
@@ -391,7 +391,7 @@ func TestResolveBoundaryRefetchIsBounded(t *testing.T) {
 	dir := t.TempDir()
 	stillPast := `{"five_hour": {"utilization": 55, "resets_at": "` +
 		realNow.Add(-10*time.Minute).Format(time.RFC3339) + `"}}`
-	p := payloadPath(dir, testOwner.Account)
+	p := payloadPath(dir, testOwner)
 	if err := writeOwned(p, []byte(stillPast), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -428,7 +428,7 @@ func TestResolveMissingResetsAtKeepsTTLBehavior(t *testing.T) {
 	realNow := time.Now()
 	dir := t.TempDir()
 	noResets := `{"five_hour": {"utilization": 5.9}, "seven_day": {"utilization": 13}}`
-	if err := writeOwned(payloadPath(dir, testOwner.Account), []byte(noResets), 0o600); err != nil {
+	if err := writeOwned(payloadPath(dir, testOwner), []byte(noResets), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got, _, ok := resolveAs(dir, time.Minute, realNow, func() ([]byte, error) {
@@ -442,7 +442,7 @@ func TestResolveMissingResetsAtKeepsTTLBehavior(t *testing.T) {
 	// Unparseable resets_at: same — plain TTL, no crash, no fetch.
 	dir = t.TempDir()
 	badReset := `{"five_hour": {"utilization": 5.9, "resets_at": "not-a-timestamp"}}`
-	if err := writeOwned(payloadPath(dir, testOwner.Account), []byte(badReset), 0o600); err != nil {
+	if err := writeOwned(payloadPath(dir, testOwner), []byte(badReset), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got, _, ok = resolveAs(dir, time.Minute, realNow, func() ([]byte, error) {
@@ -620,7 +620,7 @@ func TestResolveReplacesStaleCacheWithNullFiveHourPayload(t *testing.T) {
 	// growing age marker. The live payload must be cached and served fresh.
 	realNow := time.Now().Truncate(time.Second)
 	dir := t.TempDir()
-	p := payloadPath(dir, testOwner.Account)
+	p := payloadPath(dir, testOwner)
 	if err := writeOwned(p, []byte(goodPayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -646,7 +646,7 @@ func TestResolveReplacesStaleCacheWithNullFiveHourPayload(t *testing.T) {
 func staleFixture(t *testing.T, realNow time.Time) string {
 	t.Helper()
 	dir := t.TempDir()
-	p := payloadPath(dir, testOwner.Account)
+	p := payloadPath(dir, testOwner)
 	if err := writeOwned(p, []byte(goodPayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -936,4 +936,23 @@ func readOwned(p string) ([]byte, error) {
 		return nil, fmt.Errorf("%s is not owned by the test owner", p)
 	}
 	return payload, nil
+}
+
+func TestResolveTwoTokensOfOneAccountKeepTheirOwnPayloads(t *testing.T) {
+	// The same account logged in under two config directories has two
+	// tokens; each token's payload is its own entry, so neither evicts the
+	// other.
+	dir := t.TempDir()
+	realNow := time.Now()
+	tok1 := Owner{Account: ownerA.Account, Fingerprint: "1111111111111111"}
+	tok2 := Owner{Account: ownerA.Account, Fingerprint: "2222222222222222"}
+	Resolve(dir, tok1, as(tok1), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil })
+	_ = os.Remove(filepath.Join(dir, nextAttemptFile))
+	Resolve(dir, tok2, as(tok2), time.Hour, realNow, func() ([]byte, error) { return []byte(payloadB), nil })
+	if got, _, ok := Resolve(dir, tok1, as(tok1), time.Hour, realNow, noFetch(t)); !ok || string(got) != goodPayload {
+		t.Errorf("token 1 lost its payload to token 2: ok=%v", ok)
+	}
+	if got, _, ok := Resolve(dir, tok2, as(tok2), time.Hour, realNow, noFetch(t)); !ok || string(got) != payloadB {
+		t.Errorf("token 2 lost its payload: ok=%v", ok)
+	}
 }

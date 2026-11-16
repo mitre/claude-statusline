@@ -248,10 +248,11 @@ and carries no age marker. On hosts whose payload lacks
 payload with the marker, and is omitted when there is no data it can show —
 values are never fabricated. `show_stale_age = false` hides the marker.
 
-**Whose usage is shown.** The fetched payload is cached per account: the
-file is named by a hash of the account ID in Claude Code's account record,
-and it records a one-way fingerprint (a sha256 prefix, never the token) of
-the access token that fetched it. A cached payload is shown, fresh or
+**Whose usage is shown.** The fetched payload is cached per account and
+token: the file is named by a hash of the account ID in Claude Code's
+account record and a one-way fingerprint (a sha256 prefix, never the token)
+of the access token that fetched it, so two logins of one account keep
+separate entries. A cached payload is shown, fresh or
 stale, only while both the account record and the current token still
 match, so after `/login` to another account the row never shows the
 previous account's numbers or alarm; it shows the live numbers from the

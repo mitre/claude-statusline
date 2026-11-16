@@ -279,8 +279,8 @@ type Owner struct {
 // server's Retry-After, when longer). Renders in between serve the cache.
 // The gate is one file shared by every account.
 //
-// The payload belongs to owner: it is cached per account and served, fresh
-// or stale, only while the cached fingerprint matches owner's token. An
+// The payload belongs to owner: it is cached per account and token and
+// served, fresh or stale, only while the cached fingerprint matches. An
 // owner missing either part gets nothing, and nothing is fetched, read or
 // written. current reports the owner after the fetch; if it differs from
 // owner (a /login during the request), the response is neither cached nor
@@ -289,7 +289,7 @@ func Resolve(cacheDir string, owner Owner, current func() Owner, ttl time.Durati
 	if owner.Account == "" || owner.Fingerprint == "" {
 		return nil, 0, false
 	}
-	p := payloadPath(cacheDir, owner.Account)
+	p := payloadPath(cacheDir, owner)
 	if s, ok := cache.ReadFresh(p, ttl); ok {
 		if b, mine := ownedBy(s, owner); mine && !boundaryExpired(p, b, now) {
 			return b, 0, true
@@ -319,12 +319,14 @@ func Resolve(cacheDir string, owner Owner, current func() Owner, ttl time.Durati
 	return nil, 0, false
 }
 
-// payloadPath is the account's payload file: "usage-" and the FNV-1a 64-bit
-// hash of the account ID in hex, so the ID itself is not in the name. The
-// unkeyed "usage" file of earlier versions is never read.
-func payloadPath(cacheDir, account string) string {
+// payloadPath is owner's payload file: "usage-" and the FNV-1a 64-bit hash
+// of the account ID and token fingerprint in hex, so neither appears in the
+// name. Each token of an account has its own entry: two logins of one
+// account never evict each other, and a refreshed token starts a new entry.
+// The unkeyed "usage" file of earlier versions is never read.
+func payloadPath(cacheDir string, owner Owner) string {
 	h := fnv.New64a()
-	_, _ = h.Write([]byte(account))
+	_, _ = h.Write([]byte(owner.Account + "\x00" + owner.Fingerprint))
 	return filepath.Join(cacheDir, fmt.Sprintf("usage-%016x", h.Sum64()))
 }
 
