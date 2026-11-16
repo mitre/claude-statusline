@@ -169,3 +169,11 @@ func (c tokenSource) plaintextStorePath() string {
 	}
 	return filepath.Join(dir, ".credentials.json")
 }
+
+// location names the credential stores token reads, without reading them:
+// the keychain service and account and the plaintext store path, NUL
+// separated. Two environments share a location exactly when token would
+// consult the same stores, so the login-status cache is keyed by it.
+func (c tokenSource) location() string {
+	return c.keychainService() + "\x00" + c.keychainAccount() + "\x00" + c.plaintextStorePath()
+}

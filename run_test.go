@@ -928,3 +928,42 @@ func TestRunAccountRowUsesTheConfigDirRecord(t *testing.T) {
 		t.Errorf("unexpected stderr: %q", errOut)
 	}
 }
+
+func TestRunLoginStatusIsPerCredentialSource(t *testing.T) {
+	// Two sessions share one cache dir but resolve different credential
+	// stores (CLAUDE_CONFIG_DIR A without a login, B with one): each gets
+	// its own answer, in either order.
+	stdin, err := os.ReadFile(filepath.Join("testdata", "full.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := func(d *deps, source string, loggedIn bool) string {
+		d.stdin = bytes.NewReader(stdin)
+		d.credentialSource = func() string { return source }
+		d.keychainOK = func() error {
+			if loggedIn {
+				return nil
+			}
+			return errors.New("no credential store resolved")
+		}
+		out, _ := run(*d)
+		return out
+	}
+	subBadge := "\x1b[32mSub\x1b[m"
+
+	d := e2eDeps(t, "full.json")
+	if out := session(&d, "config-dir-A", false); strings.Contains(out, subBadge) {
+		t.Fatalf("A has no login but rendered Sub: %q", out)
+	}
+	if out := session(&d, "config-dir-B", true); !strings.Contains(out, subBadge) {
+		t.Errorf("B took A's negative answer: %q", out)
+	}
+
+	d = e2eDeps(t, "full.json")
+	if out := session(&d, "config-dir-A", true); !strings.Contains(out, subBadge) {
+		t.Fatalf("A has a login but rendered no Sub: %q", out)
+	}
+	if out := session(&d, "config-dir-B", false); strings.Contains(out, subBadge) {
+		t.Errorf("B took A's positive answer: %q", out)
+	}
+}

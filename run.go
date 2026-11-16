@@ -25,9 +25,13 @@ type deps struct {
 	getenv     func(string) string
 	runGit     runGitCtx
 	keychainOK func() error
-	fetchUsage func() ([]byte, error)
-	readFile   func(string) ([]byte, error)
-	stat       func(string) (os.FileInfo, error)
+	// credentialSource names the credential storage location keychainOK
+	// and fetchUsage resolve (never the token); the login-status cache is
+	// keyed by it. nil means no location is known.
+	credentialSource func() string
+	fetchUsage       func() ([]byte, error)
+	readFile         func(string) ([]byte, error)
+	stat             func(string) (os.FileInfo, error)
 	// readDir lists a directory for the account resolver's exact-name
 	// check on the legacy record; nil means os.ReadDir.
 	readDir func(string) ([]os.DirEntry, error)
@@ -91,7 +95,11 @@ func run(d deps) (string, string) {
 	}
 	_ = os.MkdirAll(cfg.CacheDir, 0o700)
 
-	badge, apiKeySet := auth.Detect(cfg.CacheDir, d.getenv, d.keychainOK)
+	source := ""
+	if d.credentialSource != nil {
+		source = d.credentialSource()
+	}
+	badge, apiKeySet := auth.Detect(cfg.CacheDir, source, d.getenv, d.keychainOK)
 	if sess.Product == "antigravity" {
 		apiKeySet = false
 		switch {
