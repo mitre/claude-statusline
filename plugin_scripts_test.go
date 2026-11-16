@@ -1016,3 +1016,95 @@ func TestDevInstallRefusesMissingBuild(t *testing.T) {
 		t.Errorf("a refused install must not create backups, got %v", backups)
 	}
 }
+
+// releaseFixtureRepo lays out what scripts/release.sh reads from its working
+// directory: the plugin manifest (version) and the CHANGELOG, plus a dist/
+// holding a stale artifact, as a previous run would leave it.
+func releaseFixtureRepo(t *testing.T, changelog string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for rel, content := range map[string]string{
+		".claude-plugin/plugin.json": `{"name":"claude-statusline","version":"9.9.9"}`,
+		"CHANGELOG.md":               changelog,
+		"dist/stale.tar.gz":          "old",
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writePreflightFile(t, dir, rel, content)
+	}
+	return dir
+}
+
+// shimGoreleaser stands in for goreleaser: like --clean it deletes dist/
+// before anything else, then records its arguments and the release notes it
+// can still read.
+func shimGoreleaser(t *testing.T) (argsFile, notesFile string) {
+	t.Helper()
+	dir := t.TempDir()
+	argsFile = filepath.Join(dir, "args")
+	notesFile = filepath.Join(dir, "notes")
+	script := `#!/bin/sh
+rm -rf dist
+printf '%s\n' "$@" > '` + argsFile + `'
+for a in "$@"; do
+  case "$a" in --release-notes=*) cat "${a#--release-notes=}" > '` + notesFile + `' ;; esac
+done
+`
+	if err := os.WriteFile(filepath.Join(dir, "goreleaser"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return argsFile, notesFile
+}
+
+func runRelease(t *testing.T, dir string) (string, error) {
+	t.Helper()
+	script, err := filepath.Abs("scripts/release.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", script)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func TestReleaseScriptPassesNotesThatSurviveClean(t *testing.T) {
+	dir := releaseFixtureRepo(t, "# Changelog\n\n## [Unreleased]\n\n## [9.9.9] - 2026-11-15\n\n### Fixed\n\n- the fix\n\n## [9.9.8] - 2026-11-01\n\n### Added\n\n- older\n")
+	argsFile, notesFile := shimGoreleaser(t)
+
+	if out, err := runRelease(t, dir); err != nil {
+		t.Fatalf("release.sh: %v: %s", err, out)
+	}
+	notes, err := os.ReadFile(notesFile)
+	if err != nil {
+		t.Fatalf("goreleaser could not read the release notes after cleaning dist/: %v", err)
+	}
+	if want := "\n### Fixed\n\n- the fix\n"; string(notes) != want {
+		t.Errorf("release notes = %q, want the 9.9.9 CHANGELOG section %q", notes, want)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "release\n--clean\n") {
+		t.Errorf("goreleaser must run `release --clean`, got args %q", args)
+	}
+}
+
+func TestReleaseScriptRefusesWithoutNotes(t *testing.T) {
+	for name, changelog := range map[string]string{
+		"no section":    "# Changelog\n\n## [Unreleased]\n\n## [9.9.8] - 2026-11-01\n\n### Added\n\n- older\n",
+		"empty section": "# Changelog\n\n## [Unreleased]\n\n## [9.9.9] - 2026-11-15\n\n## [9.9.8] - 2026-11-01\n\n### Added\n\n- older\n",
+	} {
+		dir := releaseFixtureRepo(t, changelog)
+		argsFile, _ := shimGoreleaser(t)
+		if out, err := runRelease(t, dir); err == nil {
+			t.Errorf("%s: release.sh must refuse a version without notes, output: %s", name, out)
+		}
+		if _, err := os.Stat(argsFile); !os.IsNotExist(err) {
+			t.Errorf("%s: goreleaser must not run without release notes", name)
+		}
+	}
+}

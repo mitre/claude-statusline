@@ -54,9 +54,19 @@ ancestor of `origin/main`. Runnable locally against any tag.
 lint/vuln/race/coverage/build gate as CI and local development.
 
 **release** — `needs: [preflight, gates]`, the only job with
-`contents: write`. `make release` extracts the version's CHANGELOG section
-(`scripts/release-notes.sh` — goreleaser's git-log changelog is disabled)
-and runs goreleaser: four `tar.gz` archives plus `checksums.txt`. The job
+`contents: write`. `make release` runs `scripts/release.sh`, which extracts
+the version's CHANGELOG section (`scripts/release-notes.sh`; passing it as
+`--release-notes` bypasses goreleaser's git-log changelog) into a temporary
+file outside `dist/` and
+runs `goreleaser release --clean --release-notes=<file>`: four `tar.gz`
+archives plus `checksums.txt`, with the section as the release body. Two
+conditions keep that body: `.goreleaser.yaml` leaves the changelog step
+enabled (with `changelog.disable: true` goreleaser skips the step that
+loads `--release-notes`, and v0.3.0 and v0.3.1 shipped with empty bodies
+for that reason; both were backfilled), and the notes file stays outside
+`dist/`, which `--clean` deletes before that step reads it. With a notes
+file the step uses it and generates no git-log changelog. A version
+without a CHANGELOG section refuses before goreleaser runs. The job
 runs in the `release` environment (see below) with the shared Go cache off.
 
 **formula** — `needs: release`. Downloads `checksums.txt` from the
