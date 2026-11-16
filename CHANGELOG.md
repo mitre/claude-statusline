@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- After `/login` to another account, the account row no longer shows the
+  previous account's usage. The usage payload was one cached file for every
+  account, served as current for the TTL and as "last good" after it. It is
+  now cached per account and token (file named by a hash of the account ID
+  and a one-way fingerprint of the token that fetched it) and shown only
+  while the account record and the token both still match. A
+  response that arrives after a mid-request account change is discarded.
+  `CLAUDE_CODE_OAUTH_TOKEN` sessions skip the usage endpoint and the saved
+  email. The old shared `usage` file is ignored.
 - The login status (the `Sub` badge, which also decides whether the
   account row shows) is cached per credential store. It was one shared
   file for every session for 300 s, so a session using a different

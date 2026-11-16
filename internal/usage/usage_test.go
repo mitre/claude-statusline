@@ -2,8 +2,11 @@ package usage
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -238,38 +241,38 @@ func TestParseOmitsModelWindowWhenAbsent(t *testing.T) {
 
 func TestResolveCachesGoodPayload(t *testing.T) {
 	dir := t.TempDir()
-	got, _, ok := Resolve(dir, time.Minute, now, func() ([]byte, error) { return []byte(goodPayload), nil })
+	got, _, ok := resolveAs(dir, time.Minute, now, func() ([]byte, error) { return []byte(goodPayload), nil })
 	if !ok {
 		t.Fatal("Resolve returned no payload")
 	}
 	if string(got) != goodPayload {
 		t.Errorf("payload altered")
 	}
-	if b, err := os.ReadFile(filepath.Join(dir, "usage")); err != nil || string(b) != goodPayload {
+	if b, err := readOwned(payloadPath(dir, testOwner)); err != nil || string(b) != goodPayload {
 		t.Errorf("good payload not cached: %v %q", err, b)
 	}
 }
 
 func TestResolveFallsBackToStaleOnBadFetch(t *testing.T) {
 	dir := t.TempDir()
-	p := filepath.Join(dir, "usage")
-	if err := os.WriteFile(p, []byte(goodPayload), 0o600); err != nil {
+	p := payloadPath(dir, testOwner)
+	if err := writeOwned(p, []byte(goodPayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	old := time.Now().Add(-time.Hour)
 	_ = os.Chtimes(p, old, old) // expired
 
 	errPayload := []byte(`{"error":{"type":"rate_limit_error"}}`)
-	got, _, ok := Resolve(dir, time.Minute, now, func() ([]byte, error) { return errPayload, nil })
+	got, _, ok := resolveAs(dir, time.Minute, now, func() ([]byte, error) { return errPayload, nil })
 	if !ok || string(got) != goodPayload {
 		t.Errorf("stale-good fallback failed: ok=%v got=%q", ok, got)
 	}
-	if b, _ := os.ReadFile(p); string(b) != goodPayload {
+	if b, _ := readOwned(p); string(b) != goodPayload {
 		t.Errorf("error payload overwrote good cache: %q", b)
 	}
 
 	// Transport failure: same fallback.
-	got, _, ok = Resolve(dir, time.Minute, now, func() ([]byte, error) { return nil, errors.New("timeout") })
+	got, _, ok = resolveAs(dir, time.Minute, now, func() ([]byte, error) { return nil, errors.New("timeout") })
 	if !ok || string(got) != goodPayload {
 		t.Errorf("stale-good fallback on transport error failed: ok=%v", ok)
 	}
@@ -277,10 +280,10 @@ func TestResolveFallsBackToStaleOnBadFetch(t *testing.T) {
 
 func TestResolveFreshCacheSkipsFetch(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "usage"), []byte(goodPayload), 0o600); err != nil {
+	if err := writeOwned(payloadPath(dir, testOwner), []byte(goodPayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, _, ok := Resolve(dir, time.Minute, now, func() ([]byte, error) {
+	_, _, ok := resolveAs(dir, time.Minute, now, func() ([]byte, error) {
 		t.Fatal("fetch called despite fresh cache")
 		return nil, nil
 	})
@@ -295,8 +298,8 @@ func TestResolveReportsServedPayloadAgeOnStaleFallback(t *testing.T) {
 	// times so the mtime round-trips exactly through the filesystem.
 	realNow := time.Now().Truncate(time.Second)
 	dir := t.TempDir()
-	p := filepath.Join(dir, "usage")
-	if err := os.WriteFile(p, []byte(goodPayload), 0o600); err != nil {
+	p := payloadPath(dir, testOwner)
+	if err := writeOwned(p, []byte(goodPayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	fetched := realNow.Add(-10 * time.Minute) // older than the 1m TTL
@@ -304,7 +307,7 @@ func TestResolveReportsServedPayloadAgeOnStaleFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, staleFor, ok := Resolve(dir, time.Minute, realNow, func() ([]byte, error) { return nil, errors.New("network down") })
+	_, staleFor, ok := resolveAs(dir, time.Minute, realNow, func() ([]byte, error) { return nil, errors.New("network down") })
 	if !ok {
 		t.Fatal("stale-good fallback not served")
 	}
@@ -318,10 +321,10 @@ func TestResolveFreshAndLivePathsReportZeroAge(t *testing.T) {
 	// live-fetch serves report a zero age.
 	realNow := time.Now()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "usage"), []byte(goodPayload), 0o600); err != nil {
+	if err := writeOwned(payloadPath(dir, testOwner), []byte(goodPayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, staleFor, ok := Resolve(dir, time.Minute, realNow, func() ([]byte, error) {
+	if _, staleFor, ok := resolveAs(dir, time.Minute, realNow, func() ([]byte, error) {
 		t.Fatal("fetch called despite fresh cache")
 		return nil, nil
 	}); !ok || staleFor != 0 {
@@ -329,7 +332,7 @@ func TestResolveFreshAndLivePathsReportZeroAge(t *testing.T) {
 	}
 
 	dir = t.TempDir()
-	if _, staleFor, ok := Resolve(dir, time.Minute, realNow, func() ([]byte, error) { return []byte(goodPayload), nil }); !ok || staleFor != 0 {
+	if _, staleFor, ok := resolveAs(dir, time.Minute, realNow, func() ([]byte, error) { return []byte(goodPayload), nil }); !ok || staleFor != 0 {
 		t.Errorf("live fetch: ok=%v staleFor=%v, want served with zero age", ok, staleFor)
 	}
 }
@@ -344,8 +347,8 @@ func boundaryFixture(t *testing.T, realNow time.Time, fiveHourReset, sevenDayRes
 	  "five_hour": {"utilization": 55, "resets_at": "` + fiveHourReset.Format(time.RFC3339) + `"},
 	  "seven_day": {"utilization": 23, "resets_at": "` + sevenDayReset.Format(time.RFC3339) + `"}
 	}`
-	p := filepath.Join(dir, "usage")
-	if err := os.WriteFile(p, []byte(payload), 0o600); err != nil {
+	p := payloadPath(dir, testOwner)
+	if err := writeOwned(p, []byte(payload), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	fetched := realNow.Add(-5 * time.Minute) // within a 10m TTL, before both resets
@@ -363,18 +366,18 @@ func TestResolveRefetchesWhenResetsAtPassed(t *testing.T) {
 	// five_hour reset passed 2 minutes ago; seven_day still ahead.
 	dir, _ := boundaryFixture(t, realNow, realNow.Add(-2*time.Minute), realNow.Add(48*time.Hour))
 	calls := 0
-	got, _, ok := Resolve(dir, 10*time.Minute, realNow, func() ([]byte, error) { calls++; return []byte(rolled), nil })
+	got, _, ok := resolveAs(dir, 10*time.Minute, realNow, func() ([]byte, error) { calls++; return []byte(rolled), nil })
 	if !ok || string(got) != rolled || calls != 1 {
 		t.Errorf("five_hour boundary: ok=%v calls=%d got=%q; want refetched rolled payload", ok, calls, got)
 	}
-	if b, _ := os.ReadFile(filepath.Join(dir, "usage")); string(b) != rolled {
+	if b, _ := readOwned(payloadPath(dir, testOwner)); string(b) != rolled {
 		t.Errorf("rolled payload not cached: %q", b)
 	}
 
 	// seven_day reset passed; five_hour still ahead — must also trigger.
 	dir, _ = boundaryFixture(t, realNow, realNow.Add(2*time.Hour), realNow.Add(-time.Minute))
 	calls = 0
-	got, _, ok = Resolve(dir, 10*time.Minute, realNow, func() ([]byte, error) { calls++; return []byte(rolled), nil })
+	got, _, ok = resolveAs(dir, 10*time.Minute, realNow, func() ([]byte, error) { calls++; return []byte(rolled), nil })
 	if !ok || string(got) != rolled || calls != 1 {
 		t.Errorf("seven_day boundary: ok=%v calls=%d got=%q; want refetched rolled payload", ok, calls, got)
 	}
@@ -388,8 +391,8 @@ func TestResolveBoundaryRefetchIsBounded(t *testing.T) {
 	dir := t.TempDir()
 	stillPast := `{"five_hour": {"utilization": 55, "resets_at": "` +
 		realNow.Add(-10*time.Minute).Format(time.RFC3339) + `"}}`
-	p := filepath.Join(dir, "usage")
-	if err := os.WriteFile(p, []byte(stillPast), 0o600); err != nil {
+	p := payloadPath(dir, testOwner)
+	if err := writeOwned(p, []byte(stillPast), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	after := realNow.Add(-2 * time.Minute) // fetched AFTER the reset moment
@@ -397,7 +400,7 @@ func TestResolveBoundaryRefetchIsBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, _, ok := Resolve(dir, 10*time.Minute, realNow, func() ([]byte, error) {
+	got, _, ok := resolveAs(dir, 10*time.Minute, realNow, func() ([]byte, error) {
 		t.Fatal("fetch called for a post-boundary payload — storm guard broken")
 		return nil, nil
 	})
@@ -409,7 +412,7 @@ func TestResolveBoundaryRefetchIsBounded(t *testing.T) {
 func TestResolveBoundaryFetchFailureServesStaleGood(t *testing.T) {
 	realNow := time.Now().Truncate(time.Second)
 	dir, cached := boundaryFixture(t, realNow, realNow.Add(-2*time.Minute), realNow.Add(48*time.Hour))
-	got, staleFor, ok := Resolve(dir, 10*time.Minute, realNow, func() ([]byte, error) { return nil, errors.New("api down") })
+	got, staleFor, ok := resolveAs(dir, 10*time.Minute, realNow, func() ([]byte, error) { return nil, errors.New("api down") })
 	if !ok || string(got) != cached {
 		t.Errorf("boundary + failed fetch must serve stale-good payload: ok=%v got=%q", ok, got)
 	}
@@ -425,10 +428,10 @@ func TestResolveMissingResetsAtKeepsTTLBehavior(t *testing.T) {
 	realNow := time.Now()
 	dir := t.TempDir()
 	noResets := `{"five_hour": {"utilization": 5.9}, "seven_day": {"utilization": 13}}`
-	if err := os.WriteFile(filepath.Join(dir, "usage"), []byte(noResets), 0o600); err != nil {
+	if err := writeOwned(payloadPath(dir, testOwner), []byte(noResets), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, _, ok := Resolve(dir, time.Minute, realNow, func() ([]byte, error) {
+	got, _, ok := resolveAs(dir, time.Minute, realNow, func() ([]byte, error) {
 		t.Fatal("fetch called despite fresh cache without resets_at")
 		return nil, nil
 	})
@@ -439,10 +442,10 @@ func TestResolveMissingResetsAtKeepsTTLBehavior(t *testing.T) {
 	// Unparseable resets_at: same — plain TTL, no crash, no fetch.
 	dir = t.TempDir()
 	badReset := `{"five_hour": {"utilization": 5.9, "resets_at": "not-a-timestamp"}}`
-	if err := os.WriteFile(filepath.Join(dir, "usage"), []byte(badReset), 0o600); err != nil {
+	if err := writeOwned(payloadPath(dir, testOwner), []byte(badReset), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, _, ok = Resolve(dir, time.Minute, realNow, func() ([]byte, error) {
+	got, _, ok = resolveAs(dir, time.Minute, realNow, func() ([]byte, error) {
 		t.Fatal("fetch called despite fresh cache with unparseable resets_at")
 		return nil, nil
 	})
@@ -617,22 +620,22 @@ func TestResolveReplacesStaleCacheWithNullFiveHourPayload(t *testing.T) {
 	// growing age marker. The live payload must be cached and served fresh.
 	realNow := time.Now().Truncate(time.Second)
 	dir := t.TempDir()
-	p := filepath.Join(dir, "usage")
-	if err := os.WriteFile(p, []byte(goodPayload), 0o600); err != nil {
+	p := payloadPath(dir, testOwner)
+	if err := writeOwned(p, []byte(goodPayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	old := realNow.Add(-69 * time.Hour)
 	if err := os.Chtimes(p, old, old); err != nil {
 		t.Fatal(err)
 	}
-	raw, staleFor, ok := Resolve(dir, time.Minute, realNow, func() ([]byte, error) { return []byte(nullFiveHourPayload), nil })
+	raw, staleFor, ok := resolveAs(dir, time.Minute, realNow, func() ([]byte, error) { return []byte(nullFiveHourPayload), nil })
 	if !ok || staleFor != 0 {
 		t.Fatalf("Resolve: ok=%v staleFor=%v, want the live payload served with zero age", ok, staleFor)
 	}
 	if string(raw) != nullFiveHourPayload {
 		t.Errorf("Resolve served %q, want the live payload", raw)
 	}
-	cached, err := os.ReadFile(p)
+	cached, err := readOwned(p)
 	if err != nil || string(cached) != nullFiveHourPayload {
 		t.Errorf("cache not replaced: err=%v content=%q", err, cached)
 	}
@@ -643,8 +646,8 @@ func TestResolveReplacesStaleCacheWithNullFiveHourPayload(t *testing.T) {
 func staleFixture(t *testing.T, realNow time.Time) string {
 	t.Helper()
 	dir := t.TempDir()
-	p := filepath.Join(dir, "usage")
-	if err := os.WriteFile(p, []byte(goodPayload), 0o600); err != nil {
+	p := payloadPath(dir, testOwner)
+	if err := writeOwned(p, []byte(goodPayload), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	old := realNow.Add(-2 * time.Hour)
@@ -664,15 +667,15 @@ func TestResolveNeverAttemptsFetchWithinMinFetchInterval(t *testing.T) {
 	calls := 0
 	failing := func() ([]byte, error) { calls++; return nil, errors.New("network down") }
 
-	if _, _, ok := Resolve(dir, time.Minute, realNow, failing); !ok {
+	if _, _, ok := resolveAs(dir, time.Minute, realNow, failing); !ok {
 		t.Fatal("stale-good fallback not served on the first failure")
 	}
-	Resolve(dir, time.Minute, realNow.Add(time.Second), failing)
-	Resolve(dir, time.Minute, realNow.Add(MinFetchInterval-time.Second), failing)
+	resolveAs(dir, time.Minute, realNow.Add(time.Second), failing)
+	resolveAs(dir, time.Minute, realNow.Add(MinFetchInterval-time.Second), failing)
 	if calls != 1 {
 		t.Fatalf("fetch attempted %d times within MinFetchInterval, want exactly 1", calls)
 	}
-	Resolve(dir, time.Minute, realNow.Add(MinFetchInterval+time.Second), failing)
+	resolveAs(dir, time.Minute, realNow.Add(MinFetchInterval+time.Second), failing)
 	if calls != 2 {
 		t.Errorf("fetch attempted %d times after MinFetchInterval elapsed, want 2", calls)
 	}
@@ -685,8 +688,8 @@ func TestResolveThrottlesAfterRejectedPayloadToo(t *testing.T) {
 	dir := staleFixture(t, realNow)
 	calls := 0
 	errBody := func() ([]byte, error) { calls++; return []byte(`{"error":{"type":"rate_limit_error"}}`), nil }
-	Resolve(dir, time.Minute, realNow, errBody)
-	Resolve(dir, time.Minute, realNow.Add(5*time.Second), errBody)
+	resolveAs(dir, time.Minute, realNow, errBody)
+	resolveAs(dir, time.Minute, realNow.Add(5*time.Second), errBody)
 	if calls != 1 {
 		t.Errorf("fetch attempted %d times, want 1", calls)
 	}
@@ -699,12 +702,12 @@ func TestResolveHonorsRetryAfterLongerThanFloor(t *testing.T) {
 	dir := staleFixture(t, realNow)
 	calls := 0
 	limited := func() ([]byte, error) { calls++; return nil, &RetryAfterError{After: 15 * time.Minute} }
-	Resolve(dir, time.Minute, realNow, limited)
-	Resolve(dir, time.Minute, realNow.Add(MinFetchInterval+time.Second), limited)
+	resolveAs(dir, time.Minute, realNow, limited)
+	resolveAs(dir, time.Minute, realNow.Add(MinFetchInterval+time.Second), limited)
 	if calls != 1 {
 		t.Fatalf("fetch attempted %d times inside the server's Retry-After, want 1", calls)
 	}
-	Resolve(dir, time.Minute, realNow.Add(15*time.Minute+time.Second), limited)
+	resolveAs(dir, time.Minute, realNow.Add(15*time.Minute+time.Second), limited)
 	if calls != 2 {
 		t.Errorf("fetch attempted %d times after Retry-After elapsed, want 2", calls)
 	}
@@ -712,8 +715,8 @@ func TestResolveHonorsRetryAfterLongerThanFloor(t *testing.T) {
 	dir = staleFixture(t, realNow)
 	calls = 0
 	short := func() ([]byte, error) { calls++; return nil, &RetryAfterError{After: 5 * time.Second} }
-	Resolve(dir, time.Minute, realNow, short)
-	Resolve(dir, time.Minute, realNow.Add(10*time.Second), short)
+	resolveAs(dir, time.Minute, realNow, short)
+	resolveAs(dir, time.Minute, realNow.Add(10*time.Second), short)
 	if calls != 1 {
 		t.Errorf("fetch attempted %d times: a short Retry-After must not undercut the floor", calls)
 	}
@@ -727,10 +730,10 @@ func TestResolveSuccessfulFetchKeepsTTLCadence(t *testing.T) {
 	dir := t.TempDir()
 	calls := 0
 	good := func() ([]byte, error) { calls++; return []byte(goodPayload), nil }
-	if _, _, ok := Resolve(dir, MinFetchInterval, realNow, good); !ok || calls != 1 {
+	if _, _, ok := resolveAs(dir, MinFetchInterval, realNow, good); !ok || calls != 1 {
 		t.Fatalf("first resolve: ok=%v calls=%d", ok, calls)
 	}
-	if _, staleFor, ok := Resolve(dir, MinFetchInterval, realNow.Add(time.Second), good); !ok || staleFor != 0 || calls != 1 {
+	if _, staleFor, ok := resolveAs(dir, MinFetchInterval, realNow.Add(time.Second), good); !ok || staleFor != 0 || calls != 1 {
 		t.Errorf("fresh cache served with a fetch: ok=%v staleFor=%v calls=%d", ok, staleFor, calls)
 	}
 }
@@ -738,5 +741,252 @@ func TestResolveSuccessfulFetchKeepsTTLCadence(t *testing.T) {
 func TestMinFetchIntervalFloor(t *testing.T) {
 	if MinFetchInterval < 200*time.Second {
 		t.Errorf("MinFetchInterval = %v, must be at least 200s (the endpoint's observed Retry-After)", MinFetchInterval)
+	}
+}
+
+// testOwner is the account and token every single-account Resolve test
+// runs as.
+var testOwner = Owner{Account: "acct-A", Fingerprint: "fp-A"}
+
+// resolveAs runs Resolve as testOwner, with the owner unchanged by the fetch.
+func resolveAs(dir string, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) ([]byte, time.Duration, bool) {
+	return Resolve(dir, testOwner, func() Owner { return testOwner }, ttl, now, fetch)
+}
+
+var (
+	ownerA = Owner{Account: "11111111-aaaa-4000-8000-000000000001", Fingerprint: "aaaaaaaaaaaaaaaa"}
+	ownerB = Owner{Account: "22222222-bbbb-4000-8000-000000000002", Fingerprint: "bbbbbbbbbbbbbbbb"}
+	// payloadB differs from goodPayload, so B's numbers are recognizable.
+	payloadB = strings.Replace(goodPayload, `"utilization": 13,`, `"utilization": 77,`, 1)
+)
+
+// as returns a current-owner callback that always reports o.
+func as(o Owner) func() Owner { return func() Owner { return o } }
+
+func noFetch(t *testing.T) func() ([]byte, error) {
+	return func() ([]byte, error) {
+		t.Fatal("fetch must not run")
+		return nil, nil
+	}
+}
+
+// closeGate holds the shared fetch gate shut for an hour.
+func closeGate(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, nextAttemptFile), []byte(strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResolvePayloadIsKeyedByAccount(t *testing.T) {
+	dir := t.TempDir()
+	realNow := time.Now()
+	if _, _, ok := Resolve(dir, ownerA, as(ownerA), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil }); !ok {
+		t.Fatal("A's fetch not served")
+	}
+	// The gate is now shut for everyone; B has no payload of its own.
+	if got, _, ok := Resolve(dir, ownerB, as(ownerB), time.Hour, realNow, noFetch(t)); ok {
+		t.Errorf("B was served A's payload: %q", got)
+	}
+}
+
+func TestResolveServesPayloadOnlyToTheTokenThatFetchedIt(t *testing.T) {
+	// Same account, different token (a /login that rewrote the token but
+	// not yet the record, or the reverse): the payload is not served.
+	dir := t.TempDir()
+	realNow := time.Now()
+	Resolve(dir, ownerA, as(ownerA), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil })
+	otherToken := Owner{Account: ownerA.Account, Fingerprint: ownerB.Fingerprint}
+	if got, _, ok := Resolve(dir, otherToken, as(otherToken), time.Hour, realNow, noFetch(t)); ok {
+		t.Errorf("payload served to another token: %q", got)
+	}
+	// Fresh and stale alike: age the file past the TTL.
+	old := realNow.Add(-2 * time.Hour)
+	files, _ := filepath.Glob(filepath.Join(dir, "usage-*"))
+	for _, f := range files {
+		_ = os.Chtimes(f, old, old)
+	}
+	if got, _, ok := Resolve(dir, otherToken, as(otherToken), time.Hour, realNow, noFetch(t)); ok {
+		t.Errorf("stale payload served to another token: %q", got)
+	}
+	if _, staleFor, ok := Resolve(dir, ownerA, as(ownerA), time.Hour, realNow, noFetch(t)); !ok || staleFor == 0 {
+		t.Errorf("owner's own stale payload must still serve with its age: ok=%v staleFor=%v", ok, staleFor)
+	}
+}
+
+func TestResolveWithoutAnOwnerTouchesNothing(t *testing.T) {
+	// No account record or no readable token: no fetch, no read, no write.
+	for _, o := range []Owner{{}, {Account: ownerA.Account}, {Fingerprint: ownerA.Fingerprint}} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "usage"), []byte(goodPayload), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got, _, ok := Resolve(dir, o, as(o), time.Hour, time.Now(), noFetch(t)); ok {
+			t.Errorf("owner %+v was served %q", o, got)
+		}
+		entries, _ := os.ReadDir(dir)
+		if len(entries) != 1 {
+			t.Errorf("owner %+v wrote files: %v", o, entries)
+		}
+	}
+}
+
+func TestResolveNeverReadsTheLegacyPayload(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "usage"), []byte(goodPayload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	closeGate(t, dir)
+	if got, _, ok := Resolve(dir, ownerA, as(ownerA), time.Hour, time.Now(), noFetch(t)); ok {
+		t.Errorf("legacy unkeyed payload was served: %q", got)
+	}
+}
+
+func TestResolveDiscardsAFetchWhenTheOwnerChangesDuringIt(t *testing.T) {
+	for name, after := range map[string]Owner{
+		"account changed": ownerB,
+		"token changed":   {Account: ownerA.Account, Fingerprint: ownerB.Fingerprint},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			got, _, ok := Resolve(dir, ownerA, as(after), time.Hour, time.Now(), func() ([]byte, error) { return []byte(goodPayload), nil })
+			if ok {
+				t.Errorf("a response fetched across an owner change was rendered: %q", got)
+			}
+			if files, _ := filepath.Glob(filepath.Join(dir, "usage-*")); len(files) != 0 {
+				t.Errorf("a response fetched across an owner change was cached: %v", files)
+			}
+		})
+	}
+}
+
+func TestResolveCacheFilesCarryNoAccountID(t *testing.T) {
+	dir := t.TempDir()
+	Resolve(dir, ownerA, as(ownerA), time.Hour, time.Now(), func() ([]byte, error) { return []byte(goodPayload), nil })
+	entries, _ := os.ReadDir(dir)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+		if strings.Contains(e.Name(), ownerA.Account) || strings.Contains(e.Name(), "11111111") {
+			t.Errorf("file name carries the account ID: %s", e.Name())
+		}
+	}
+	if files, _ := filepath.Glob(filepath.Join(dir, "usage-*")); len(files) != 1 {
+		t.Errorf("want one keyed payload file, got %v", names)
+	}
+}
+
+func TestResolveAccountsInterleaved(t *testing.T) {
+	// A renders, then B (whose fetch has some outcome), then A again. B never
+	// gets A's payload; A keeps its own, fresh or stale with its age.
+	outcomes := map[string]func() ([]byte, error){
+		"B fetch succeeds": func() ([]byte, error) { return []byte(payloadB), nil },
+		"B body rejected":  func() ([]byte, error) { return []byte(`{"error":{"type":"rate_limit_error"}}`), nil },
+		"B network error":  func() ([]byte, error) { return nil, errors.New("network down") },
+		"B told to retry":  func() ([]byte, error) { return nil, &RetryAfterError{After: 15 * time.Minute} },
+	}
+	for _, aStale := range []bool{false, true} {
+		for name, bFetch := range outcomes {
+			t.Run(fmt.Sprintf("%s, A stale=%v", name, aStale), func(t *testing.T) {
+				dir := t.TempDir()
+				realNow := time.Now().Truncate(time.Second)
+				Resolve(dir, ownerA, as(ownerA), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil })
+				if aStale {
+					old := realNow.Add(-2 * time.Hour)
+					files, _ := filepath.Glob(filepath.Join(dir, "usage-*"))
+					for _, f := range files {
+						_ = os.Chtimes(f, old, old)
+					}
+				}
+				// B's turn: open the gate so B's fetch runs.
+				_ = os.Remove(filepath.Join(dir, nextAttemptFile))
+				gotB, _, okB := Resolve(dir, ownerB, as(ownerB), time.Hour, realNow, bFetch)
+				if okB && string(gotB) == goodPayload {
+					t.Fatalf("B was served A's payload")
+				}
+				if name == "B fetch succeeds" && (!okB || string(gotB) != payloadB) {
+					t.Errorf("B's own fetch not served: ok=%v", okB)
+				}
+				// A again, gate shut by B's attempt: A's own payload only.
+				gotA, staleFor, okA := Resolve(dir, ownerA, as(ownerA), time.Hour, realNow, noFetch(t))
+				if !okA || string(gotA) != goodPayload {
+					t.Fatalf("A lost its own payload: ok=%v got=%q", okA, gotA)
+				}
+				if aStale != (staleFor > 0) {
+					t.Errorf("A stale=%v but staleFor=%v", aStale, staleFor)
+				}
+			})
+		}
+	}
+}
+
+// writeOwned writes payload to p in the cached form, owned by testOwner.
+func writeOwned(p string, payload []byte, perm os.FileMode) error {
+	return os.WriteFile(p, []byte(ownedFile(testOwner, payload)), perm)
+}
+
+// readOwned returns the payload of the cached file at p, owned by testOwner.
+func readOwned(p string) ([]byte, error) {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil, err
+	}
+	payload, ok := ownedBy(string(b), testOwner)
+	if !ok {
+		return nil, fmt.Errorf("%s is not owned by the test owner", p)
+	}
+	return payload, nil
+}
+
+func TestResolveTwoTokensOfOneAccountKeepTheirOwnPayloads(t *testing.T) {
+	// The same account logged in under two config directories has two
+	// tokens; each token's payload is its own entry, so neither evicts the
+	// other.
+	dir := t.TempDir()
+	realNow := time.Now()
+	tok1 := Owner{Account: ownerA.Account, Fingerprint: "1111111111111111"}
+	tok2 := Owner{Account: ownerA.Account, Fingerprint: "2222222222222222"}
+	Resolve(dir, tok1, as(tok1), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil })
+	_ = os.Remove(filepath.Join(dir, nextAttemptFile))
+	Resolve(dir, tok2, as(tok2), time.Hour, realNow, func() ([]byte, error) { return []byte(payloadB), nil })
+	if got, _, ok := Resolve(dir, tok1, as(tok1), time.Hour, realNow, noFetch(t)); !ok || string(got) != goodPayload {
+		t.Errorf("token 1 lost its payload to token 2: ok=%v", ok)
+	}
+	if got, _, ok := Resolve(dir, tok2, as(tok2), time.Hour, realNow, noFetch(t)); !ok || string(got) != payloadB {
+		t.Errorf("token 2 lost its payload: ok=%v", ok)
+	}
+}
+
+func TestResolveServesNothingWhenTheOwnerChangesDuringAFailedFetch(t *testing.T) {
+	// A has an expired payload. While A's fetch is out, /login changes the
+	// account or token (or the token becomes unreadable) and the fetch
+	// fails: the render must not fall back to A's payload either.
+	failures := map[string]func() ([]byte, error){
+		"network error": func() ([]byte, error) { return nil, errors.New("network down") },
+		"rejected body": func() ([]byte, error) { return []byte(`{"error":{"type":"rate_limit_error"}}`), nil },
+		"retry after":   func() ([]byte, error) { return nil, &RetryAfterError{After: 15 * time.Minute} },
+	}
+	changes := map[string]Owner{
+		"account changed":  ownerB,
+		"token changed":    {Account: ownerA.Account, Fingerprint: ownerB.Fingerprint},
+		"token unreadable": {Account: ownerA.Account},
+	}
+	for fname, fail := range failures {
+		for cname, after := range changes {
+			t.Run(fname+", "+cname, func(t *testing.T) {
+				dir := t.TempDir()
+				realNow := time.Now()
+				Resolve(dir, ownerA, as(ownerA), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil })
+				old := realNow.Add(-2 * time.Hour)
+				files, _ := filepath.Glob(filepath.Join(dir, "usage-*"))
+				for _, f := range files {
+					_ = os.Chtimes(f, old, old)
+				}
+				_ = os.Remove(filepath.Join(dir, nextAttemptFile))
+				if got, _, ok := Resolve(dir, ownerA, as(after), time.Hour, realNow, fail); ok {
+					t.Errorf("served the previous owner's payload: %q", got)
+				}
+			})
+		}
 	}
 }

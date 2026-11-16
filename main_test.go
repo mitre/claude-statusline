@@ -46,7 +46,7 @@ func TestFetchUsageServesPayloadWithAuthHeaders(t *testing.T) {
 	defer srv.Close()
 	pointUsageAt(t, srv.URL)
 
-	body, err := fetchUsage(fileCreds(t, "fixture-access-e2e"))
+	body, err := fetchUsage(fileCreds(t, "fixture-access-e2e"), fingerprintOf("fixture-access-e2e"))
 	if err != nil || string(body) != payload {
 		t.Fatalf("fetchUsage = %q, %v; want the payload", body, err)
 	}
@@ -69,7 +69,7 @@ func TestFetchUsageNoCredentialsSkipsNetwork(t *testing.T) {
 		lookupEnv: lookupMap(map[string]string{"HOME": t.TempDir()}),
 		readFile:  os.ReadFile,
 	}
-	if _, err := fetchUsage(creds); err == nil {
+	if _, err := fetchUsage(creds, fingerprintOf("fixture-access-e2e")); err == nil {
 		t.Fatal("fetchUsage = nil error; want credential-resolution failure")
 	}
 }
@@ -81,7 +81,7 @@ func TestFetchUsageCapsBodyAtOneMiB(t *testing.T) {
 	defer srv.Close()
 	pointUsageAt(t, srv.URL)
 
-	body, err := fetchUsage(fileCreds(t, "fixture-access-e2e"))
+	body, err := fetchUsage(fileCreds(t, "fixture-access-e2e"), fingerprintOf("fixture-access-e2e"))
 	if err != nil {
 		t.Fatalf("fetchUsage error = %v; want capped body", err)
 	}
@@ -101,7 +101,7 @@ func TestFetchUsageTimesOut(t *testing.T) {
 	usageHTTPTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { usageHTTPTimeout = prod })
 
-	if _, err := fetchUsage(fileCreds(t, "fixture-access-e2e")); err == nil {
+	if _, err := fetchUsage(fileCreds(t, "fixture-access-e2e"), fingerprintOf("fixture-access-e2e")); err == nil {
 		t.Fatal("fetchUsage = nil error; want client timeout")
 	}
 }
@@ -282,7 +282,7 @@ func TestFetchUsageClassifies429WithRetryAfter(t *testing.T) {
 	defer srv.Close()
 	pointUsageAt(t, srv.URL)
 
-	body, err := fetchUsage(fileCreds(t, "fixture-access-e2e"))
+	body, err := fetchUsage(fileCreds(t, "fixture-access-e2e"), fingerprintOf("fixture-access-e2e"))
 	var ra *usage.RetryAfterError
 	if !errors.As(err, &ra) {
 		t.Fatalf("fetchUsage = %q, %v; want *usage.RetryAfterError", body, err)
@@ -301,9 +301,23 @@ func TestFetchUsage429WithoutRetryAfterStillTyped(t *testing.T) {
 	}))
 	defer srv.Close()
 	pointUsageAt(t, srv.URL)
-	_, err := fetchUsage(fileCreds(t, "fixture-access-e2e"))
+	_, err := fetchUsage(fileCreds(t, "fixture-access-e2e"), fingerprintOf("fixture-access-e2e"))
 	var ra *usage.RetryAfterError
 	if !errors.As(err, &ra) || ra.After != 0 {
 		t.Errorf("429 without Retry-After: err=%v; want RetryAfterError with zero After (floor applies)", err)
+	}
+}
+
+func TestFetchUsageSendsNoRequestForAnotherToken(t *testing.T) {
+	// The render's cache entry is bound to one token; if the store now
+	// resolves a different one, the request is not sent at all.
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("endpoint hit with a token other than the render's")
+	}))
+	defer srv.Close()
+	pointUsageAt(t, srv.URL)
+
+	if _, err := fetchUsage(fileCreds(t, "fixture-access-e2e"), fingerprintOf("fixture-access-other")); err == nil {
+		t.Fatal("fetchUsage = nil error; want a credential-changed failure")
 	}
 }

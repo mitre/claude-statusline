@@ -46,7 +46,8 @@ func main() {
 		runGit:           runGit,
 		keychainOK:       creds.ok,
 		credentialSource: creds.location,
-		fetchUsage:       func() ([]byte, error) { return fetchUsage(creds) },
+		tokenFingerprint: creds.fingerprint,
+		fetchUsage:       func(fingerprint string) ([]byte, error) { return fetchUsage(creds, fingerprint) },
 		readFile:         os.ReadFile,
 		stat:             os.Stat,
 		readDir:          os.ReadDir,
@@ -121,8 +122,8 @@ var (
 // fetchUsage pulls the subscription-limits payload from the OAuth usage
 // endpoint, resolving the access token through the credential chain per
 // fetch — never cached, never logged.
-func fetchUsage(creds tokenSource) ([]byte, error) {
-	token, err := creds.token()
+func fetchUsage(creds tokenSource, fingerprint string) ([]byte, error) {
+	token, err := creds.tokenFor(fingerprint)
 	if err != nil {
 		return nil, err
 	}
