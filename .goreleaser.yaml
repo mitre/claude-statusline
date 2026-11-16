@@ -37,10 +37,13 @@ snapshot:
 
 changelog:
   # CHANGELOG.md (Keep a Changelog) is the release-notes source of record:
-  # `make release` extracts the version's section (scripts/release-notes.sh)
-  # and passes it via --release-notes. The git-log changelog is disabled so
-  # it can never leak in beside or instead of the curated notes.
-  disable: true
+  # `make release` (scripts/release.sh) extracts the version's section and
+  # passes it via --release-notes. The changelog pipe must stay enabled —
+  # `disable: true` skips the pipe that loads --release-notes and published
+  # empty release bodies. With a notes file given, the pipe uses it and
+  # returns before generating a git-log changelog, and release.sh refuses to
+  # run without one, so git-log entries never reach the release.
+  use: git
 
 # Homebrew publishing deliberately does NOT use goreleaser's publishers:
 # `brews` is deprecated (fails `goreleaser check`) and its replacement

@@ -120,13 +120,12 @@ preflight:
 # One artifact pipeline: goreleaser owns cross-compilation, archives, and
 # checksums. `release` publishes (tag + GITHUB_TOKEN required — the v* tag
 # workflow's job); `snapshot` is the local no-publish proof. Release notes
-# come from CHANGELOG.md's section for the version (goreleaser's git-log
-# changelog is disabled in .goreleaser.yaml).
+# come from CHANGELOG.md's section for the version, passed via
+# --release-notes, which bypasses goreleaser's git-log changelog;
+# scripts/release.sh keeps the notes file outside dist/, which --clean
+# deletes before reading it.
 release: require-goreleaser vet test
-	@mkdir -p $(DIST)
-	@VER=$$(sh scripts/plugin-version.sh .claude-plugin/plugin.json) && \
-	  sh scripts/release-notes.sh "$$VER" > $(DIST)/release-notes.md
-	goreleaser release --clean --release-notes=$(DIST)/release-notes.md
+	sh scripts/release.sh
 
 snapshot: require-goreleaser vet test
 	@VER=$$(sh scripts/plugin-version.sh .claude-plugin/plugin.json) && \

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- GitHub releases carry their CHANGELOG section as the release notes.
+  `.goreleaser.yaml` set `changelog.disable: true`, which makes goreleaser
+  skip the step that loads `--release-notes`, so v0.3.0 and v0.3.1 were
+  published with empty bodies (both since backfilled). The step is enabled
+  again; the notes file moves outside `dist/`, which `--clean` would delete
+  before the step reads it; and a version without a CHANGELOG section
+  refuses to release.
+
 ## [0.3.1] - 2026-11-15
 
 ### Changed
