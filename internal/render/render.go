@@ -16,28 +16,29 @@ import (
 	lg "charm.land/lipgloss/v2"
 )
 
-// Styles. The colored ones default to the ANSI 16-color palette (matching
-// the original escape constants) and are rebuilt from Options.Colors by
-// setPalette at the start of every Build.
+// Styles without a palette color. The colored styles come from the
+// Options of each call (newPalette), so a row's colors depend only on its
+// arguments.
 var (
 	dimS  = lg.NewStyle().Faint(true)
 	boldS = lg.NewStyle().Bold(true)
-
-	nameS, redS, grnS, ylwS, bluS, hotS, alarmS lg.Style
 )
 
-func init() { setPalette(DefaultOptions().Colors) }
+// palette holds the colored styles built from one Options.Colors.
+type palette struct {
+	name, red, grn, ylw, blu, hot, alarm lg.Style
+}
 
-// setPalette rebuilds the colored styles from c. A statusline renders one
-// frame per process, so package-level styles stay the simplest carrier.
-func setPalette(c Colors) {
-	nameS = lg.NewStyle().Bold(true).Foreground(lg.Color(c.Cyan)) // bold cyan
-	redS = lg.NewStyle().Foreground(lg.Color(c.Red))
-	grnS = lg.NewStyle().Foreground(lg.Color(c.Green))
-	ylwS = lg.NewStyle().Foreground(lg.Color(c.Yellow))
-	bluS = lg.NewStyle().Foreground(lg.Color(c.Blue))
-	hotS = lg.NewStyle().Bold(true).Foreground(lg.Color(c.Red))                             // loud percentage
-	alarmS = lg.NewStyle().Bold(true).Foreground(lg.Color("7")).Background(lg.Color(c.Red)) // white-on-red badge
+func newPalette(c Colors) palette {
+	return palette{
+		name:  lg.NewStyle().Bold(true).Foreground(lg.Color(c.Cyan)), // model name
+		red:   lg.NewStyle().Foreground(lg.Color(c.Red)),
+		grn:   lg.NewStyle().Foreground(lg.Color(c.Green)),
+		ylw:   lg.NewStyle().Foreground(lg.Color(c.Yellow)),
+		blu:   lg.NewStyle().Foreground(lg.Color(c.Blue)),
+		hot:   lg.NewStyle().Bold(true).Foreground(lg.Color(c.Red)),                           // loud percentage
+		alarm: lg.NewStyle().Bold(true).Foreground(lg.Color("7")).Background(lg.Color(c.Red)), // white-on-red badge
+	}
 }
 
 // sepDot is the dim mid-dot row separator with outer spaces.
@@ -202,6 +203,7 @@ func lbl(name string) string {
 // fast-mode badges, session id, extra-usage badge, and the metered-billing
 // alarm (carrying the session's accumulated cost when known).
 func ModelRow(st State, extraBadge string, o Options) string {
+	p := newPalette(o.Colors)
 	name := st.Model
 	if o.Model.ShowContextSize && !strings.Contains(name, "ontext") {
 		if st.CtxSize >= 1000000 {
@@ -210,16 +212,16 @@ func ModelRow(st State, extraBadge string, o Options) string {
 			name += fmt.Sprintf(" %dk", st.CtxSize/1000)
 		}
 	}
-	row := lbl("model") + nameS.Render(name)
+	row := lbl("model") + p.name.Render(name)
 	if o.Model.ShowAuth {
 		switch st.Auth {
 		case "Sub":
-			row += dimS.Render(" · ") + grnS.Render("Sub")
+			row += dimS.Render(" · ") + p.grn.Render("Sub")
 		case "API":
-			row += dimS.Render(" · ") + ylwS.Render("API")
+			row += dimS.Render(" · ") + p.ylw.Render("API")
 		default:
 			if st.Auth != "" && st.Auth != "?" {
-				row += dimS.Render(" · ") + grnS.Render(st.Auth)
+				row += dimS.Render(" · ") + p.grn.Render(st.Auth)
 			}
 		}
 	}
@@ -229,7 +231,7 @@ func ModelRow(st State, extraBadge string, o Options) string {
 	}
 	if o.Model.ShowFastMode && st.FastMode {
 		// Attention tier: fast mode changes the session's cost profile.
-		row += dimS.Render(" · ") + ylwS.Render("⚡ fast")
+		row += dimS.Render(" · ") + p.ylw.Render("⚡ fast")
 	}
 	if o.Model.ShowSession && st.SessionID != "" {
 		short := st.SessionID
@@ -247,7 +249,7 @@ func ModelRow(st State, extraBadge string, o Options) string {
 			// absent field decodes to 0 — never fabricate $0.00).
 			alarm = fmt.Sprintf(" ⚠ API KEY SET — METERED BILLING · $%.2f ", st.CostUSD)
 		}
-		row += " " + alarmS.Render(alarm)
+		row += " " + p.alarm.Render(alarm)
 	}
 	return row
 }
@@ -255,6 +257,7 @@ func ModelRow(st State, extraBadge string, o Options) string {
 // ProjectRow renders the tilde-shortened cwd, branch glyph, dirty count, and
 // the long-held index.lock badge.
 func ProjectRow(cwd, home, branch string, dirty int, lockAge time.Duration, o Options) string {
+	p := newPalette(o.Colors)
 	path := cwd
 	cleanHome := strings.TrimSuffix(home, "/")
 	if o.Project.TildeHome && cleanHome != "" {
@@ -266,17 +269,17 @@ func ProjectRow(cwd, home, branch string, dirty int, lockAge time.Duration, o Op
 	}
 	row := lbl("project") + boldS.Render(path)
 	if o.Project.ShowBranch && branch != "" {
-		row += sepDot + bluS.Render("⎇ "+branch)
+		row += sepDot + p.blu.Render("⎇ "+branch)
 	}
 	if o.Project.ShowDirty && dirty > 0 {
-		row += " " + ylwS.Render(fmt.Sprintf("~%d", dirty))
+		row += " " + p.ylw.Render(fmt.Sprintf("~%d", dirty))
 	}
 	if lockAge > 0 {
 		// Factual age of a long-held .git/index.lock — information, never an
 		// instruction: the lock may be legitimately held (editor-open commit,
 		// live rebase), so no "stale" verdict and no removal command, and
 		// yellow rather than the alarm tier.
-		row += " " + ylwS.Render("⚠ index.lock "+ageLabel(lockAge))
+		row += " " + p.ylw.Render("⚠ index.lock "+ageLabel(lockAge))
 	}
 	return row
 }
@@ -286,15 +289,16 @@ func ProjectRow(cwd, home, branch string, dirty int, lockAge time.Duration, o Op
 // >= 85%. The marker and the alarm answer different questions: absolute
 // tokens past the 200k tier boundary vs pressure on the window.
 func ContextRow(pct int, exceeds200k bool, o Options) string {
+	p := newPalette(o.Colors)
 	clampedPct := max(0, pct)
 	bar := meterBar(clampedPct)
 
-	barS, labelS := grnS, grnS
+	barS, labelS := p.grn, p.grn
 	switch {
 	case clampedPct >= 80:
-		barS, labelS = redS, hotS
+		barS, labelS = p.red, p.hot
 	case clampedPct >= 50:
-		barS, labelS = ylwS, ylwS
+		barS, labelS = p.ylw, p.ylw
 	}
 
 	row := lbl("context") + barS.Render(bar) + " " + labelS.Render(fmt.Sprintf("%d%%", clampedPct))
@@ -302,7 +306,7 @@ func ContextRow(pct int, exceeds200k bool, o Options) string {
 		row += " " + dimS.Render(">200k")
 	}
 	if clampedPct >= 85 {
-		row += " " + alarmS.Render(" /compact ")
+		row += " " + p.alarm.Render(" /compact ")
 	}
 	return row
 }
@@ -314,25 +318,25 @@ func meterBar(pct int) string {
 	return strings.Repeat("▓", filled) + strings.Repeat("░", 10-filled)
 }
 
-func limitStyle(pct int) lg.Style {
+func limitStyle(p palette, pct int) lg.Style {
 	switch {
 	case pct >= 80:
-		return redS
+		return p.red
 	case pct >= 50:
-		return ylwS
+		return p.ylw
 	default:
-		return grnS
+		return p.grn
 	}
 }
 
 // meter renders one account meter ("5h 28%", or "5h ▓▓░░░░░░░░ 28%" with
 // bars) with its optional reset label.
-func meter(name string, pct int, reset string, o Options) string {
+func meter(p palette, name string, pct int, reset string, o Options) string {
 	text := fmt.Sprintf("%s %d%%", name, pct)
 	if o.Account.Bars {
 		text = fmt.Sprintf("%s %s %d%%", name, meterBar(pct), pct)
 	}
-	s := limitStyle(pct).Render(text)
+	s := limitStyle(p, pct).Render(text)
 	if reset != "" && (o.Account.AlwaysShowResets || pct >= 80) {
 		s += " " + dimS.Render("(resets "+reset+")")
 	}
@@ -346,6 +350,7 @@ func meter(name string, pct int, reset string, o Options) string {
 // as reported by the usage API. The model window is a PARALLEL weekly cap,
 // not a subset of the week meter.
 func AccountRow(u Usage, o Options) string {
+	p := newPalette(o.Colors)
 	var parts []string
 	if o.Account.ShowEmail && u.Email != "" {
 		e := u.Email
@@ -359,16 +364,16 @@ func AccountRow(u Usage, o Options) string {
 	}
 	identity := len(parts)
 	if !u.FiveHourAbsent {
-		parts = append(parts, meter("5h", u.U5, u.R5, o))
+		parts = append(parts, meter(p, "5h", u.U5, u.R5, o))
 	}
 	if !u.SevenDayAbsent {
-		parts = append(parts, meter("week", u.U7, u.R7, o))
+		parts = append(parts, meter(p, "week", u.U7, u.R7, o))
 	}
 	for _, s := range u.Scoped {
-		parts = append(parts, meter(s.Name, s.Pct, s.Reset, o))
+		parts = append(parts, meter(p, s.Name, s.Pct, s.Reset, o))
 	}
 	if u.ModelFamily != "" {
-		parts = append(parts, meter(u.ModelFamily+"/wk", u.ModelPct, u.ModelReset, o))
+		parts = append(parts, meter(p, u.ModelFamily+"/wk", u.ModelPct, u.ModelReset, o))
 	}
 	if len(parts) == identity {
 		// Identity alone is not a reading: no meter, no row.
@@ -402,7 +407,8 @@ func ageLabel(age time.Duration) string {
 }
 
 // ActivityRow renders session duration and code churn; collapses when idle.
-func ActivityRow(durationMS int64, added, removed int) string {
+func ActivityRow(durationMS int64, added, removed int, o Options) string {
+	p := newPalette(o.Colors)
 	var parts []string
 	if durationMS > 60000 {
 		ts := durationMS / 1000
@@ -413,7 +419,7 @@ func ActivityRow(durationMS int64, added, removed int) string {
 		}
 	}
 	if added > 0 || removed > 0 {
-		parts = append(parts, grnS.Render("+"+comma(added))+"/"+redS.Render("-"+comma(removed))+" "+dimS.Render("lines"))
+		parts = append(parts, p.grn.Render("+"+comma(added))+"/"+p.red.Render("-"+comma(removed))+" "+dimS.Render("lines"))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -434,13 +440,14 @@ func ActivityRow(durationMS int64, added, removed int) string {
 // a zero amount. The comparison is in minor units so no float rounding
 // decides whether the alarm fires.
 func ExtraBadge(u Usage, o Options) string {
+	p := newPalette(o.Colors)
 	if !u.ExtraEnabled || u.CreditsMinor <= 0 {
 		return ""
 	}
 	cred := fmt.Sprintf("%.2f", float64(u.CreditsMinor)/math.Pow10(u.CreditsExp))
 	budgetMinor := int(math.Round(o.Model.ExtraBudget * math.Pow10(u.CreditsExp)))
 	if u.CreditsMinor >= budgetMinor {
-		return "  " + alarmS.Render(" ⚠ EXTRA USAGE $"+cred+" ")
+		return "  " + p.alarm.Render(" ⚠ EXTRA USAGE $"+cred+" ")
 	}
 	return dimS.Render(" · extra $" + cred)
 }
@@ -469,7 +476,6 @@ func comma(n int) string {
 // Build assembles all rows in reference order, collapsing empty ones and
 // honoring the per-row toggles.
 func Build(st State, o Options) string {
-	setPalette(o.Colors)
 	var rows []string
 	add := func(enabled bool, row string) {
 		if enabled && row != "" {
@@ -487,6 +493,6 @@ func Build(st State, o Options) string {
 	if st.Usage != nil {
 		add(o.Rows.Account, AccountRow(*st.Usage, o))
 	}
-	add(o.Rows.Activity, ActivityRow(st.DurationMS, st.LinesAdded, st.LinesRemoved))
+	add(o.Rows.Activity, ActivityRow(st.DurationMS, st.LinesAdded, st.LinesRemoved, o))
 	return strings.Join(rows, "\n")
 }

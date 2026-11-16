@@ -1,7 +1,9 @@
 package render
 
 import (
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -313,9 +315,7 @@ func TestAccountRowMeterBars(t *testing.T) {
 }
 
 func TestBuildCustomColors(t *testing.T) {
-	// [colors] remaps each palette slot; Build applies it for the frame and
-	// a later default-options Build restores the stock ANSI palette.
-	t.Cleanup(func() { Build(State{}, DefaultOptions()) })
+	// [colors] remaps each palette slot, in hex or as an ANSI 256 index.
 	opts := DefaultOptions()
 	opts.Rows.Model, opts.Rows.Project, opts.Rows.Activity = false, false, false
 	opts.Colors.Green = "#a6e3a1"
@@ -325,11 +325,6 @@ func TestBuildCustomColors(t *testing.T) {
 		"\x1b[2maccount  \x1b[m\x1b[38;2;166;227;161m5h 28%\x1b[m \x1b[2m·\x1b[m \x1b[38;5;210mweek 90%\x1b[m"
 	if got != want {
 		t.Errorf("Build custom colors:\n got %q\nwant %q", got, want)
-	}
-
-	Build(State{}, DefaultOptions())
-	if got, want := ContextRow(30, false, DefaultOptions()), "\x1b[2mcontext  \x1b[m\x1b[32m▓▓▓░░░░░░░\x1b[m \x1b[32m30%\x1b[m"; got != want {
-		t.Errorf("default palette not restored:\n got %q\nwant %q", got, want)
 	}
 }
 
@@ -393,16 +388,16 @@ func TestAgeLabel(t *testing.T) {
 }
 
 func TestActivityRow(t *testing.T) {
-	got := ActivityRow(62580000, 1598, 8)
+	got := ActivityRow(62580000, 1598, 8, DefaultOptions())
 	want := "\x1b[2mactivity \x1b[m\x1b[2m17h23m\x1b[m \x1b[2m·\x1b[m \x1b[32m+1,598\x1b[m/\x1b[31m-8\x1b[m \x1b[2mlines\x1b[m"
 	if got != want {
 		t.Errorf("ActivityRow:\n got %q\nwant %q", got, want)
 	}
-	if got := ActivityRow(0, 0, 0); got != "" {
+	if got := ActivityRow(0, 0, 0, DefaultOptions()); got != "" {
 		t.Errorf("empty activity should collapse, got %q", got)
 	}
 	// Short session: minutes+seconds form, no churn segment.
-	got = ActivityRow(90000, 0, 0)
+	got = ActivityRow(90000, 0, 0, DefaultOptions())
 	want = "\x1b[2mactivity \x1b[m\x1b[2m1m30s\x1b[m"
 	if got != want {
 		t.Errorf("ActivityRow short:\n got %q\nwant %q", got, want)
@@ -739,5 +734,110 @@ func TestAccountRowOmitsWeekMeterWhenAbsent(t *testing.T) {
 	want := "\x1b[2maccount  \x1b[m\x1b[32m5h 12%\x1b[m \x1b[2m(resets 6:00p)\x1b[m \x1b[2m·\x1b[m \x1b[32mFable 40%\x1b[m \x1b[2m(resets Fri 4:00p)\x1b[m"
 	if got != want {
 		t.Errorf("AccountRow with seven_day absent:\n got %q\nwant %q", got, want)
+	}
+}
+
+// fullRemap moves every palette slot off the stock ANSI 16-color indices.
+func fullRemap() Options {
+	o := DefaultOptions()
+	o.Colors = Colors{Red: "196", Green: "46", Yellow: "226", Blue: "21", Cyan: "51"}
+	return o
+}
+
+// sgrColors returns the color codes in every SGR sequence of s: basic
+// foreground/background codes ("31", "41") and extended ones as a whole
+// ("38;5;196", "48;2;1;2;3").
+func sgrColors(s string) []string {
+	var out []string
+	for _, m := range regexp.MustCompile(`\x1b\[([0-9;]*)m`).FindAllStringSubmatch(s, -1) {
+		p := strings.Split(m[1], ";")
+		for i := 0; i < len(p); i++ {
+			switch {
+			case (p[i] == "38" || p[i] == "48") && i+2 < len(p) && p[i+1] == "5":
+				out = append(out, strings.Join(p[i:i+3], ";"))
+				i += 2
+			case (p[i] == "38" || p[i] == "48") && i+4 < len(p) && p[i+1] == "2":
+				out = append(out, strings.Join(p[i:i+5], ";"))
+				i += 4
+			case len(p[i]) == 2 && (p[i][0] == '3' || p[i][0] == '4') && p[i][1] != '8' && p[i][1] != '9':
+				out = append(out, p[i])
+			}
+		}
+	}
+	return out
+}
+
+func TestRowsUseOnlyTheirOwnOptionsPalette(t *testing.T) {
+	// A row's colors depend on the Options it is given, never on what an
+	// earlier call rendered with.
+	stock := ContextRow(30, false, DefaultOptions())
+	custom := DefaultOptions()
+	custom.Colors.Green = "#a6e3a1"
+
+	if got := ContextRow(30, false, custom); !strings.Contains(got, "\x1b[38;2;166;227;161m") {
+		t.Errorf("ContextRow ignored its own palette: %q", got)
+	}
+	_ = Build(State{CtxPct: 30}, custom)
+	if got := ContextRow(30, false, DefaultOptions()); got != stock {
+		t.Errorf("palette leaked from an earlier Build:\n got %q\nwant %q", got, stock)
+	}
+}
+
+func TestConcurrentBuildsKeepTheirOwnPalette(t *testing.T) {
+	a, b := DefaultOptions(), DefaultOptions()
+	a.Colors.Green, b.Colors.Green = "100", "200"
+	st := State{CtxPct: 30}
+	var wg sync.WaitGroup
+	errs := make(chan string, 200)
+	for i := range 200 {
+		o, mine, other := a, "38;5;100", "38;5;200"
+		if i%2 == 1 {
+			o, mine, other = b, "38;5;200", "38;5;100"
+		}
+		wg.Go(func() {
+			got := Build(st, o)
+			if !strings.Contains(got, mine) || strings.Contains(got, other) {
+				errs <- got
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for got := range errs {
+		t.Errorf("concurrent Build rendered another call's palette: %q", got)
+	}
+}
+
+func TestFullRemapReachesEveryColoredSegment(t *testing.T) {
+	// Every colored segment draws from the palette: with all five slots
+	// remapped, no stock ANSI color survives anywhere, including the alarm
+	// badges (whose white text, code 37, is fixed). Each slot is used.
+	st := State{
+		Model: "Opus", CtxSize: 200000, Auth: "Sub", SessionID: "0a1b2c3d",
+		CWD: home + "/projects/demo-app", Home: home, Branch: "main", Dirty: 2,
+		LockAge: 14 * time.Minute, CtxPct: 90, FastMode: true, APIKeySet: true, CostUSD: 1.5,
+		Usage: &Usage{
+			U5: 28, U7: 55, ModelFamily: "opus", ModelPct: 90,
+			ExtraEnabled: true, CreditsMinor: 900, CreditsExp: 2,
+		},
+		DurationMS: 120000, LinesAdded: 10, LinesRemoved: 3,
+	}
+	got := Build(st, fullRemap())
+	for _, want := range []string{"API KEY SET", "EXTRA USAGE", "/compact", "index.lock", "⚡ fast", "⎇ main", "+10"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("fixture no longer exercises %q:\n%q", want, got)
+		}
+	}
+	seen := map[string]bool{}
+	for _, c := range sgrColors(got) {
+		seen[c] = true
+		if c != "37" && len(c) == 2 {
+			t.Errorf("stock ANSI color %s survived a full remap", c)
+		}
+	}
+	for _, c := range []string{"38;5;196", "48;5;196", "38;5;46", "38;5;226", "38;5;21", "38;5;51"} {
+		if !seen[c] {
+			t.Errorf("palette color %s never rendered; got codes %v", c, sgrColors(got))
+		}
 	}
 }
