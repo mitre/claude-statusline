@@ -152,7 +152,7 @@ func run(d deps) (string, string) {
 		var u render.Usage
 		have := false
 		if sess.Product != "antigravity" {
-			if raw, staleFor, ok := usage.Resolve(cfg.CacheDir, ttl, now, d.fetchUsage); ok {
+			if raw, staleFor, ok := usage.Resolve(cfg.CacheDir, usage.Owner{}, nil, ttl, now, d.fetchUsage); ok {
 				if p, uerr := usage.Parse(raw, now, sess.ModelName); uerr == nil {
 					u, have = p, true
 					u.DataAge = staleFor

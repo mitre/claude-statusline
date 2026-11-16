@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"math"
 	"os"
 	"path/filepath"
@@ -266,10 +267,25 @@ func labelAt(t, now time.Time) string {
 // made — success, network error, rate limit or a rejected body alike — no
 // further attempt happens before MinFetchInterval has passed (or the
 // server's Retry-After, when longer). Renders in between serve the cache.
-func Resolve(cacheDir string, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) (raw []byte, staleFor time.Duration, ok bool) {
-	p := filepath.Join(cacheDir, "usage")
-	if s, ok := cache.ReadFresh(p, ttl); ok && !boundaryExpired(p, []byte(s), now) {
-		return []byte(s), 0, true
+// Owner binds a cached usage payload to the account and the access token
+// it was fetched with.
+type Owner struct {
+	// Account is the account record's oauthAccount.accountUuid.
+	Account string
+	// Fingerprint is the first 16 hex digits of the sha256 of the access
+	// token; never the token itself.
+	Fingerprint string
+}
+
+func Resolve(cacheDir string, owner Owner, current func() Owner, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) (raw []byte, staleFor time.Duration, ok bool) {
+	if owner.Account == "" || owner.Fingerprint == "" {
+		return nil, 0, false
+	}
+	p := payloadPath(cacheDir, owner.Account)
+	if s, ok := cache.ReadFresh(p, ttl); ok {
+		if b, mine := ownedBy(s, owner); mine && !boundaryExpired(p, b, now) {
+			return b, 0, true
+		}
 	}
 	gate := filepath.Join(cacheDir, nextAttemptFile)
 	if mayAttempt(gate, now) {
@@ -277,15 +293,47 @@ func Resolve(cacheDir string, ttl time.Duration, now time.Time, fetch func() ([]
 		recordAttempt(gate, now, err)
 		if err == nil {
 			if _, perr := Parse(b, now, ""); perr == nil {
-				_ = cache.Write(p, string(b))
+				if current == nil || current() != owner {
+					// The record or the token changed while the request was
+					// out: the response may belong to either account.
+					return nil, 0, false
+				}
+				_ = cache.Write(p, ownedFile(owner, b))
 				return b, 0, true
 			}
 		}
 	}
 	if s, ok := cache.ReadStale(p); ok {
-		return []byte(s), staleAge(p, now), true
+		if b, mine := ownedBy(s, owner); mine {
+			return b, staleAge(p, now), true
+		}
 	}
 	return nil, 0, false
+}
+
+// payloadPath is the account's payload file: "usage-" and the FNV-1a 64-bit
+// hash of the account ID in hex, so the ID itself is not in the name. The
+// unkeyed "usage" file of earlier versions is never read.
+func payloadPath(cacheDir, account string) string {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(account))
+	return filepath.Join(cacheDir, fmt.Sprintf("usage-%016x", h.Sum64()))
+}
+
+// ownedFile is the cached form of payload: owner's token fingerprint on the
+// first line, the payload after it.
+func ownedFile(owner Owner, payload []byte) string {
+	return owner.Fingerprint + "\n" + string(payload)
+}
+
+// ownedBy splits a cached file into its token fingerprint line and the
+// payload, and reports whether owner's token fetched it.
+func ownedBy(file string, owner Owner) ([]byte, bool) {
+	fp, payload, found := strings.Cut(file, "\n")
+	if !found || fp != owner.Fingerprint {
+		return nil, false
+	}
+	return []byte(payload), true
 }
 
 // mayAttempt reports whether the throttle gate allows a fetch at now. A
