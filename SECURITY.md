@@ -28,11 +28,15 @@ vulnerability in claude-statusline, please report it responsibly.
 - **Untrusted input**: the session JSON on stdin and the workspace path are
   untrusted — unparseable JSON renders nothing, and the path is only ever
   passed as a directory argument to direct `exec` (no shell anywhere; every
-  subprocess argument is a compile-time constant)
-- **Credentials**: the OAuth token is resolved per fetch from Claude Code's
-  credential stores — the credentials file (`$CLAUDE_CONFIG_DIR/.credentials.json`,
-  else `~/.claude/.credentials.json`), falling back to the macOS keychain —
-  sent only in the `Authorization` header, and never logged or cached
+  subprocess argument is a compile-time constant, except the macOS keychain
+  service and account names, which are derived and must match their exact
+  expected pattern before `security` runs)
+- **Credentials**: the OAuth token is resolved per fetch the way Claude Code
+  resolves it — the macOS keychain item first, then the plaintext
+  `.credentials.json` in Claude Code's storage directory (the README's
+  "Security posture" design note gives the exact names and directories; a
+  relative directory is never read) — sent only in the `Authorization`
+  header, and never logged or cached
 - **Bounded network**: the single outbound request (usage endpoint) has a 2 s
   timeout and a 1 MB response cap; error payloads are never cached
 - **Cache hygiene**: cache files are written atomically (temp file + rename)
