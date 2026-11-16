@@ -139,15 +139,16 @@ alone.
 | Slot | Default | Paints |
 |---|---|---|
 | `red` | `"1"` | Context bar and percentage at ≥80% (the percentage bold), account meters at ≥80%, lines removed, and the background of the `/compact`, `EXTRA USAGE` and `METERED BILLING` alarm badges |
-| `green` | `"2"` | Context bar below 50%, account meters below 50%, the `Sub` (or plan-tier) auth badge, lines added |
-| `yellow` | `"3"` | Context bar 50–79%, account meters 50–79%, the `API` auth badge, `⚡ fast`, the changed-file count, the `index.lock` badge |
+| `green` | `"2"` | Context bar and percentage below 50%, account meters below 50%, the `Sub` (or plan-tier) auth badge, lines added |
+| `yellow` | `"3"` | Context bar and percentage 50–79%, account meters 50–79%, the `API` auth badge, `⚡ fast`, the changed-file count, the `index.lock` badge |
 | `blue` | `"4"` | Git branch |
 | `cyan` | `"6"` | Model name (bold) |
 
 Everything else is drawn in your terminal's default foreground: dim text
 (row labels, separators, effort, session id, `>200k`, reset times, age
-markers, session duration, the `extra $` tally), the bold project path, the
-account email, and the alarm badges' white text (ANSI `7`).
+markers, session duration, the `extra $` tally), the bold project path and
+the account email. The alarm badges' text is always ANSI `7` (white in most
+themes); `[colors]` does not change it.
 
 Each value is a quoted string in one of two forms:
 
