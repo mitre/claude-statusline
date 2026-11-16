@@ -33,9 +33,11 @@ type deps struct {
 	// fetchUsage would send (never the token); the usage cache serves a
 	// payload only to the token that fetched it. nil means unreadable.
 	tokenFingerprint func() (string, error)
-	fetchUsage       func() ([]byte, error)
-	readFile         func(string) ([]byte, error)
-	stat             func(string) (os.FileInfo, error)
+	// fetchUsage sends the usage request with the current token, only if
+	// that token's fingerprint is the given one.
+	fetchUsage func(fingerprint string) ([]byte, error)
+	readFile   func(string) ([]byte, error)
+	stat       func(string) (os.FileInfo, error)
 	// readDir lists a directory for the account resolver's exact-name
 	// check on the legacy record; nil means os.ReadDir.
 	readDir func(string) ([]os.DirEntry, error)
@@ -150,14 +152,15 @@ func run(d deps) (string, string) {
 		st.Branch = "?"
 	}
 
-	if cfg.Usage.Enabled && badge != "API" && badge != "?" {
+	// A CLAUDE_CODE_OAUTH_TOKEN session authenticates with a token the saved
+	// login does not describe: no endpoint fetch and no saved email, but its
+	// own stdin windows show even when no saved login exists (badge "?").
+	tokenSession := d.getenv("CLAUDE_CODE_OAUTH_TOKEN") != ""
+	if cfg.Usage.Enabled && badge != "API" && (badge != "?" || tokenSession) {
 		ttl := time.Duration(cfg.Usage.TTLSeconds) * time.Second
 		now := clock()
 		var u render.Usage
 		have := false
-		// A CLAUDE_CODE_OAUTH_TOKEN session authenticates with a token the
-		// saved login does not describe: no endpoint fetch, no saved email.
-		tokenSession := d.getenv("CLAUDE_CODE_OAUTH_TOKEN") != ""
 		fsys := account.FS{ReadFile: d.readFile, Stat: stat, ReadDir: readDir}
 		var id account.Identity
 		if !tokenSession {
@@ -176,7 +179,9 @@ func run(d deps) (string, string) {
 			// Re-read after the fetch: a /login during the request makes
 			// the response ownerless.
 			current := func() usage.Owner { return owner(account.Resolve(d.getenv, fsys).AccountUUID) }
-			if raw, staleFor, ok := usage.Resolve(cfg.CacheDir, owner(id.AccountUUID), current, ttl, now, d.fetchUsage); ok {
+			start := owner(id.AccountUUID)
+			fetch := func() ([]byte, error) { return d.fetchUsage(start.Fingerprint) }
+			if raw, staleFor, ok := usage.Resolve(cfg.CacheDir, start, current, ttl, now, fetch); ok {
 				if p, uerr := usage.Parse(raw, now, sess.ModelName); uerr == nil {
 					u, have = p, true
 					u.DataAge = staleFor

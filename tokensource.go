@@ -186,6 +186,25 @@ func (c tokenSource) fingerprint() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256([]byte(tok))
-	return hex.EncodeToString(sum[:8]), nil
+	return fingerprintOf(tok), nil
+}
+
+func fingerprintOf(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:8])
+}
+
+// tokenFor returns the current access token only if its fingerprint is
+// want, so a usage request carries exactly the token its cache entry is
+// bound to; another token (a /login, a keychain miss falling back to the
+// plaintext store) gets no request.
+func (c tokenSource) tokenFor(want string) (string, error) {
+	tok, err := c.token()
+	if err != nil {
+		return "", err
+	}
+	if want == "" || fingerprintOf(tok) != want {
+		return "", errors.New("the credential changed since this render began")
+	}
+	return tok, nil
 }

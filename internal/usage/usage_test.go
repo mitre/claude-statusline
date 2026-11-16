@@ -956,3 +956,37 @@ func TestResolveTwoTokensOfOneAccountKeepTheirOwnPayloads(t *testing.T) {
 		t.Errorf("token 2 lost its payload: ok=%v", ok)
 	}
 }
+
+func TestResolveServesNothingWhenTheOwnerChangesDuringAFailedFetch(t *testing.T) {
+	// A has an expired payload. While A's fetch is out, /login changes the
+	// account or token (or the token becomes unreadable) and the fetch
+	// fails: the render must not fall back to A's payload either.
+	failures := map[string]func() ([]byte, error){
+		"network error": func() ([]byte, error) { return nil, errors.New("network down") },
+		"rejected body": func() ([]byte, error) { return []byte(`{"error":{"type":"rate_limit_error"}}`), nil },
+		"retry after":   func() ([]byte, error) { return nil, &RetryAfterError{After: 15 * time.Minute} },
+	}
+	changes := map[string]Owner{
+		"account changed":  ownerB,
+		"token changed":    {Account: ownerA.Account, Fingerprint: ownerB.Fingerprint},
+		"token unreadable": {Account: ownerA.Account},
+	}
+	for fname, fail := range failures {
+		for cname, after := range changes {
+			t.Run(fname+", "+cname, func(t *testing.T) {
+				dir := t.TempDir()
+				realNow := time.Now()
+				Resolve(dir, ownerA, as(ownerA), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil })
+				old := realNow.Add(-2 * time.Hour)
+				files, _ := filepath.Glob(filepath.Join(dir, "usage-*"))
+				for _, f := range files {
+					_ = os.Chtimes(f, old, old)
+				}
+				_ = os.Remove(filepath.Join(dir, nextAttemptFile))
+				if got, _, ok := Resolve(dir, ownerA, as(after), time.Hour, realNow, fail); ok {
+					t.Errorf("served the previous owner's payload: %q", got)
+				}
+			})
+		}
+	}
+}

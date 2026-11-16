@@ -256,9 +256,11 @@ separate entries. A cached payload is shown, fresh or
 stale, only while both the account record and the current token still
 match, so after `/login` to another account the row never shows the
 previous account's numbers or alarm; it shows the live numbers from the
-session payload until a fetch for the new account succeeds. A response that
-arrives after the account record or token changed mid-request is neither
-shown nor cached. Sessions started with `CLAUDE_CODE_OAUTH_TOKEN` skip the
+session payload until a fetch for the new account succeeds. If the account record or
+token changes while a request is out, that render shows only the session
+payload: neither the response nor the cached payload is shown, and the
+response is not cached. The request itself is sent only with the token the
+render started with. Sessions started with `CLAUDE_CODE_OAUTH_TOKEN` skip the
 usage endpoint and the saved email entirely, because the saved login does
 not describe that token; they show only the session payload's numbers.
 

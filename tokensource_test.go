@@ -466,3 +466,27 @@ func sha256Prefix16(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:8])
 }
+
+func TestTokenForSendsOnlyTheFingerprintedToken(t *testing.T) {
+	// The fetch must send the very token the cache entry is bound to: when
+	// the store now resolves another token (a /login, a transient keychain
+	// miss falling back to the plaintext store), no token is returned and
+	// no request is made.
+	token := "fixture-access-a"
+	src := tokenSource{
+		lookupEnv: lookupMap(map[string]string{"HOME": "/Users/dev", "USER": "dev"}),
+		readFile:  os.ReadFile,
+		keychain:  func(string, string) (string, error) { return fixtureCredJSON(token), nil },
+	}
+	got, err := src.tokenFor(sha256Prefix16("fixture-access-a"))
+	if err != nil || got != "fixture-access-a" {
+		t.Fatalf("matching fingerprint: got %q, %v", got, err)
+	}
+	token = "fixture-access-b"
+	if got, err := src.tokenFor(sha256Prefix16("fixture-access-a")); err == nil || got != "" {
+		t.Errorf("another token was released for the fingerprint: %q, %v", got, err)
+	}
+	if got, err := src.tokenFor(""); err == nil || got != "" {
+		t.Errorf("an empty fingerprint released a token: %q, %v", got, err)
+	}
+}

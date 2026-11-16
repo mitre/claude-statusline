@@ -282,9 +282,9 @@ type Owner struct {
 // The payload belongs to owner: it is cached per account and token and
 // served, fresh or stale, only while the cached fingerprint matches. An
 // owner missing either part gets nothing, and nothing is fetched, read or
-// written. current reports the owner after the fetch; if it differs from
-// owner (a /login during the request), the response is neither cached nor
-// returned.
+// written. current reports the owner after any fetch attempt; if it
+// differs from owner (a /login during the request), nothing is returned or
+// cached: neither the response nor the cached payload.
 func Resolve(cacheDir string, owner Owner, current func() Owner, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) (raw []byte, staleFor time.Duration, ok bool) {
 	if owner.Account == "" || owner.Fingerprint == "" {
 		return nil, 0, false
@@ -299,13 +299,13 @@ func Resolve(cacheDir string, owner Owner, current func() Owner, ttl time.Durati
 	if mayAttempt(gate, now) {
 		b, err := fetch()
 		recordAttempt(gate, now, err)
+		if current == nil || current() != owner {
+			// The record or the token changed while the request was out:
+			// neither the response nor this owner's cache is shown.
+			return nil, 0, false
+		}
 		if err == nil {
 			if _, perr := Parse(b, now, ""); perr == nil {
-				if current == nil || current() != owner {
-					// The record or the token changed while the request was
-					// out: the response may belong to either account.
-					return nil, 0, false
-				}
 				_ = cache.Write(p, ownedFile(owner, b))
 				return b, 0, true
 			}
