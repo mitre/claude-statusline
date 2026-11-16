@@ -29,6 +29,10 @@ type deps struct {
 	// and fetchUsage resolve (never the token); the login-status cache is
 	// keyed by it. nil means no location is known.
 	credentialSource func() string
+	// tokenFingerprint is a one-way identifier of the access token
+	// fetchUsage would send (never the token); the usage cache serves a
+	// payload only to the token that fetched it. nil means unreadable.
+	tokenFingerprint func() (string, error)
 	fetchUsage       func() ([]byte, error)
 	readFile         func(string) ([]byte, error)
 	stat             func(string) (os.FileInfo, error)
@@ -151,8 +155,28 @@ func run(d deps) (string, string) {
 		now := clock()
 		var u render.Usage
 		have := false
-		if sess.Product != "antigravity" {
-			if raw, staleFor, ok := usage.Resolve(cfg.CacheDir, usage.Owner{}, nil, ttl, now, d.fetchUsage); ok {
+		// A CLAUDE_CODE_OAUTH_TOKEN session authenticates with a token the
+		// saved login does not describe: no endpoint fetch, no saved email.
+		tokenSession := d.getenv("CLAUDE_CODE_OAUTH_TOKEN") != ""
+		fsys := account.FS{ReadFile: d.readFile, Stat: stat, ReadDir: readDir}
+		var id account.Identity
+		if !tokenSession {
+			id = account.Resolve(d.getenv, fsys)
+		}
+		if sess.Product != "antigravity" && !tokenSession {
+			owner := func(acct string) usage.Owner {
+				o := usage.Owner{Account: acct}
+				if d.tokenFingerprint != nil {
+					if fp, ferr := d.tokenFingerprint(); ferr == nil {
+						o.Fingerprint = fp
+					}
+				}
+				return o
+			}
+			// Re-read after the fetch: a /login during the request makes
+			// the response ownerless.
+			current := func() usage.Owner { return owner(account.Resolve(d.getenv, fsys).AccountUUID) }
+			if raw, staleFor, ok := usage.Resolve(cfg.CacheDir, owner(id.AccountUUID), current, ttl, now, d.fetchUsage); ok {
 				if p, uerr := usage.Parse(raw, now, sess.ModelName); uerr == nil {
 					u, have = p, true
 					u.DataAge = staleFor
@@ -209,7 +233,7 @@ func run(d deps) (string, string) {
 			if sess.Email != "" {
 				u.Email = sess.Email
 			} else {
-				u.Email = account.Resolve(d.getenv, account.FS{ReadFile: d.readFile, Stat: stat, ReadDir: readDir}).Email
+				u.Email = id.Email
 			}
 			u.PlanTier = sess.PlanTier
 			st.Usage = &u

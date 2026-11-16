@@ -46,6 +46,7 @@ func main() {
 		runGit:           runGit,
 		keychainOK:       creds.ok,
 		credentialSource: creds.location,
+		tokenFingerprint: creds.fingerprint,
 		fetchUsage:       func() ([]byte, error) { return fetchUsage(creds) },
 		readFile:         os.ReadFile,
 		stat:             os.Stat,

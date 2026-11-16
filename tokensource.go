@@ -177,3 +177,15 @@ func (c tokenSource) plaintextStorePath() string {
 func (c tokenSource) location() string {
 	return c.keychainService() + "\x00" + c.keychainAccount() + "\x00" + c.plaintextStorePath()
 }
+
+// fingerprint is a one-way identifier of the current access token: the
+// first 16 hex digits of its sha256. The usage cache stores it to tell
+// which token fetched a payload; the token itself is never stored.
+func (c tokenSource) fingerprint() (string, error) {
+	tok, err := c.token()
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(tok))
+	return hex.EncodeToString(sum[:8]), nil
+}

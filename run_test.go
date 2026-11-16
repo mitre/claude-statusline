@@ -21,6 +21,13 @@ const e2eUsagePayload = `{
   "limits": []
 }`
 
+// e2eAccountUUID and e2eFingerprint are the neutral account and token
+// fingerprint every end-to-end render runs as.
+const (
+	e2eAccountUUID = "0a1b2c3d-1111-4000-8000-000000000000"
+	e2eFingerprint = "0123456789abcdef"
+)
+
 func e2eDeps(t testing.TB, stdinFixture string) deps {
 	t.Helper()
 	cacheDir := t.TempDir()
@@ -60,8 +67,9 @@ func e2eDeps(t testing.TB, stdinFixture string) deps {
 			if want := "/Users/dev/.claude.json"; p != want {
 				return nil, fmt.Errorf("unexpected readFile path %q, want %q", p, want)
 			}
-			return []byte(`{"oauthAccount":{"emailAddress":"dev@example.com"}}`), nil
+			return []byte(`{"oauthAccount":{"accountUuid":"` + e2eAccountUUID + `","emailAddress":"dev@example.com"}}`), nil
 		},
+		tokenFingerprint: func() (string, error) { return e2eFingerprint, nil },
 		// Hermetic: no legacy account record and no Antigravity config exist.
 		stat:    func(string) (os.FileInfo, error) { return nil, os.ErrNotExist },
 		readDir: func(string) ([]os.DirEntry, error) { return nil, os.ErrNotExist },
@@ -279,14 +287,7 @@ func TestRunStaleUsageDataShowsDimAgeMarker(t *testing.T) {
 	// them, the live-meter fallback takes over (its own tests below).
 	d.stdin = strings.NewReader(e2eStdinNoRateLimits)
 
-	p := filepath.Join(e2eCacheDir(t, d), "usage")
-	if err := os.WriteFile(p, []byte(e2eUsagePayload), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	old := time.Now().Add(-6 * time.Minute) // past the default 200 s TTL
-	if err := os.Chtimes(p, old, old); err != nil {
-		t.Fatal(err)
-	}
+	seedStaleUsage(t, d, e2eUsagePayload) // six minutes: past the default 200 s TTL
 
 	out, _ := run(d)
 	want := "\x1b[2maccount  \x1b[mdev@example.com \x1b[2m·\x1b[m \x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m \x1b[2m·\x1b[m \x1b[2m(data 6m old)\x1b[m"
@@ -624,12 +625,24 @@ const e2eStdinFiveHourOnly = `{"session_id":"0a1b2c3d-0000-4000-8000-00000000000
 // render serves it through the stale fallback.
 func seedStaleUsage(t *testing.T, d deps, payload string) {
 	t.Helper()
-	p := filepath.Join(e2eCacheDir(t, d), "usage")
-	if err := os.WriteFile(p, []byte(payload), 0o600); err != nil {
-		t.Fatal(err)
+	seed := d
+	seed.stdin = strings.NewReader(e2eStdinNoRateLimits)
+	seed.fetchUsage = func() ([]byte, error) { return []byte(payload), nil }
+	if _, errOut := run(seed); errOut != "" {
+		t.Fatalf("seeding render: %q", errOut)
 	}
-	old := time.Now().Add(-6 * time.Minute)
-	if err := os.Chtimes(p, old, old); err != nil {
+	ageUsage(t, d, time.Now().Add(-6*time.Minute))
+}
+
+// ageUsage backdates the cached usage payload to when; the seeding render
+// also shut the shared fetch gate, so the next render serves the cache.
+func ageUsage(t *testing.T, d deps, when time.Time) {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(e2eCacheDir(t, d), "usage-*"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("want one cached usage payload, got %v (%v)", files, err)
+	}
+	if err := os.Chtimes(files[0], when, when); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -810,9 +823,7 @@ func TestRunLiveStdinResetTimesBelongToTheirOwnWindows(t *testing.T) {
 			seedStaleUsage(t, *d, e2eUsagePayload)
 			// Six minutes old on the render's clock, not the wall clock.
 			old := now.Add(-6 * time.Minute)
-			if err := os.Chtimes(filepath.Join(e2eCacheDir(t, *d), "usage"), old, old); err != nil {
-				t.Fatal(err)
-			}
+			ageUsage(t, *d, old)
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -969,5 +980,105 @@ func TestRunLoginStatusIsPerCredentialSource(t *testing.T) {
 	}
 	if out := session(&d, "config-dir-B", false); strings.Contains(out, subBadge) {
 		t.Errorf("B took A's positive answer: %q", out)
+	}
+}
+
+// asAccount makes d's account record and token belong to the account
+// named by uuid and fingerprint.
+func asAccount(d *deps, uuid, fingerprint, email string) {
+	d.readFile = func(p string) ([]byte, error) {
+		if p != "/Users/dev/.claude.json" {
+			return nil, fmt.Errorf("unexpected readFile path %q", p)
+		}
+		return []byte(`{"oauthAccount":{"accountUuid":"` + uuid + `","emailAddress":"` + email + `"}}`), nil
+	}
+	d.tokenFingerprint = func() (string, error) { return fingerprint, nil }
+}
+
+func TestRunUsageIsPerAccount(t *testing.T) {
+	// /login from A to B in the same cache: B never shows A's meters, and A
+	// still has its own afterwards.
+	t.Setenv("HOME", t.TempDir())
+	render := func(d deps) string {
+		d.stdin = strings.NewReader(e2eStdinNoRateLimits)
+		out, errOut := run(d)
+		if errOut != "" {
+			t.Fatalf("unexpected stderr: %q", errOut)
+		}
+		return out
+	}
+	aMeters := "week 13%"
+	d := e2eDeps(t, "full.json")
+	asAccount(&d, "11111111-aaaa-4000-8000-000000000001", "aaaaaaaaaaaaaaaa", "a@example.com")
+	if out := render(d); !strings.Contains(out, aMeters) {
+		t.Fatalf("A's own payload not rendered: %q", out)
+	}
+	asAccount(&d, "22222222-bbbb-4000-8000-000000000002", "bbbbbbbbbbbbbbbb", "b@example.com")
+	d.fetchUsage = func() ([]byte, error) { return nil, errors.New("network down") }
+	if out := render(d); strings.Contains(out, aMeters) || strings.Contains(out, "a@example.com") {
+		t.Errorf("B rendered A's usage: %q", out)
+	}
+	asAccount(&d, "11111111-aaaa-4000-8000-000000000001", "aaaaaaaaaaaaaaaa", "a@example.com")
+	if out := render(d); !strings.Contains(out, aMeters) {
+		t.Errorf("A lost its own payload after B: %q", out)
+	}
+}
+
+func TestRunLoginDuringTheFetchRendersNoEndpointData(t *testing.T) {
+	// The record changes to another account while the request is out: the
+	// response belongs to neither for certain, so it is not shown or kept.
+	t.Setenv("HOME", t.TempDir())
+	d := e2eDeps(t, "full.json")
+	d.stdin = strings.NewReader(e2eStdinNoRateLimits)
+	// run takes deps by value, so the switch goes through state the
+	// callbacks read rather than by replacing them.
+	var a, b deps
+	asAccount(&a, "11111111-aaaa-4000-8000-000000000001", "aaaaaaaaaaaaaaaa", "a@example.com")
+	asAccount(&b, "22222222-bbbb-4000-8000-000000000002", "bbbbbbbbbbbbbbbb", "b@example.com")
+	who := &a
+	d.readFile = func(p string) ([]byte, error) { return who.readFile(p) }
+	d.tokenFingerprint = func() (string, error) { return who.tokenFingerprint() }
+	fetch := d.fetchUsage
+	d.fetchUsage = func() ([]byte, error) {
+		who = &b // /login completes while the request is out
+		return fetch()
+	}
+	if out, _ := run(d); strings.Contains(out, "week 13%") {
+		t.Errorf("a response fetched across a /login was rendered: %q", out)
+	}
+	if files, _ := filepath.Glob(filepath.Join(e2eCacheDir(t, d), "usage-*")); len(files) != 0 {
+		t.Errorf("a response fetched across a /login was cached: %v", files)
+	}
+}
+
+func TestRunTokenSessionUsesStdinOnly(t *testing.T) {
+	// CLAUDE_CODE_OAUTH_TOKEN: the saved login does not describe this
+	// session's token, so neither the endpoint nor the saved email is used.
+	t.Setenv("HOME", t.TempDir())
+	d := e2eDeps(t, "full.json")
+	getenv := d.getenv
+	d.getenv = func(k string) string {
+		if k == "CLAUDE_CODE_OAUTH_TOKEN" {
+			return "fixture-oauth-token"
+		}
+		return getenv(k)
+	}
+	d.fetchUsage = func() ([]byte, error) {
+		t.Fatal("token session must not fetch")
+		return nil, nil
+	}
+	d.readFile = func(p string) ([]byte, error) {
+		t.Fatalf("token session read the saved login: %s", p)
+		return nil, nil
+	}
+	out, errOut := run(d)
+	if errOut != "" {
+		t.Fatalf("unexpected stderr: %q", errOut)
+	}
+	if !strings.Contains(out, "account") || !strings.Contains(out, "5h 42%") {
+		t.Errorf("token session must show the stdin windows: %q", out)
+	}
+	if strings.Contains(out, "dev@example.com") {
+		t.Errorf("token session showed the saved email: %q", out)
 	}
 }

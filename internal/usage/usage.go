@@ -255,6 +255,16 @@ func labelAt(t, now time.Time) string {
 	return t.Format("Mon ") + label
 }
 
+// Owner binds a cached usage payload to the account and the access token
+// it was fetched with.
+type Owner struct {
+	// Account is the account record's oauthAccount.accountUuid.
+	Account string
+	// Fingerprint is the first 16 hex digits of the sha256 of the access
+	// token; never the token itself.
+	Fingerprint string
+}
+
 // Resolve returns a usage payload: fresh cache if young enough, else a live
 // fetch (cached only when shape-valid), else the last good cache regardless
 // of age. staleFor is the served payload's age when that last stale-good
@@ -267,16 +277,14 @@ func labelAt(t, now time.Time) string {
 // made — success, network error, rate limit or a rejected body alike — no
 // further attempt happens before MinFetchInterval has passed (or the
 // server's Retry-After, when longer). Renders in between serve the cache.
-// Owner binds a cached usage payload to the account and the access token
-// it was fetched with.
-type Owner struct {
-	// Account is the account record's oauthAccount.accountUuid.
-	Account string
-	// Fingerprint is the first 16 hex digits of the sha256 of the access
-	// token; never the token itself.
-	Fingerprint string
-}
-
+// The gate is one file shared by every account.
+//
+// The payload belongs to owner: it is cached per account and served, fresh
+// or stale, only while the cached fingerprint matches owner's token. An
+// owner missing either part gets nothing, and nothing is fetched, read or
+// written. current reports the owner after the fetch; if it differs from
+// owner (a /login during the request), the response is neither cached nor
+// returned.
 func Resolve(cacheDir string, owner Owner, current func() Owner, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) (raw []byte, staleFor time.Duration, ok bool) {
 	if owner.Account == "" || owner.Fingerprint == "" {
 		return nil, 0, false

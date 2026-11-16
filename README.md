@@ -248,6 +248,26 @@ and carries no age marker. On hosts whose payload lacks
 payload with the marker, and is omitted when there is no data it can show —
 values are never fabricated. `show_stale_age = false` hides the marker.
 
+**Whose usage is shown.** The fetched payload is cached per account: the
+file is named by a hash of the account ID in Claude Code's account record,
+and it records a one-way fingerprint (a sha256 prefix, never the token) of
+the access token that fetched it. A cached payload is shown, fresh or
+stale, only while both the account record and the current token still
+match, so after `/login` to another account the row never shows the
+previous account's numbers or alarm; it shows the live numbers from the
+session payload until a fetch for the new account succeeds. A response that
+arrives after the account record or token changed mid-request is neither
+shown nor cached. Sessions started with `CLAUDE_CODE_OAUTH_TOKEN` skip the
+usage endpoint and the saved email entirely, because the saved login does
+not describe that token; they show only the session payload's numbers.
+
+**How often it fetches.** One fetch gate is shared by every session and
+account on the machine: at most one request per opening (200 s, or the
+server's `Retry-After` when longer), whichever session renders first. When
+several accounts are in use, one account can wait more than one opening for
+its own fetch while another account's session wins; there is no
+wall-clock bound on that wait.
+
 ## Design notes
 
 - **Provenance:** began as a port of a bash statusline, verified
@@ -307,7 +327,7 @@ values are never fabricated. `show_stale_age = false` hides the marker.
   storage directory: `CLAUDE_SECURESTORAGE_CONFIG_DIR` when set (set but
   empty means `~/.claude`), else `CLAUDE_CONFIG_DIR`, else `~/.claude`; a
   relative directory is never read. Only the access token is read; it is sent only in
-  the Authorization header, never logged and never cached. `make vuln`
+  the Authorization header, never logged and never cached; the usage cache stores only a one-way fingerprint of it (a sha256 prefix). `make vuln`
   (govulncheck) and gosec (inside `make lint`) gate every change.
 
 ## Develop
