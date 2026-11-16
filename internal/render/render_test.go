@@ -741,6 +741,7 @@ func TestAccountRowOmitsWeekMeterWhenAbsent(t *testing.T) {
 func fullRemap() Options {
 	o := DefaultOptions()
 	o.Colors = Colors{Red: "196", Green: "46", Yellow: "226", Blue: "21", Cyan: "51"}
+	o.Account.Bars = true // bars draw from the palette too
 	return o
 }
 
@@ -823,7 +824,7 @@ func TestFullRemapReachesEveryColoredSegment(t *testing.T) {
 		DurationMS: 120000, LinesAdded: 10, LinesRemoved: 3,
 	}
 	got := Build(st, fullRemap())
-	for _, want := range []string{"API KEY SET", "EXTRA USAGE", "/compact", "index.lock", "⚡ fast", "⎇ main", "+10"} {
+	for _, want := range []string{"API KEY SET", "EXTRA USAGE", "/compact", "index.lock", "⚡ fast", "⎇ main", "+10", "5h ▓▓"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("fixture no longer exercises %q:\n%q", want, got)
 		}
