@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`5h ▓▓░░░░░░░░ 28%`), reusing the context row's bar and the meters'
   green/yellow/red thresholds. Default `false` keeps today's text-only row
   byte-for-byte.
+- **`[colors]`**: remap the `red`/`green`/`yellow`/`blue`/`cyan` palette
+  slots to an ANSI index or a truecolor `#rrggbb` hex. Defaults keep the
+  terminal's ANSI colors.
 
 ### Fixed
 

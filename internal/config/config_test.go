@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mitre/claude-statusline/internal/render"
 )
 
 func TestLoadMissingFileGivesDefaults(t *testing.T) {
@@ -344,6 +346,33 @@ func TestLoadAccountBars(t *testing.T) {
 	}
 	if _, err = Load(write("[account]\nbars = \"yes\"\n")); err == nil {
 		t.Error("non-boolean bars must surface an error")
+	}
+}
+
+func TestLoadColors(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	write := func(body string) string {
+		p := filepath.Join(dir, "c.toml")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	cfg, err := Load(write("[colors]\n"))
+	if err != nil || cfg.Options.Colors != render.DefaultOptions().Colors {
+		t.Errorf("absent colors must keep the ANSI defaults: err=%v got=%+v", err, cfg.Options.Colors)
+	}
+	cfg, err = Load(write("[colors]\nred = \"#F38BA8\"\ngreen = \"114\"\nyellow = \"#f9e2af\"\nblue = \"4\"\ncyan = \"#89dceb\"\n"))
+	want := render.Colors{Red: "#F38BA8", Green: "114", Yellow: "#f9e2af", Blue: "4", Cyan: "#89dceb"}
+	if err != nil || cfg.Options.Colors != want {
+		t.Errorf("colors overlay: err=%v got=%+v want=%+v", err, cfg.Options.Colors, want)
+	}
+	for _, bad := range []string{"pink", "#abc", "#gggggg", "256", "-1", ""} {
+		if _, err := Load(write("[colors]\ngreen = \"" + bad + "\"\n")); err == nil {
+			t.Errorf("colors.green = %q must surface an error", bad)
+		}
 	}
 }
 

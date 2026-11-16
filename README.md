@@ -126,7 +126,54 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | `[account] bars` | `false` | Draw each meter as a 10-segment bar like the context row (`5h ▓▓░░░░░░░░ 28%`) |
 | `[usage] enabled` | `true` | `false` skips the usage endpoint entirely |
 | `[usage] ttl_seconds` | `200` | How long a fetched payload is served before re-fetching. Floor 200 (a lower value is raised to 200, with a stderr note): the usage endpoint rate-limits faster polling, and a failed fetch is not retried before 200 s (or the server's `Retry-After`) have passed |
+| `[colors]` `red`/`green`/`yellow`/`blue`/`cyan` | `"1"`/`"2"`/`"3"`/`"4"`/`"6"` (terminal ANSI) | Remap a palette slot to an ANSI index (`"0"`–`"255"`) or a truecolor `"#rrggbb"` hex; see [Colors](#colors) |
 | `[cache] dir` | platform user-cache dir | Cache location override |
+
+### Colors
+
+The status line draws its colors from five palette slots. By default each
+slot is one of your terminal's own ANSI colors, so your terminal theme
+already restyles the line; `[colors]` overrides a slot for the status line
+alone.
+
+| Slot | Default | Paints |
+|---|---|---|
+| `red` | `"1"` | Context bar and percentage at ≥80% (the percentage bold), account meters at ≥80%, lines removed, and the background of the `/compact`, `EXTRA USAGE` and `METERED BILLING` alarm badges |
+| `green` | `"2"` | Context bar and percentage below 50%, account meters below 50%, the `Sub` (or plan-tier) auth badge, lines added |
+| `yellow` | `"3"` | Context bar and percentage 50–79%, account meters 50–79%, the `API` auth badge, `⚡ fast`, the changed-file count, the `index.lock` badge |
+| `blue` | `"4"` | Git branch |
+| `cyan` | `"6"` | Model name (bold) |
+
+Everything else is drawn in your terminal's default foreground: dim text
+(row labels, separators, effort, session id, `>200k`, reset times, age
+markers, session duration, the `extra $` tally), the bold project path and
+the account email. The alarm badges' text is always ANSI `7` (white in most
+themes); `[colors]` does not change it.
+
+Each value is a quoted string in one of two forms:
+
+- an ANSI color index, `"0"` to `"255"`: `"0"`–`"15"` are your terminal's
+  theme colors, `"16"`–`"255"` the fixed 256-color palette;
+- a truecolor hex, `"#rrggbb"`, which needs a terminal with 24-bit color
+  support.
+
+For example, colors from the Okabe–Ito palette, which was designed to stay
+distinguishable with the common forms of color blindness:
+
+```toml
+[colors]
+red = "#D55E00"    # vermillion
+green = "#009E73"  # bluish green
+yellow = "#F0E442"
+blue = "#0072B2"
+cyan = "#56B4E9"   # sky blue
+```
+
+Slots you leave out keep their defaults. An invalid value (`"lime"`,
+`"#abc"`, `"256"`, or an unquoted number such as `green = 46`) is a config
+error: the whole file is ignored, every setting falls back to its default,
+and the error is printed on stderr, e.g.
+`claude-statusline: config error: colors.green: "lime" is not valid (use an ANSI index 0-255 or a "#rrggbb" hex)`.
 
 ## What each row means
 
@@ -240,8 +287,9 @@ values are never fabricated. `show_stale_age = false` hides the marker.
   ANSI 16-color palette, and the output is deliberately
   environment-independent: a statusline is always piped and the host
   interprets the sequences, so there is no tty detection and `NO_COLOR` is
-  intentionally not honored (pinned by a test). This is the foundation for
-  user-configurable theming later.
+  intentionally not honored (pinned by a test). `[colors]` remaps the
+  palette slots (ANSI index or truecolor hex) for users who want a
+  statusline-specific theme.
 - **Never crashes the host:** unparseable stdin renders nothing; a malformed
   config falls back to defaults and complains on stderr.
 - **Security posture:** stdin JSON and the workspace path are untrusted input —
