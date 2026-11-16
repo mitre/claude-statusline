@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`[colors]`**: remap the `red`/`green`/`yellow`/`blue`/`cyan` palette
   slots to an ANSI index or a truecolor `#rrggbb` hex. Defaults keep the
   terminal's ANSI colors.
+- Contributor documentation: `CONTRIBUTING.md` covers project conventions,
+  what a new config key or display change needs, and the pull request
+  process; pull request template; bug and feature issue forms, with security
+  reports routed to private reporting.
 
 ### Fixed
 
@@ -26,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   again; the notes file moves outside `dist/`, which `--clean` would delete
   before the step reads it; and a version without a CHANGELOG section
   refuses to release.
+- `SECURITY.md` still described the credential order from before v0.3.1
+  (plaintext file first). It now matches the code: keychain item first, and the derived
+  keychain arguments are validated before `security` runs.
 
 ## [0.3.1] - 2026-11-15
 

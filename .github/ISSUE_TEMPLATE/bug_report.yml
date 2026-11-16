@@ -1,0 +1,56 @@
+name: Bug report
+description: The status line shows something wrong, shows nothing, or errors.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Before posting, redact tokens, private paths and emails from anything you paste.
+        Security vulnerabilities go to private reporting instead (see SECURITY.md).
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened
+      description: What the status line showed (paste the text or a screenshot), or the error.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: |
+        The session JSON Claude Code sends on stdin reproduces most rendering bugs. Save it and run
+        `claude-statusline < session.json`; include the JSON (redacted) and the output.
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Config
+      description: Your `~/.claude/statusline.toml` (or the file `$CLAUDE_STATUSLINE_CONFIG` points at), if you have one.
+      render: toml
+  - type: input
+    id: version
+    attributes:
+      label: claude-statusline version
+      description: Output of `claude-statusline --version`.
+    validations:
+      required: true
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`.
+  - type: input
+    id: environment
+    attributes:
+      label: OS and terminal
+      placeholder: macOS 26.1, Ghostty 1.2
+    validations:
+      required: true
