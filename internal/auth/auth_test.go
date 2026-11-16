@@ -133,33 +133,49 @@ func TestCacheFileStaysInsideCacheDirForAnySource(t *testing.T) {
 	}
 }
 
-func TestUnknownAnswerExpiresQuickly(t *testing.T) {
-	// A transient miss (sandboxed shell, locked keychain) must
-	// not hide the account row for the full badge TTL. "?" is served while
-	// younger than unknownTTL, then re-detected; Sub/API keep badgeTTL.
-	dir := t.TempDir()
-	if badge, _ := Detect(dir, "storage-A", env(nil), loggedOut); badge != "?" {
-		t.Fatalf("first Detect = %q", badge)
-	}
-	if badge, _ := Detect(dir, "storage-A", env(nil), loggedIn); badge != "?" {
-		t.Errorf("fresh unknown answer not served: %q", badge)
-	}
+// age backdates the single login-status cache file in dir by d.
+func age(t *testing.T, dir string, d time.Duration) {
+	t.Helper()
 	files := authFiles(t, dir)
 	if len(files) != 1 {
 		t.Fatalf("want one auth cache file, got %v", files)
 	}
-	old := time.Now().Add(-unknownTTL - time.Second)
-	if err := os.Chtimes(files[0], old, old); err != nil {
+	when := time.Now().Add(-d)
+	if err := os.Chtimes(files[0], when, when); err != nil {
 		t.Fatal(err)
 	}
-	if badge, _ := Detect(dir, "storage-A", env(nil), loggedIn); badge != "Sub" {
-		t.Errorf("expired unknown answer must re-detect: got %q, want Sub", badge)
-	}
-	// A known answer of the same age is still served.
-	if err := os.Chtimes(files[0], old, old); err != nil {
-		t.Fatal(err)
-	}
-	if badge, _ := Detect(dir, "storage-A", env(nil), loggedOut); badge != "Sub" {
-		t.Errorf("Sub younger than badgeTTL must be served: got %q", badge)
+}
+
+func TestCachedAnswerLifetimes(t *testing.T) {
+	// An unknown answer lives 15 s, so a transient miss (a sandboxed shell,
+	// a locked keychain) recovers quickly; Sub and API live 300 s, the
+	// keychain probe being too slow for every render. The probe's answer
+	// flips after the first call, so a cache hit and a re-detection differ.
+	apiKey := env(map[string]string{"ANTHROPIC_API_KEY": "fixture-key"})
+	for _, tc := range []struct {
+		name               string
+		first, then        func(string) string
+		firstOK, thenOK    func() error
+		cached, redetected string
+		servedAt, expired  time.Duration
+	}{
+		{"unknown", env(nil), env(nil), loggedOut, loggedIn, "?", "Sub", 14 * time.Second, 16 * time.Second},
+		{"Sub", env(nil), env(nil), loggedIn, loggedOut, "Sub", "?", 299 * time.Second, 301 * time.Second},
+		{"API", apiKey, env(nil), loggedOut, loggedOut, "API", "?", 299 * time.Second, 301 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if badge, _ := Detect(dir, "storage-A", tc.first, tc.firstOK); badge != tc.cached {
+				t.Fatalf("first Detect = %q, want %q", badge, tc.cached)
+			}
+			age(t, dir, tc.servedAt)
+			if badge, _ := Detect(dir, "storage-A", tc.then, tc.thenOK); badge != tc.cached {
+				t.Errorf("at %v the cached %q must be served, got %q", tc.servedAt, tc.cached, badge)
+			}
+			age(t, dir, tc.expired)
+			if badge, _ := Detect(dir, "storage-A", tc.then, tc.thenOK); badge != tc.redetected {
+				t.Errorf("at %v the cached %q must be re-detected as %q, got %q", tc.expired, tc.cached, tc.redetected, badge)
+			}
+		})
 	}
 }

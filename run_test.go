@@ -933,6 +933,7 @@ func TestRunLoginStatusIsPerCredentialSource(t *testing.T) {
 	// Two sessions share one cache dir but resolve different credential
 	// stores (CLAUDE_CONFIG_DIR A without a login, B with one): each gets
 	// its own answer, in either order.
+	t.Setenv("HOME", t.TempDir())
 	stdin, err := os.ReadFile(filepath.Join("testdata", "full.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -946,7 +947,10 @@ func TestRunLoginStatusIsPerCredentialSource(t *testing.T) {
 			}
 			return errors.New("no credential store resolved")
 		}
-		out, _ := run(*d)
+		out, errOut := run(*d)
+		if errOut != "" {
+			t.Fatalf("unexpected stderr (config fallback would hide the test cache dir): %q", errOut)
+		}
 		return out
 	}
 	subBadge := "\x1b[32mSub\x1b[m"
