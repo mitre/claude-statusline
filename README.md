@@ -123,6 +123,7 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | `[account] email_style` | `"normal"` | `"dim"` quiets the email to the furniture tier |
 | `[account] show_resets` | `"always"` | `"quiet"` shows reset times only on hot (≥80%) meters |
 | `[account] show_stale_age` | `true` | Dim age marker when stale known-good data is served |
+| `[account] bars` | `false` | Draw each meter as a 10-segment bar like the context row (`5h ▓▓░░░░░░░░ 28%`) |
 | `[usage] enabled` | `true` | `false` skips the usage endpoint entirely |
 | `[usage] ttl_seconds` | `200` | How long a fetched payload is served before re-fetching. Floor 200 (a lower value is raised to 200, with a stderr note): the usage endpoint rate-limits faster polling, and a failed fetch is not retried before 200 s (or the server's `Retry-After`) have passed |
 | `[cache] dir` | platform user-cache dir | Cache location override |
@@ -168,6 +169,17 @@ subscription — two concurrent sessions correctly show the same pools):
 | `week N%` | rolling 7-day, all models; omitted while the usage endpoint reports no weekly window in progress and stdin carries none |
 | `<model>/wk N%` | rolling 7-day pool for **this session's** model — a parallel weekly cap, not a slice of `week`; omitted when the payload has no window for it. The window is matched against the payload's own `seven_day_*` keys, so a model the vendor ships tomorrow is picked up with no code change. The usage endpoint values a per-model window only when that limit policy is active on your account (plans without model-specific caps report them as `null`, so the meter self-omits) |
 | `<scope> N%` | a plan limit the payload narrows to a **scope** — today a model, named by the payload (e.g. `Fable 100%`). A parallel cap like the one above, shown whenever the payload carries it, with its own reset time. This is how a model-specific weekly limit surfaces even when no `seven_day_*` window exists for it |
+
+`[account] bars = true` draws every meter (`5h`, `week`, the per-model
+window and scoped limits) with the context row's 10-segment bar between its
+name and percentage, one segment per full 10%:
+
+```
+account  dev@example.com · 5h ▓▓░░░░░░░░ 28% (resets 1:30p) · week ▓░░░░░░░░░ 18% (resets Mon 10a) · Fable ▓▓▓▓▓▓▓▓▓▓ 100% (resets Mon 10a)
+```
+
+Each bar takes its meter's color (green below 50%, yellow from 50%, red from
+80%). The default, `false`, keeps the text-only row.
 
 Reset times show on every meter by default; `show_resets = "quiet"` restores
 the hot-only (≥80%) behavior.
