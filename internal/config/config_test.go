@@ -324,6 +324,7 @@ func TestLoadAccountShowStaleAge(t *testing.T) {
 }
 
 func TestLoadAccountBars(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
 	write := func(body string) string {
 		p := filepath.Join(dir, "c.toml")
