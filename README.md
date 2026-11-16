@@ -341,6 +341,14 @@ after that is pipeline. [docs/release-pipeline.md](docs/release-pipeline.md)
 is the full reference — jobs, gates, artifacts, the Homebrew formula path,
 and the release runbook.
 
+## Contributing
+
+Pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup,
+the conventions a change is reviewed against, what a new config key needs,
+and the pull request process (please keep "Allow edits by maintainers"
+checked). Participation follows the [Code of Conduct](CODE_OF_CONDUCT.md);
+report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
 ## License
 
 Licensed under the Apache License, Version 2.0 — see [LICENSE.md](LICENSE.md).
