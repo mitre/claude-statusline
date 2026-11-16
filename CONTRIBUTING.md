@@ -56,12 +56,12 @@ The gate targets refuse a mismatched local tool version and tell you to run
 same way, so local green means CI green. The README's
 [Develop](README.md#develop) section lists every make target.
 
-To try a build in your own Claude Code, point a single session at it without
-touching your settings:
+To try your build in Claude Code, install it as the dev copy and point a
+single session at it, without touching your settings:
 
 ```sh
-make build
-claude --settings '{"statusLine":{"type":"command","command":"'"$PWD"'/claude-statusline","padding":0}}'
+make dev-install   # builds HEAD and installs it as ~/.claude/claude-statusline-dev
+claude --settings '{"statusLine":{"type":"command","command":"~/.claude/claude-statusline-dev","padding":0}}'
 ```
 
 ## Project conventions
@@ -117,10 +117,13 @@ A new key lands in one PR, in all of these places:
 6. `CHANGELOG.md` under `[Unreleased]`.
 
 The docs say what the key does, its default, its valid values, and what
-happens with an invalid one. Today an invalid value is a config error: the
-whole file is ignored, every key falls back to its default, and the error
-is printed on stderr. Check each statement against the code and a real run
-of the binary.
+happens with an invalid one. An invalid value is normally a config error:
+the whole file is ignored, every key falls back to its default, and the
+error is printed on stderr. Where a value has one safe correction, the
+key may adjust it instead and keep the rest of the file, with a stderr
+note (`[usage] ttl_seconds` below 200 is raised to 200); the docs say which
+applies. Check each statement against the code and a real run of the
+binary.
 
 ### Changing what is displayed
 

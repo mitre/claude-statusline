@@ -9,7 +9,7 @@
 
 ## Checklist
 
-- [ ] "Allow edits by maintainers" is checked (see [CONTRIBUTING.md](../CONTRIBUTING.md#pull-request-process))
+- [ ] "Allow edits by maintainers" is checked (see [CONTRIBUTING.md](https://github.com/mitre/claude-statusline/blob/main/CONTRIBUTING.md#pull-request-process))
 - [ ] `make check` is green locally
 - [ ] Tests were written first and fail without the change
 - [ ] Display change: golden tests updated deliberately; default output unchanged unless that is the point of the PR
