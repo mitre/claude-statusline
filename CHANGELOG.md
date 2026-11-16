@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The login status (the `Sub` badge, which also decides whether the
+  account row shows) is cached per credential store. It was one shared
+  file for every session for 300 s, so a session using a different
+  `CLAUDE_CONFIG_DIR` (or secure-storage directory, custom OAuth URL or
+  user) took another session's answer: a session with no login hid a valid
+  login's badge and account row, and a logged-in one showed `Sub` where
+  there was none. The cache is now keyed by a hash of the keychain service,
+  keychain account and plaintext store the session resolves (never by the
+  token), and the old shared file is ignored. An unknown answer is kept for
+  15 s instead of 300 s, so a transient miss (a sandboxed shell, a locked
+  keychain) recovers quickly — that rule comes from #15 by kinsoi.
 - GitHub releases carry their CHANGELOG section as the release notes.
   `.goreleaser.yaml` set `changelog.disable: true`, which makes goreleaser
   skip the step that loads `--release-notes`, so v0.3.0 and v0.3.1 were

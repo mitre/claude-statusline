@@ -350,3 +350,71 @@ func TestTokenWithoutAKeychainUsesThePlaintextStore(t *testing.T) {
 		t.Errorf("token() = %q, %v; want the plaintext token", tok, err)
 	}
 }
+
+func TestLocationSeparatesCredentialStores(t *testing.T) {
+	// The login-status cache is keyed by location: two environments get the
+	// same key exactly when token would read the same stores.
+	home := "/Users/dev"
+	base := map[string]string{"HOME": home, "USER": "dev"}
+	with := func(extra map[string]string) map[string]string {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+	loc := func(env map[string]string) string {
+		return tokenSource{lookupEnv: lookupMap(env), readFile: os.ReadFile, keychain: noKeychainItem}.location()
+	}
+	differ := []struct {
+		name string
+		a, b map[string]string
+	}{
+		{"config dir", base, with(map[string]string{"CLAUDE_CONFIG_DIR": "/Users/dev/.claude-second"})},
+		{"two config dirs", with(map[string]string{"CLAUDE_CONFIG_DIR": "/cfg/a"}), with(map[string]string{"CLAUDE_CONFIG_DIR": "/cfg/b"})},
+		{"secure-storage dir", base, with(map[string]string{"CLAUDE_SECURESTORAGE_CONFIG_DIR": "/secure"})},
+		{"custom OAuth", base, with(map[string]string{"CLAUDE_CODE_CUSTOM_OAUTH_URL": "https://login.example.com"})},
+		{"keychain account", base, with(map[string]string{"USER": "other"})},
+		{"home", base, with(map[string]string{"HOME": "/Users/other"})},
+	}
+	for _, tc := range differ {
+		if loc(tc.a) == loc(tc.b) {
+			t.Errorf("%s: different stores share location %q", tc.name, loc(tc.a))
+		}
+	}
+	same := []struct {
+		name string
+		a, b map[string]string
+	}{
+		{"identical", base, with(nil)},
+		{"unrelated variable", base, with(map[string]string{"ANTHROPIC_MODEL": "opus"})},
+		{"secure-storage dir decides over config dir", with(map[string]string{"CLAUDE_SECURESTORAGE_CONFIG_DIR": "/secure", "CLAUDE_CONFIG_DIR": "/cfg/a"}), with(map[string]string{"CLAUDE_SECURESTORAGE_CONFIG_DIR": "/secure", "CLAUDE_CONFIG_DIR": "/cfg/b"})},
+	}
+	for _, tc := range same {
+		if loc(tc.a) != loc(tc.b) {
+			t.Errorf("%s: the same stores got different locations %q and %q", tc.name, loc(tc.a), loc(tc.b))
+		}
+	}
+}
+
+func TestLocationReadsNoCredential(t *testing.T) {
+	// The cache key must never come from a token: location names the
+	// stores without opening them.
+	kc := &fakeKeychain{reply: func(string, string) (string, error) { return fixtureCredJSON("fixture-access-secret"), nil }}
+	reads := 0
+	src := tokenSource{
+		lookupEnv: lookupMap(map[string]string{"HOME": "/Users/dev", "USER": "dev"}),
+		readFile:  func(string) ([]byte, error) { reads++; return []byte(fixtureCredJSON("fixture-access-secret")), nil },
+		keychain:  kc.read,
+	}
+	got := src.location()
+	if len(kc.calls) != 0 || reads != 0 {
+		t.Errorf("location read credentials: %d keychain calls, %d file reads", len(kc.calls), reads)
+	}
+	if strings.Contains(got, "fixture-access-secret") {
+		t.Errorf("location carries the token: %q", got)
+	}
+}

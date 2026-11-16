@@ -41,15 +41,16 @@ func main() {
 		keychain:  keychainCredentialJSON,
 	}
 	out, diag := run(deps{
-		stdin:      os.Stdin,
-		getenv:     os.Getenv,
-		runGit:     runGit,
-		keychainOK: creds.ok,
-		fetchUsage: func() ([]byte, error) { return fetchUsage(creds) },
-		readFile:   os.ReadFile,
-		stat:       os.Stat,
-		readDir:    os.ReadDir,
-		now:        time.Now,
+		stdin:            os.Stdin,
+		getenv:           os.Getenv,
+		runGit:           runGit,
+		keychainOK:       creds.ok,
+		credentialSource: creds.location,
+		fetchUsage:       func() ([]byte, error) { return fetchUsage(creds) },
+		readFile:         os.ReadFile,
+		stat:             os.Stat,
+		readDir:          os.ReadDir,
+		now:              time.Now,
 	})
 	if diag != "" {
 		fmt.Fprint(os.Stderr, diag)
