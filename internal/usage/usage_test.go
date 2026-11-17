@@ -1004,6 +1004,8 @@ const (
 	helperLog   = "USAGE_HELPER_LOG"
 	helperFetch = "USAGE_HELPER_FETCH"
 	helperChild = "USAGE_HELPER_CHILD"
+	// helperSupervise starts the process that leads the renders' group.
+	helperSupervise = "USAGE_HELPER_SUPERVISE"
 )
 
 // TestResolveHelperProcess is one render when started by renderTogether;
@@ -1013,8 +1015,13 @@ const (
 // to be killed ("hang"), answers once the unhold file appears ("hold"), or
 // starts a child process that stays alive and then hangs ("child").
 // Started as that child, it leaves a child-<pid> marker and sleeps for at
-// most 30 s.
+// most 30 s; started as the group's supervisor, it sleeps for at most two
+// minutes.
 func TestResolveHelperProcess(t *testing.T) {
+	if os.Getenv(helperSupervise) != "" {
+		time.Sleep(2 * time.Minute)
+		return
+	}
 	if log := os.Getenv(helperChild); log != "" {
 		if err := os.WriteFile(filepath.Join(log, "child-"+strconv.Itoa(os.Getpid())), nil, 0o600); err != nil {
 			t.Fatal(err)
@@ -1083,14 +1090,39 @@ type helperRender struct {
 	fetch string
 }
 
-// startRenders starts one held render per entry, logging to log.
+// startRenders starts one held render per entry, logging to log. The
+// renders, and every process they start, run in one process group led by a
+// supervisor process. Cleanup kills the whole group while the supervisor is
+// still unreaped, so the group's id cannot have passed to another process,
+// then reaps the renders and the supervisor.
 func startRenders(t *testing.T, dir, log string, renders []helperRender) []*exec.Cmd {
 	t.Helper()
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
+	supervisor := exec.Command(self, "-test.run=^TestResolveHelperProcess$")
+	supervisor.Env = append(os.Environ(), helperSupervise+"=1")
+	supervisor.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := supervisor.Start(); err != nil {
+		t.Fatal(err)
+	}
 	cmds := make([]*exec.Cmd, 0, len(renders))
+	outs := make([]*strings.Builder, 0, len(renders))
+	t.Cleanup(func() {
+		if err := syscall.Kill(-supervisor.Process.Pid, syscall.SIGKILL); err != nil {
+			t.Errorf("killing the renders' process group: %v", err)
+		}
+		for i, cmd := range cmds {
+			if cmd.ProcessState == nil {
+				_ = cmd.Wait()
+			}
+			if t.Failed() && outs[i].Len() > 0 {
+				t.Logf("render %d output:\n%s", cmd.Process.Pid, outs[i].String())
+			}
+		}
+		_ = supervisor.Wait()
+	})
 	for _, r := range renders {
 		cmd := exec.Command(self, "-test.run=^TestResolveHelperProcess$")
 		fetch := r.fetch
@@ -1100,40 +1132,16 @@ func startRenders(t *testing.T, dir, log string, renders []helperRender) []*exec
 		cmd.Env = append(os.Environ(),
 			helperDir+"="+dir, helperLog+"="+log, helperOwner+"="+r.owner,
 			helperFetch+"="+fetch)
-		var out strings.Builder
-		cmd.Stdout, cmd.Stderr = &out, &out
-		// Its own process group holds the render and every process it
-		// starts, so cleanup reaches a child the test never learned of.
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		out := &strings.Builder{}
+		cmd.Stdout, cmd.Stderr = out, out
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: supervisor.Process.Pid}
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			if cmd.ProcessState == nil {
-				_ = cmd.Wait()
-			}
-			waitGroupGone(t, cmd.Process.Pid)
-			if t.Failed() && out.Len() > 0 {
-				t.Logf("render %d output:\n%s", cmd.Process.Pid, out.String())
-			}
-		})
 		cmds = append(cmds, cmd)
+		outs = append(outs, out)
 	}
 	return cmds
-}
-
-// waitGroupGone waits until no process is left in process group pgid.
-func waitGroupGone(t *testing.T, pgid int) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !errors.Is(syscall.Kill(-pgid, 0), syscall.ESRCH) {
-		if time.Now().After(deadline) {
-			t.Errorf("process group %d still has a process 5 s after it was killed", pgid)
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
 }
 
 // waitForFiles waits until dir holds n files whose names start with prefix.
