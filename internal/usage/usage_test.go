@@ -1725,36 +1725,39 @@ func TestLockRefusesAnEntryReplacedBeforeTheOpen(t *testing.T) {
 	}
 }
 
-func TestResolveNeverOpensARefusedLockEntry(t *testing.T) {
-	// Opening a special file can have effects of its own. A reader waits on
-	// a FIFO at usage.lock; a render that opened the FIFO would release it.
-	dir := t.TempDir()
-	lock := filepath.Join(dir, "usage.lock")
-	must(t, syscall.Mkfifo(lock, 0o600))
-	opening := make(chan struct{})
-	released := make(chan struct{})
-	go func() {
-		close(opening)
-		if f, err := os.OpenFile(lock, os.O_RDONLY, 0); err == nil {
-			_ = f.Close()
-		}
-		close(released)
-	}()
-	<-opening
-	time.Sleep(50 * time.Millisecond)
-	if n, ok := resolveCounting(dir); !ok || n != 0 {
-		t.Errorf("fetches = %d (returned: %v), want 0", n, ok)
+// openFailingDir fails the test if anything opens a file through it.
+type openFailingDir struct {
+	*os.Root
+	t *testing.T
+}
+
+func (d openFailingDir) OpenFile(name string, _ int, _ fs.FileMode) (*os.File, error) {
+	d.t.Errorf("opened %s, which is not a plain file", name)
+	return nil, fs.ErrPermission
+}
+
+func TestLockNeverOpensARefusedEntry(t *testing.T) {
+	// Opening a special file can block or have effects of its own, and
+	// opening a link follows it: a refused entry is judged from its Lstat
+	// alone and never opened.
+	for name, plant := range map[string]func(lock string) error{
+		"symlink to the gate": func(lock string) error { return os.Symlink(nextAttemptFile, lock) },
+		"dangling symlink":    func(lock string) error { return os.Symlink("missing", lock) },
+		"directory":           func(lock string) error { return os.Mkdir(lock, 0o700) },
+		"FIFO":                func(lock string) error { return syscall.Mkfifo(lock, 0o600) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			must(t, plant(filepath.Join(dir, "usage.lock")))
+			root, err := os.OpenRoot(dir)
+			must(t, err)
+			defer func() { _ = root.Close() }()
+			if unlock, err := lockIn(openFailingDir{Root: root, t: t}); err == nil {
+				unlock()
+				t.Error("locked an entry that is not a plain file")
+			}
+		})
 	}
-	select {
-	case <-released:
-		t.Error("the render opened the FIFO at usage.lock")
-	case <-time.After(200 * time.Millisecond):
-	}
-	// Release the reader.
-	if f, err := os.OpenFile(lock, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
-		_ = f.Close()
-	}
-	<-released
 }
 
 func TestSameLockFileRefusesAnOpenedSpecialFile(t *testing.T) {
