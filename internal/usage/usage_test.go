@@ -3,7 +3,9 @@ package usage
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -988,5 +990,413 @@ func TestResolveServesNothingWhenTheOwnerChangesDuringAFailedFetch(t *testing.T)
 				}
 			})
 		}
+	}
+}
+
+// Each status-line render is its own process, so whether the fetch gate is
+// exclusive can only be shown across processes. These tests start the test
+// binary itself as renders (TestResolveHelperProcess), hold them at a
+// barrier and release them together.
+const (
+	helperDir   = "USAGE_HELPER_DIR"
+	helperOwner = "USAGE_HELPER_OWNER"
+	helperLog   = "USAGE_HELPER_LOG"
+	helperFetch = "USAGE_HELPER_FETCH"
+)
+
+// TestResolveHelperProcess is one render when started by renderTogether;
+// run any other way it does nothing. The render signals ready, waits for
+// the release file, then runs Resolve. Its fetch leaves a fetch-<pid>
+// marker, then answers after a pause (or hangs, to be killed).
+func TestResolveHelperProcess(t *testing.T) {
+	dir := os.Getenv(helperDir)
+	if dir == "" {
+		return
+	}
+	log := os.Getenv(helperLog)
+	owner := ownerA
+	if os.Getenv(helperOwner) == "B" {
+		owner = ownerB
+	}
+	pid := strconv.Itoa(os.Getpid())
+	if err := os.WriteFile(filepath.Join(log, "ready-"+pid), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitForFiles(t, log, "go", 1)
+	fetch := func() ([]byte, error) {
+		if err := os.WriteFile(filepath.Join(log, "fetch-"+pid), nil, 0o600); err != nil {
+			return nil, err
+		}
+		if os.Getenv(helperFetch) == "hang" {
+			time.Sleep(time.Hour)
+		}
+		time.Sleep(300 * time.Millisecond)
+		return []byte(goodPayload), nil
+	}
+	Resolve(dir, owner, as(owner), time.Hour, time.Now(), fetch)
+}
+
+// helperRender describes one separate-process render: the account it runs
+// as ("A" or "B") and whether its fetch hangs.
+type helperRender struct {
+	owner string
+	hang  bool
+}
+
+// startRenders starts one held render per entry, logging to log.
+func startRenders(t *testing.T, dir, log string, renders []helperRender) []*exec.Cmd {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmds := make([]*exec.Cmd, 0, len(renders))
+	for _, r := range renders {
+		cmd := exec.Command(self, "-test.run=^TestResolveHelperProcess$")
+		fetch := "answer"
+		if r.hang {
+			fetch = "hang"
+		}
+		cmd.Env = append(os.Environ(),
+			helperDir+"="+dir, helperLog+"="+log, helperOwner+"="+r.owner,
+			helperFetch+"="+fetch)
+		var out strings.Builder
+		cmd.Stdout, cmd.Stderr = &out, &out
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if cmd.ProcessState == nil {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+			}
+			if t.Failed() && out.Len() > 0 {
+				t.Logf("render %d output:\n%s", cmd.Process.Pid, out.String())
+			}
+		})
+		cmds = append(cmds, cmd)
+	}
+	return cmds
+}
+
+// waitForFiles waits until dir holds n files whose names start with prefix.
+func waitForFiles(t *testing.T, dir, prefix string, n int) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for countFiles(t, dir, prefix) < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %d %s* files in %s", n, prefix, dir)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func countFiles(t *testing.T, dir, prefix string) int {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, prefix+"*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(matches)
+}
+
+// release lets every held render in log run.
+func release(t *testing.T, log string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(log, "go"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// renderTogether runs the renders against dir at the same moment and
+// returns how many of them fetched.
+func renderTogether(t *testing.T, dir string, renders ...helperRender) int {
+	t.Helper()
+	log := t.TempDir()
+	cmds := startRenders(t, dir, log, renders)
+	waitForFiles(t, log, "ready-", len(renders))
+	release(t, log)
+	deadline := time.After(10 * time.Second)
+	for i, cmd := range cmds {
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("render %d failed: %v", cmd.Process.Pid, err)
+			}
+		case <-deadline:
+			// The deadline fires once: stop every render still running
+			// and reap each before returning.
+			t.Errorf("%d renders still running after 10 s", len(cmds)-i)
+			for _, c := range cmds[i:] {
+				_ = c.Process.Kill()
+			}
+			<-done
+			for _, c := range cmds[i+1:] {
+				_ = c.Wait()
+			}
+			return countFiles(t, log, "fetch-")
+		}
+	}
+	return countFiles(t, log, "fetch-")
+}
+
+func TestResolveSixRendersOfTwoAccountsFetchOnce(t *testing.T) {
+	// The gate is open and neither account has a payload: six renders, three
+	// per account, reach the gate together. Exactly one may fetch; the rest
+	// neither fetch nor wait for it.
+	dir := t.TempDir()
+	var renders []helperRender
+	for range 3 {
+		renders = append(renders, helperRender{owner: "A"}, helperRender{owner: "B"})
+	}
+	if n := renderTogether(t, dir, renders...); n != 1 {
+		t.Errorf("%d renders fetched through one gate opening, want exactly 1", n)
+	}
+}
+
+// killedClaim leaves dir with the claim of a render that was killed while
+// its fetch was out, before it could record the attempt, and dates the
+// claim age ago.
+func killedClaim(t *testing.T, dir string, age time.Duration) {
+	t.Helper()
+	log := t.TempDir()
+	cmd := startRenders(t, dir, log, []helperRender{{owner: "A", hang: true}})[0]
+	waitForFiles(t, log, "ready-", 1)
+	release(t, log)
+	waitForFiles(t, log, "fetch-", 1)
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+	at := time.Now().Add(-age)
+	if err := os.Chtimes(filepath.Join(dir, claimName(0, 0)), at, at); err != nil {
+		t.Fatalf("the killed render left no claim: %v", err)
+	}
+}
+
+func TestResolveKilledRendersClaimHoldsOthersOffForTheLease(t *testing.T) {
+	dir := t.TempDir()
+	killedClaim(t, dir, ClaimLease-5*time.Second)
+	if n := renderTogether(t, dir, helperRender{owner: "A"}, helperRender{owner: "B"}, helperRender{owner: "A"}); n != 0 {
+		t.Errorf("%d renders fetched inside a killed render's claim lease, want 0", n)
+	}
+}
+
+func TestResolveExpiredClaimIsTakenByExactlyOneReclaimer(t *testing.T) {
+	dir := t.TempDir()
+	killedClaim(t, dir, ClaimLease+time.Second)
+	var renders []helperRender
+	for range 3 {
+		renders = append(renders, helperRender{owner: "A"}, helperRender{owner: "B"})
+	}
+	if n := renderTogether(t, dir, renders...); n != 1 {
+		t.Errorf("%d renders fetched after the lease expired, want exactly 1", n)
+	}
+}
+
+func TestResolveUnwritableCacheDirAuthorizesNoFetch(t *testing.T) {
+	// Renders that cannot write a claim cannot tell whether another render
+	// is fetching, so none of them may.
+	if os.Geteuid() == 0 {
+		t.Skip("root creates files whatever the directory's permissions")
+	}
+	// Owner read only: nothing can be created in it, and the empty
+	// directory is still removed at cleanup.
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if n := renderTogether(t, dir, helperRender{owner: "A"}, helperRender{owner: "B"}, helperRender{owner: "A"}); n != 0 {
+		t.Errorf("%d renders fetched without a written claim, want 0", n)
+	}
+}
+
+func TestResolveClaimThatCannotBeTakenAuthorizesNoFetch(t *testing.T) {
+	for name, breakFS := range map[string]func(*claimFS){
+		"create fails": func(f *claimFS) {
+			f.create = func(string) error { return fs.ErrPermission }
+		},
+		"existing claim's age unreadable": func(f *claimFS) {
+			f.create = func(string) error { return fs.ErrExist }
+			f.modTime = func(string) (time.Time, error) { return time.Time{}, fs.ErrPermission }
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			fsys := osClaimFS(dir)
+			breakFS(&fsys)
+			if got, _, ok := resolve(fsys, dir, testOwner, as(testOwner), time.Hour, time.Now(), noFetch(t)); ok {
+				t.Errorf("served %q with no payload and no claim", got)
+			}
+		})
+	}
+}
+
+func TestResolveClaimOnAnOpeningAlreadyUsedAuthorizesNoFetch(t *testing.T) {
+	// This render read the open gate; before its claim was created another
+	// render fetched through that opening, recorded its attempt and dropped
+	// the opening's claims. The claim now succeeds, but the opening is gone.
+	dir := t.TempDir()
+	realNow := time.Now()
+	fsys := osClaimFS(dir)
+	create := fsys.create
+	fsys.create = func(name string) error {
+		closeGate(t, dir)
+		return create(name)
+	}
+	resolve(fsys, dir, testOwner, as(testOwner), time.Hour, realNow, noFetch(t))
+}
+
+// writeClaim leaves a claim on opening with the given modification time.
+func writeClaim(t *testing.T, dir string, opening int64, generation int, at time.Time) string {
+	t.Helper()
+	p := filepath.Join(dir, claimName(opening, generation))
+	if err := os.WriteFile(p, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(p, at, at); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestResolveNeverRemovesASuccessorsClaim(t *testing.T) {
+	// A dead render's claim was superseded and the successor is fetching. A
+	// render arriving now loses to the successor and leaves both claims.
+	dir := t.TempDir()
+	realNow := time.Now()
+	dead := writeClaim(t, dir, 0, 0, realNow.Add(-2*ClaimLease))
+	successor := writeClaim(t, dir, 0, 1, realNow)
+	Resolve(dir, testOwner, as(testOwner), time.Hour, realNow, noFetch(t))
+	for _, p := range []string{dead, successor} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("claim removed while its opening is current: %v", err)
+		}
+	}
+}
+
+func TestResolveDropsOnlyPastOpeningsClaims(t *testing.T) {
+	realNow := time.Now().Truncate(time.Second)
+	dir := t.TempDir()
+	opening := realNow.Add(-10 * time.Second).Unix()
+	if err := os.WriteFile(filepath.Join(dir, nextAttemptFile), []byte(strconv.FormatInt(opening, 10)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	past := []string{
+		writeClaim(t, dir, opening-500, 0, realNow.Add(-time.Hour)),
+		writeClaim(t, dir, opening-500, 1, realNow.Add(-time.Hour)),
+	}
+	next := realNow.Add(MinFetchInterval).Unix()
+	kept := []string{
+		writeClaim(t, dir, next, 0, realNow),
+		writeClaim(t, dir, next+100, 0, realNow),
+	}
+	calls := 0
+	resolveAs(dir, time.Hour, realNow, func() ([]byte, error) { calls++; return []byte(goodPayload), nil })
+	if calls != 1 {
+		t.Fatalf("fetch ran %d times through an open gate, want 1", calls)
+	}
+	for _, p := range append(past, filepath.Join(dir, claimName(opening, 0))) {
+		if _, err := os.Stat(p); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("past opening's claim %s not dropped: %v", filepath.Base(p), err)
+		}
+	}
+	for _, p := range kept {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("claim of the current or a later opening removed: %v", err)
+		}
+	}
+}
+
+func TestResolveClaimDatedFarAheadIsSuperseded(t *testing.T) {
+	// A claim dated hours ahead was written before the clock moved back; it
+	// must not hold the fetch off until the clock catches up.
+	realNow := time.Now()
+	dir := t.TempDir()
+	writeClaim(t, dir, 0, 0, realNow.Add(2*time.Hour))
+	calls := 0
+	resolveAs(dir, time.Hour, realNow, func() ([]byte, error) { calls++; return []byte(goodPayload), nil })
+	if calls != 1 {
+		t.Errorf("fetch ran %d times past a claim dated hours ahead, want 1", calls)
+	}
+}
+
+func TestResolveLoserServesItsOwnCacheAtOnce(t *testing.T) {
+	realNow := time.Now().Truncate(time.Second)
+	dir := staleFixture(t, realNow)
+	writeClaim(t, dir, 0, 0, realNow)
+	got, staleFor, ok := resolveAs(dir, time.Minute, realNow, noFetch(t))
+	if !ok || string(got) != goodPayload || staleFor <= 0 {
+		t.Errorf("loser not served its own stale payload: ok=%v staleFor=%v", ok, staleFor)
+	}
+}
+
+func TestResolveRenderThatStartedLongAgoLosesToAFreshClaim(t *testing.T) {
+	// This render took its timestamp, then stalled for over the lease. In
+	// the meantime another render claimed the opening and is fetching. The
+	// fresh claim must hold this render off, not look dated ahead of it.
+	dir := t.TempDir()
+	realNow := time.Now()
+	writeClaim(t, dir, 0, 0, realNow)
+	resolveAs(dir, time.Hour, realNow.Add(-ClaimLease-time.Second), noFetch(t))
+}
+
+func TestResolveExpiredClaimSymlinkIsSupersededWithoutTouchingItsTarget(t *testing.T) {
+	// Something other than a render left the first claim as a symlink. Its
+	// age is the link's own, so once the lease has passed it is superseded
+	// like any dead claim rather than blocking every render for good.
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]string{
+		"dangling":                       "missing-target",
+		"pointing outside the cache dir": outside,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Symlink(target, filepath.Join(dir, claimName(0, 0))); err != nil {
+				t.Fatal(err)
+			}
+			fsys := osClaimFS(dir)
+			fsys.now = func() time.Time { return time.Now().Add(2 * ClaimLease) }
+			calls := 0
+			resolve(fsys, dir, testOwner, as(testOwner), time.Hour, time.Now(), func() ([]byte, error) { calls++; return []byte(goodPayload), nil })
+			if calls != 1 {
+				t.Errorf("fetch ran %d times past an expired claim symlink, want 1", calls)
+			}
+			if b, err := os.ReadFile(outside); err != nil || string(b) != "keep" {
+				t.Errorf("the symlink's target was changed: %q, %v", b, err)
+			}
+		})
+	}
+}
+
+func TestResolveLosersFinishWhileTheWinnerIsStillFetching(t *testing.T) {
+	// The winner's fetch is held open. Renders arriving meanwhile must
+	// return with what they have, not wait for it.
+	dir := t.TempDir()
+	log := t.TempDir()
+	winner := startRenders(t, dir, log, []helperRender{{owner: "A", hang: true}})[0]
+	winnerDone := make(chan error, 1)
+	go func() { winnerDone <- winner.Wait() }()
+	// Runs before startRenders' cleanup, which then finds the winner reaped.
+	t.Cleanup(func() {
+		_ = winner.Process.Kill()
+		<-winnerDone
+	})
+	waitForFiles(t, log, "ready-", 1)
+	release(t, log)
+	waitForFiles(t, log, "fetch-", 1)
+	if n := renderTogether(t, dir, helperRender{owner: "A"}, helperRender{owner: "B"}, helperRender{owner: "B"}); n != 0 {
+		t.Errorf("%d renders fetched while the winner held the opening, want 0", n)
+	}
+	select {
+	case err := <-winnerDone:
+		winnerDone <- err
+		t.Fatal("the winner exited before the other renders finished; the test proves nothing")
+	default:
 	}
 }

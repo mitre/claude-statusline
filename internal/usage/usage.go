@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -277,7 +278,9 @@ type Owner struct {
 // made — success, network error, rate limit or a rejected body alike — no
 // further attempt happens before MinFetchInterval has passed (or the
 // server's Retry-After, when longer). Renders in between serve the cache.
-// The gate is one file shared by every account.
+// The gate is one file shared by every account. Of the renders that find
+// it open, only the one that claims the opening fetches (see claim); the
+// others serve their cache without waiting.
 //
 // The payload belongs to owner: it is cached per account and token and
 // served, fresh or stale, only while the cached fingerprint matches. An
@@ -286,6 +289,11 @@ type Owner struct {
 // differs from owner (a /login during the request), nothing is returned or
 // cached: neither the response nor the cached payload.
 func Resolve(cacheDir string, owner Owner, current func() Owner, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) (raw []byte, staleFor time.Duration, ok bool) {
+	return resolve(osClaimFS(cacheDir), cacheDir, owner, current, ttl, now, fetch)
+}
+
+// resolve is Resolve with the claim files reached through fsys.
+func resolve(fsys claimFS, cacheDir string, owner Owner, current func() Owner, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) (raw []byte, staleFor time.Duration, ok bool) {
 	if owner.Account == "" || owner.Fingerprint == "" {
 		return nil, 0, false
 	}
@@ -296,9 +304,10 @@ func Resolve(cacheDir string, owner Owner, current func() Owner, ttl time.Durati
 		}
 	}
 	gate := filepath.Join(cacheDir, nextAttemptFile)
-	if mayAttempt(gate, now) {
+	if opening, open := gateOpening(gate, now); open && claim(fsys, gate, opening, now) {
 		b, err := fetch()
 		recordAttempt(gate, now, err)
+		dropPastClaims(fsys, gate, now)
 		if current == nil || current() != owner {
 			// The record or the token changed while the request was out:
 			// neither the response nor this owner's cache is shown.
@@ -346,18 +355,170 @@ func ownedBy(file string, owner Owner) ([]byte, bool) {
 	return []byte(payload), true
 }
 
-// mayAttempt reports whether the throttle gate allows a fetch at now. A
-// missing or unreadable gate file allows it: the gate only ever delays.
-func mayAttempt(gate string, now time.Time) bool {
+// gateOpening reads the throttle gate: the opening it holds (the Unix
+// second it opens at, 0 for a missing or unreadable gate) and whether a
+// fetch may be attempted at now. A missing or unreadable gate allows it:
+// the gate only ever delays.
+func gateOpening(gate string, now time.Time) (opening int64, open bool) {
 	s, ok := cache.ReadStale(gate)
 	if !ok {
-		return true
+		return 0, true
 	}
 	unix, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
 	if err != nil {
-		return true
+		return 0, true
 	}
-	return !now.Before(time.Unix(unix, 0))
+	return unix, !now.Before(time.Unix(unix, 0))
+}
+
+// ClaimLease is how long a claim holds the other renders off. A render
+// that claimed the fetch and was killed before recording its attempt
+// leaves its claim behind; once the claim is this old another render may
+// claim the opening in its place. It is about ten times the longest
+// normal fetch (a 1 s keychain read and a 2 s request).
+const ClaimLease = 30 * time.Second
+
+// claimPrefix starts every claim file's name: claimPrefix, the opening,
+// "-" and the claim's generation.
+const claimPrefix = "usage.claim-"
+
+// claimFS is the file access claims need, by name within the cache
+// directory. Tests replace it to fail or interleave individual steps.
+type claimFS struct {
+	// create makes the named file only if it does not exist yet, and
+	// fails with an error matching fs.ErrExist if it does.
+	create func(name string) error
+	// modTime is the named entry's own modification time; a symlink is
+	// not followed, so a claim that is a link still ages.
+	modTime func(name string) (time.Time, error)
+	// remove deletes the named file.
+	remove func(name string) error
+	// list names the directory's files.
+	list func() ([]string, error)
+	// now reads the clock when a claim's age is judged. A render's own
+	// timestamp is taken when it starts, and a render can stall past the
+	// lease before it reaches the claim.
+	now func() time.Time
+}
+
+// osClaimFS reaches the claim files in dir through an os.Root, so a claim
+// name can never resolve outside the cache directory.
+func osClaimFS(dir string) claimFS {
+	inRoot := func(op func(r *os.Root) error) error {
+		r, err := os.OpenRoot(dir)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = r.Close() }()
+		return op(r)
+	}
+	return claimFS{
+		create: func(name string) error {
+			return inRoot(func(r *os.Root) error {
+				f, err := r.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+				if err != nil {
+					return err
+				}
+				return f.Close()
+			})
+		},
+		modTime: func(name string) (t time.Time, err error) {
+			err = inRoot(func(r *os.Root) error {
+				st, serr := r.Lstat(name)
+				if serr == nil {
+					t = st.ModTime()
+				}
+				return serr
+			})
+			return t, err
+		},
+		remove: func(name string) error {
+			return inRoot(func(r *os.Root) error { return r.Remove(name) })
+		},
+		list: func() ([]string, error) {
+			entries, err := os.ReadDir(dir)
+			names := make([]string, 0, len(entries))
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			return names, err
+		},
+		now: time.Now,
+	}
+}
+
+func claimName(opening int64, generation int) string {
+	return fmt.Sprintf("%s%d-%d", claimPrefix, opening, generation)
+}
+
+// claim takes the right to fetch through the gate's opening: it creates the
+// opening's claim file exclusively, so across every process exactly one
+// create succeeds. A live claim already there means another render is
+// fetching: this one loses at once and never waits. A claim older than
+// ClaimLease, or dated more than ClaimLease ahead of the clock (the clock
+// moved back), was left by a render that died; the next generation's claim is
+// tried instead, so the dead claim is superseded without being removed and
+// two reclaimers still meet at one create. Any other failure to create the
+// claim authorizes nothing.
+//
+// After its create succeeds, the winner checks that the gate still holds
+// the same opening: a render that read the gate just before another
+// render's attempt replaced it must not fetch through an opening that has
+// already been used.
+func claim(fsys claimFS, gate string, opening int64, now time.Time) bool {
+	for generation := 0; ; generation++ {
+		name := claimName(opening, generation)
+		err := fsys.create(name)
+		if err == nil {
+			current, _ := gateOpening(gate, now)
+			return current == opening
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return false
+		}
+		claimed, err := fsys.modTime(name)
+		if err != nil {
+			return false
+		}
+		if age := fsys.now().Sub(claimed); age < ClaimLease && age > -ClaimLease {
+			return false
+		}
+	}
+}
+
+// dropPastClaims removes the claims of openings before the gate's current
+// one, after an attempt has been recorded. The current opening's claims,
+// and any later one's, are left alone: a render still holding one of
+// those may be fetching.
+func dropPastClaims(fsys claimFS, gate string, now time.Time) {
+	current, _ := gateOpening(gate, now)
+	names, err := fsys.list()
+	if err != nil {
+		return
+	}
+	for _, name := range names {
+		if opening, ok := claimOpening(name); ok && opening < current {
+			_ = fsys.remove(name)
+		}
+	}
+}
+
+// claimOpening is the opening a claim file's name belongs to; ok is false
+// for any name that is not a claim's.
+func claimOpening(name string) (opening int64, ok bool) {
+	rest, found := strings.CutPrefix(name, claimPrefix)
+	if !found {
+		return 0, false
+	}
+	i := strings.LastIndexByte(rest, '-')
+	if i < 0 {
+		return 0, false
+	}
+	if _, err := strconv.Atoi(rest[i+1:]); err != nil {
+		return 0, false
+	}
+	opening, err := strconv.ParseInt(rest[:i], 10, 64)
+	return opening, err == nil
 }
 
 // recordAttempt writes the earliest moment the next fetch may run: the floor
