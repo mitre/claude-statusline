@@ -1491,3 +1491,42 @@ func TestResolveLockErrorFetchesNothing(t *testing.T) {
 		t.Errorf("served %q with no payload and no lock", got)
 	}
 }
+
+// assertGateRewritten checks that the render held the fetch off for one
+// floor: the gate now opens MinFetchInterval after realNow, and the lock is
+// free again.
+func assertGateRewritten(t *testing.T, dir string, realNow time.Time) {
+	t.Helper()
+	if at, want := gateAt(t, dir), realNow.Add(MinFetchInterval).Truncate(time.Second); !at.Equal(want) {
+		t.Errorf("the gate opens at %v, want %v: one floor from now", at, want)
+	}
+	holdLock(t, dir)()
+}
+
+func TestResolveMalformedGateHoldsTheFetchOffForOneFloor(t *testing.T) {
+	// A gate whose contents are not a time cannot say whether the last
+	// hold has passed: no fetch now, and the gate is rewritten so the next
+	// opening fetches.
+	dir := t.TempDir()
+	realNow := time.Now()
+	if err := os.WriteFile(filepath.Join(dir, nextAttemptFile), []byte("not a time"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolveAs(dir, time.Hour, realNow, noFetch(t))
+	assertGateRewritten(t, dir, realNow)
+}
+
+func TestResolveUnreadableGateHoldsTheFetchOffForOneFloor(t *testing.T) {
+	// A gate that exists but cannot be read is treated the same way.
+	if os.Geteuid() == 0 {
+		t.Skip("root reads files whatever their permissions")
+	}
+	dir := t.TempDir()
+	realNow := time.Now()
+	closeGate(t, dir)
+	if err := os.Chmod(filepath.Join(dir, nextAttemptFile), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	resolveAs(dir, time.Hour, realNow, noFetch(t))
+	assertGateRewritten(t, dir, realNow)
+}

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -351,18 +352,22 @@ func ownedBy(file string, owner Owner) ([]byte, bool) {
 	return []byte(payload), true
 }
 
-// gateOpen reports whether the throttle gate allows a fetch at now. A
-// missing or unreadable gate allows it: the gate only ever delays.
-func gateOpen(g gateFS, now time.Time) bool {
-	s, ok := g.read()
-	if !ok {
-		return true
+// readGate returns the moment the throttle gate opens. A missing gate
+// opens at the zero time. ok is false when the gate exists but cannot be
+// read or holds no time: whether the last hold has passed is then unknown.
+func readGate(g gateFS) (at time.Time, ok bool) {
+	s, err := g.read()
+	if errors.Is(err, fs.ErrNotExist) {
+		return time.Time{}, true
+	}
+	if err != nil {
+		return time.Time{}, false
 	}
 	unix, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
 	if err != nil {
-		return true
+		return time.Time{}, false
 	}
-	return !now.Before(time.Unix(unix, 0))
+	return time.Unix(unix, 0), true
 }
 
 // lockFile sits beside the gate. Only the render holding an exclusive lock
@@ -377,8 +382,9 @@ type gateFS struct {
 	// lock takes the fetch lock without waiting; unlock releases it. Any
 	// error, including another render holding it, means no fetch.
 	lock func() (unlock func(), err error)
-	// read returns the gate's contents; ok is false when it cannot be read.
-	read func() (contents string, ok bool)
+	// read returns the gate's contents, or the error reading it; a missing
+	// gate reports an error matching fs.ErrNotExist.
+	read func() (contents string, err error)
 	// write replaces the gate's contents.
 	write func(contents string) error
 }
@@ -387,8 +393,16 @@ type gateFS struct {
 func osGateFS(dir string) gateFS {
 	gate := filepath.Join(dir, nextAttemptFile)
 	return gateFS{
-		lock:  func() (func(), error) { return lockFetch(dir) },
-		read:  func() (string, bool) { return cache.ReadStale(gate) },
+		lock: func() (func(), error) { return lockFetch(dir) },
+		read: func() (string, error) {
+			root, err := os.OpenRoot(dir)
+			if err != nil {
+				return "", err
+			}
+			defer func() { _ = root.Close() }()
+			b, err := root.ReadFile(nextAttemptFile)
+			return string(b), err
+		},
 		write: func(contents string) error { return cache.Write(gate, contents) },
 	}
 }
@@ -441,7 +455,14 @@ func fetchUnderLock(g gateFS, now time.Time, fetch func() ([]byte, error)) (b []
 		return nil, false, nil
 	}
 	defer unlock()
-	if !gateOpen(g, now) || writeGate(g, now.Add(MinFetchInterval)) != nil {
+	at, ok := readGate(g)
+	if !ok {
+		// The last hold is unknown: hold the fetch off for one floor and
+		// rewrite the gate so the next opening fetches.
+		_ = writeGate(g, now.Add(MinFetchInterval))
+		return nil, false, nil
+	}
+	if now.Before(at) || writeGate(g, now.Add(MinFetchInterval)) != nil {
 		return nil, false, nil
 	}
 	b, err = fetch()

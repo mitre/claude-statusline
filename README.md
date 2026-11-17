@@ -271,7 +271,9 @@ Only one session fetches at a time: it first takes an exclusive lock on
 `usage.lock` in the cache directory, without waiting. Holding the lock, it
 checks the gate, moves the gate 200 s ahead, sends the request, records the
 result and releases the lock. A session that cannot write the gate sends no
-request. Sessions that find the lock held show their own cached numbers
+request. A gate file that exists but cannot be read, or holds no time, is
+rewritten 200 s ahead and no request is sent, so the next opening fetches.
+Sessions that find the lock held show their own cached numbers
 without waiting. A session killed while holding the lock frees it at once;
 the gate it wrote still holds the next fetch until it passes. A stopped
 session (suspended, or paused in a debugger) keeps the lock, and the others

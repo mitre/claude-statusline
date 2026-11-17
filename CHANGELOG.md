@@ -30,7 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sending, so no request goes out without a written gate. The others serve
   their own cache without waiting. A killed render frees the lock at once; a
   stopped one keeps it. A render that cannot take the lock or write the gate
-  does not fetch. Releases up to 0.3.1 do not take the lock but still honour
+  does not fetch. A gate that exists but cannot be read, or holds no time,
+  is rewritten 200 s ahead without a fetch; before, it let the fetch
+  through. Releases up to 0.3.1 do not take the lock but still honour
   the gate.
 - After `/login` to another account, the account row no longer shows the
   previous account's usage. The usage payload was one cached file for every
