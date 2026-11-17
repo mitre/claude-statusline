@@ -266,7 +266,14 @@ not describe that token; they show only the session payload's numbers.
 
 **How often it fetches.** One fetch gate is shared by every session and
 account on the machine: at most one request per opening (200 s, or the
-server's `Retry-After` when longer), whichever session renders first. When
+server's `Retry-After` when longer), whichever session renders first.
+Sessions that reach an open gate at the same moment do not all fetch: each
+tries to create that opening's claim file (`usage.claim-<opening>-<n>` in
+the cache directory) exclusively, only the one whose create succeeds
+fetches, and the others show their own cached numbers without waiting. A
+claim left by a render that was killed mid-fetch holds the others off for
+30 s; then one of them takes over. A render that cannot write its claim
+(a read-only cache directory, for example) does not fetch. When
 several accounts are in use, one account can wait more than one opening for
 its own fetch while another account's session wins; there is no
 wall-clock bound on that wait.
