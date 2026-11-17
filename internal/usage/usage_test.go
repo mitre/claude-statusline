@@ -1117,7 +1117,7 @@ func renderTogether(t *testing.T, dir string, renders ...helperRender) int {
 	waitForFiles(t, log, "ready-", len(renders))
 	release(t, log)
 	deadline := time.After(10 * time.Second)
-	for _, cmd := range cmds {
+	for i, cmd := range cmds {
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 		select {
@@ -1126,9 +1126,17 @@ func renderTogether(t *testing.T, dir string, renders ...helperRender) int {
 				t.Errorf("render %d failed: %v", cmd.Process.Pid, err)
 			}
 		case <-deadline:
-			t.Errorf("render %d still running after 10 s", cmd.Process.Pid)
-			_ = cmd.Process.Kill()
+			// The deadline fires once: stop every render still running
+			// and reap each before returning.
+			t.Errorf("%d renders still running after 10 s", len(cmds)-i)
+			for _, c := range cmds[i:] {
+				_ = c.Process.Kill()
+			}
 			<-done
+			for _, c := range cmds[i+1:] {
+				_ = c.Wait()
+			}
+			return countFiles(t, log, "fetch-")
 		}
 	}
 	return countFiles(t, log, "fetch-")
@@ -1372,13 +1380,23 @@ func TestResolveLosersFinishWhileTheWinnerIsStillFetching(t *testing.T) {
 	dir := t.TempDir()
 	log := t.TempDir()
 	winner := startRenders(t, dir, log, []helperRender{{owner: "A", hang: true}})[0]
+	winnerDone := make(chan error, 1)
+	go func() { winnerDone <- winner.Wait() }()
+	// Runs before startRenders' cleanup, which then finds the winner reaped.
+	t.Cleanup(func() {
+		_ = winner.Process.Kill()
+		<-winnerDone
+	})
 	waitForFiles(t, log, "ready-", 1)
 	release(t, log)
 	waitForFiles(t, log, "fetch-", 1)
 	if n := renderTogether(t, dir, helperRender{owner: "A"}, helperRender{owner: "B"}, helperRender{owner: "B"}); n != 0 {
 		t.Errorf("%d renders fetched while the winner held the opening, want 0", n)
 	}
-	if winner.ProcessState != nil {
+	select {
+	case err := <-winnerDone:
+		winnerDone <- err
 		t.Fatal("the winner exited before the other renders finished; the test proves nothing")
+	default:
 	}
 }
