@@ -280,7 +280,12 @@ session (suspended, or paused in a debugger) keeps the lock, and the others
 keep showing cached numbers until it continues or exits. A session that
 cannot create or lock the file (a read-only cache directory, for example)
 does not fetch. Releases up to 0.3.1 do not take the lock; they still
-honour the gate. The lock needs the cache directory on a local disk. When
+honour the gate. Only a plain file at `usage.lock` is locked: if that name
+is a link, a folder or a special file, no session fetches until it is
+replaced by a plain file, and the entry is left as it is. The cache
+directory is created with mode 0700 when missing, and is assumed to be
+yours: anyone who can write to it can stop the fetch or defeat the lock.
+The lock needs the cache directory on a local disk. When
 several accounts are in use, one account can wait more than one opening for
 its own fetch while another account's session wins; there is no
 wall-clock bound on that wait.

@@ -1538,3 +1538,241 @@ func TestResolveUnreadableGateHoldsTheFetchOffForOneFloor(t *testing.T) {
 	resolveAs(dir, time.Hour, realNow, noFetch(t))
 	assertGateRewritten(t, dir, realNow)
 }
+
+// resolveCounting runs one render in dir with an open gate and reports how
+// many times it fetched; ok is false if it had not returned after 5 s.
+func resolveCounting(dir string) (fetches int, ok bool) {
+	done := make(chan int, 1)
+	go func() {
+		calls := 0
+		resolveAs(dir, time.Hour, time.Now(), func() ([]byte, error) { calls++; return []byte(goodPayload), nil })
+		done <- calls
+	}()
+	select {
+	case n := <-done:
+		return n, true
+	case <-time.After(5 * time.Second):
+		return 0, false
+	}
+}
+
+func TestResolveRefusesALockEntryThatIsNotAPlainFile(t *testing.T) {
+	// Only a plain file at usage.lock is locked. A link would let two
+	// renders lock different files (the gate is replaced on every write),
+	// and a FIFO could block the open. The render does not fetch, and the
+	// entry and anything it points to are left as they were.
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, plant := range map[string]func(lock string) error{
+		"symlink to the gate":          func(lock string) error { return os.Symlink(nextAttemptFile, lock) },
+		"symlink out of the directory": func(lock string) error { return os.Symlink(outside, lock) },
+		"dangling symlink":             func(lock string) error { return os.Symlink("missing", lock) },
+		"directory":                    func(lock string) error { return os.Mkdir(lock, 0o700) },
+		"FIFO":                         func(lock string) error { return syscall.Mkfifo(lock, 0o600) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			openGate(t, dir)
+			gate, err := os.ReadFile(filepath.Join(dir, nextAttemptFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			lock := filepath.Join(dir, "usage.lock")
+			if err := plant(lock); err != nil {
+				t.Fatal(err)
+			}
+			planted, err := os.Lstat(lock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			n, ok := resolveCounting(dir)
+			if !ok {
+				t.Fatal("the render blocked on the lock entry")
+			}
+			if n != 0 {
+				t.Errorf("the render fetched %d times through a lock entry that is not a plain file, want 0", n)
+			}
+			if now, err := os.ReadFile(filepath.Join(dir, nextAttemptFile)); err != nil || string(now) != string(gate) {
+				t.Errorf("the gate changed: %q, %v; want %q", now, err, gate)
+			}
+			if b, err := os.ReadFile(outside); err != nil || string(b) != "keep" {
+				t.Errorf("the file outside the directory changed: %q, %v", b, err)
+			}
+			if _, err := os.Lstat(filepath.Join(dir, "missing")); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("the dangling link's target was created: %v", err)
+			}
+			if after, err := os.Lstat(lock); err != nil || after.Mode().Type() != planted.Mode().Type() || after.ModTime() != planted.ModTime() {
+				t.Errorf("the lock entry was changed: %v, %v", after, err)
+			}
+		})
+	}
+}
+
+func TestResolveUsesAPlainPreExistingLockFile(t *testing.T) {
+	// The common case: a plain usage.lock left by an earlier render.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "usage.lock"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if n, ok := resolveCounting(dir); !ok || n != 1 {
+		t.Errorf("fetches = %d (returned: %v), want 1 through a plain lock file", n, ok)
+	}
+}
+
+// swappingDir changes the lock entry the way another process could: before
+// runs between the check and the open, after between the open and the lock.
+type swappingDir struct {
+	*os.Root
+	before, after func()
+}
+
+func (d swappingDir) OpenFile(name string, flag int, perm fs.FileMode) (*os.File, error) {
+	if d.before != nil {
+		d.before()
+	}
+	f, err := d.Root.OpenFile(name, flag, perm)
+	if err != nil {
+		return nil, err
+	}
+	if d.after != nil {
+		d.after()
+	}
+	return f, nil
+}
+
+// must fails the test on a setup error.
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLockRefusesAnEntrySwappedAfterTheCheck(t *testing.T) {
+	// The file opened must still be the plain file at usage.lock; otherwise
+	// another render could lock the entry's new file at the same time.
+	for name, swap := range map[string]func(dir string) error{
+		"replaced by another plain file": func(dir string) error {
+			other := filepath.Join(dir, "other")
+			if err := os.WriteFile(other, nil, 0o600); err != nil {
+				return err
+			}
+			return os.Rename(other, filepath.Join(dir, "usage.lock"))
+		},
+		"replaced by a symlink to the opened file": func(dir string) error {
+			lock := filepath.Join(dir, "usage.lock")
+			if err := os.Rename(lock, filepath.Join(dir, "opened")); err != nil {
+				return err
+			}
+			return os.Symlink("opened", lock)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "usage.lock"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			root, err := os.OpenRoot(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = root.Close() }()
+			unlock, err := lockIn(swappingDir{Root: root, after: func() { must(t, swap(dir)) }})
+			if err == nil {
+				unlock()
+				t.Fatal("locked a file that is no longer the plain file at usage.lock")
+			}
+		})
+	}
+}
+
+func TestLockRefusesAnEntryReplacedBeforeTheOpen(t *testing.T) {
+	// A missing entry is created exclusively, so a link planted after the
+	// check is not followed and its target is not created; a special file
+	// put in place of a checked plain file is not locked.
+	for name, tc := range map[string]struct {
+		existing bool
+		replace  func(lock string) error
+	}{
+		"dangling symlink planted where none was": {false, func(lock string) error { return os.Symlink("missing", lock) }},
+		"FIFO put in place of the plain file": {true, func(lock string) error {
+			if err := os.Remove(lock); err != nil {
+				return err
+			}
+			return syscall.Mkfifo(lock, 0o600)
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			lock := filepath.Join(dir, "usage.lock")
+			if tc.existing {
+				must(t, os.WriteFile(lock, nil, 0o600))
+			}
+			root, err := os.OpenRoot(dir)
+			must(t, err)
+			defer func() { _ = root.Close() }()
+			unlock, err := lockIn(swappingDir{Root: root, before: func() { must(t, tc.replace(lock)) }})
+			if err == nil {
+				unlock()
+				t.Fatal("locked an entry replaced after it was checked")
+			}
+			if _, err := os.Lstat(filepath.Join(dir, "missing")); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("the planted link's target was created: %v", err)
+			}
+		})
+	}
+}
+
+// openFailingDir fails the test if anything opens a file through it.
+type openFailingDir struct {
+	*os.Root
+	t *testing.T
+}
+
+func (d openFailingDir) OpenFile(name string, _ int, _ fs.FileMode) (*os.File, error) {
+	d.t.Errorf("opened %s, which is not a plain file", name)
+	return nil, fs.ErrPermission
+}
+
+func TestLockNeverOpensARefusedEntry(t *testing.T) {
+	// Opening a special file can block or have effects of its own, and
+	// opening a link follows it: a refused entry is judged from its Lstat
+	// alone and never opened.
+	for name, plant := range map[string]func(lock string) error{
+		"symlink to the gate": func(lock string) error { return os.Symlink(nextAttemptFile, lock) },
+		"dangling symlink":    func(lock string) error { return os.Symlink("missing", lock) },
+		"directory":           func(lock string) error { return os.Mkdir(lock, 0o700) },
+		"FIFO":                func(lock string) error { return syscall.Mkfifo(lock, 0o600) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			must(t, plant(filepath.Join(dir, "usage.lock")))
+			root, err := os.OpenRoot(dir)
+			must(t, err)
+			defer func() { _ = root.Close() }()
+			if unlock, err := lockIn(openFailingDir{Root: root, t: t}); err == nil {
+				unlock()
+				t.Error("locked an entry that is not a plain file")
+			}
+		})
+	}
+}
+
+func TestSameLockFileRefusesAnOpenedSpecialFile(t *testing.T) {
+	// Where the platform can lock a FIFO, an entry swapped to one between
+	// the check and the open reaches this check: the opened file and the
+	// entry match, but it is not a plain file.
+	dir := t.TempDir()
+	must(t, syscall.Mkfifo(filepath.Join(dir, "usage.lock"), 0o600))
+	root, err := os.OpenRoot(dir)
+	must(t, err)
+	defer func() { _ = root.Close() }()
+	f, err := root.OpenFile("usage.lock", os.O_RDWR, 0)
+	must(t, err)
+	defer func() { _ = f.Close() }()
+	if err := sameLockFile(root, f); err == nil {
+		t.Error("accepted an opened FIFO as the lock file")
+	}
+}

@@ -32,8 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stopped one keeps it. A render that cannot take the lock or write the gate
   does not fetch. A gate that exists but cannot be read, or holds no time,
   is rewritten 200 s ahead without a fetch; before, it let the fetch
-  through. Releases up to 0.3.1 do not take the lock but still honour
-  the gate.
+  through. Only a plain file at `usage.lock` is locked: a link, folder or
+  special file there stops every render from fetching and is left as it
+  is. Releases up to 0.3.1 do not take the lock but still honour the gate.
 - After `/login` to another account, the account row no longer shows the
   previous account's usage. The usage payload was one cached file for every
   account, served as current for the TTL and as "last good" after it. It is
