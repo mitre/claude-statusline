@@ -8,13 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mitre/claude-statusline/internal/cache"
@@ -278,9 +278,9 @@ type Owner struct {
 // made — success, network error, rate limit or a rejected body alike — no
 // further attempt happens before MinFetchInterval has passed (or the
 // server's Retry-After, when longer). Renders in between serve the cache.
-// The gate is one file shared by every account. Of the renders that find
-// it open, only the one that claims the opening fetches (see claim); the
-// others serve their cache without waiting.
+// The gate is one file shared by every account. Only the render holding the
+// fetch lock fetches (see lockFetch); the others serve their cache without
+// waiting.
 //
 // The payload belongs to owner: it is cached per account and token and
 // served, fresh or stale, only while the cached fingerprint matches. An
@@ -289,11 +289,11 @@ type Owner struct {
 // differs from owner (a /login during the request), nothing is returned or
 // cached: neither the response nor the cached payload.
 func Resolve(cacheDir string, owner Owner, current func() Owner, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) (raw []byte, staleFor time.Duration, ok bool) {
-	return resolve(osClaimFS(cacheDir), cacheDir, owner, current, ttl, now, fetch)
+	return resolve(osGateFS(cacheDir), cacheDir, owner, current, ttl, now, fetch)
 }
 
-// resolve is Resolve with the claim files reached through fsys.
-func resolve(fsys claimFS, cacheDir string, owner Owner, current func() Owner, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) (raw []byte, staleFor time.Duration, ok bool) {
+// resolve is Resolve with the gate and the fetch lock reached through g.
+func resolve(g gateFS, cacheDir string, owner Owner, current func() Owner, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) (raw []byte, staleFor time.Duration, ok bool) {
 	if owner.Account == "" || owner.Fingerprint == "" {
 		return nil, 0, false
 	}
@@ -303,11 +303,7 @@ func resolve(fsys claimFS, cacheDir string, owner Owner, current func() Owner, t
 			return b, 0, true
 		}
 	}
-	gate := filepath.Join(cacheDir, nextAttemptFile)
-	if opening, open := gateOpening(gate, now); open && claim(fsys, gate, opening, now) {
-		b, err := fetch()
-		recordAttempt(gate, now, err)
-		dropPastClaims(fsys, gate, now)
+	if b, sent, err := fetchUnderLock(g, now, fetch); sent {
 		if current == nil || current() != owner {
 			// The record or the token changed while the request was out:
 			// neither the response nor this owner's cache is shown.
@@ -355,182 +351,119 @@ func ownedBy(file string, owner Owner) ([]byte, bool) {
 	return []byte(payload), true
 }
 
-// gateOpening reads the throttle gate: the opening it holds (the Unix
-// second it opens at, 0 for a missing or unreadable gate) and whether a
-// fetch may be attempted at now. A missing or unreadable gate allows it:
-// the gate only ever delays.
-func gateOpening(gate string, now time.Time) (opening int64, open bool) {
-	s, ok := cache.ReadStale(gate)
+// gateOpen reports whether the throttle gate allows a fetch at now. A
+// missing or unreadable gate allows it: the gate only ever delays.
+func gateOpen(g gateFS, now time.Time) bool {
+	s, ok := g.read()
 	if !ok {
-		return 0, true
+		return true
 	}
 	unix, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
 	if err != nil {
-		return 0, true
+		return true
 	}
-	return unix, !now.Before(time.Unix(unix, 0))
+	return !now.Before(time.Unix(unix, 0))
 }
 
-// ClaimLease is how long a claim holds the other renders off. A render
-// that claimed the fetch and was killed before recording its attempt
-// leaves its claim behind; once the claim is this old another render may
-// claim the opening in its place. It is about ten times the longest
-// normal fetch (a 1 s keychain read and a 2 s request).
-const ClaimLease = 30 * time.Second
+// lockFile sits beside the gate. Only the render holding an exclusive lock
+// on it fetches. It is created once and never removed or renamed: if a
+// render removed it while another held the lock, a third could lock a new
+// file and fetch alongside the holder.
+const lockFile = "usage.lock"
 
-// claimPrefix starts every claim file's name: claimPrefix, the opening,
-// "-" and the claim's generation.
-const claimPrefix = "usage.claim-"
-
-// claimFS is the file access claims need, by name within the cache
-// directory. Tests replace it to fail or interleave individual steps.
-type claimFS struct {
-	// create makes the named file only if it does not exist yet, and
-	// fails with an error matching fs.ErrExist if it does.
-	create func(name string) error
-	// modTime is the named entry's own modification time; a symlink is
-	// not followed, so a claim that is a link still ages.
-	modTime func(name string) (time.Time, error)
-	// remove deletes the named file.
-	remove func(name string) error
-	// list names the directory's files.
-	list func() ([]string, error)
-	// now reads the clock when a claim's age is judged. A render's own
-	// timestamp is taken when it starts, and a render can stall past the
-	// lease before it reaches the claim.
-	now func() time.Time
+// gateFS is the gate and the fetch lock. Tests replace it to fail or
+// interleave individual steps.
+type gateFS struct {
+	// lock takes the fetch lock without waiting; unlock releases it. Any
+	// error, including another render holding it, means no fetch.
+	lock func() (unlock func(), err error)
+	// read returns the gate's contents; ok is false when it cannot be read.
+	read func() (contents string, ok bool)
+	// write replaces the gate's contents.
+	write func(contents string) error
 }
 
-// osClaimFS reaches the claim files in dir through an os.Root, so a claim
-// name can never resolve outside the cache directory.
-func osClaimFS(dir string) claimFS {
-	inRoot := func(op func(r *os.Root) error) error {
-		r, err := os.OpenRoot(dir)
-		if err != nil {
+// osGateFS is the gate and the fetch lock in dir.
+func osGateFS(dir string) gateFS {
+	gate := filepath.Join(dir, nextAttemptFile)
+	return gateFS{
+		lock:  func() (func(), error) { return lockFetch(dir) },
+		read:  func() (string, bool) { return cache.ReadStale(gate) },
+		write: func(contents string) error { return cache.Write(gate, contents) },
+	}
+}
+
+// lockFetch takes an exclusive flock on dir's lock file without waiting.
+// Each call opens its own file description, so two renders never share a
+// lock, and the file is opened close-on-exec through an os.Root, so no
+// child process (the keychain read) inherits it and the name cannot
+// resolve outside dir. The kernel releases the lock when the holder exits
+// or is killed; a stopped holder keeps it. unlock closes the file, which
+// releases the lock: its descriptor is the only one on that description.
+func lockFetch(dir string) (unlock func(), err error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	f, err := root.OpenFile(lockFile, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := flock(f, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return func() { _ = f.Close() }, nil
+}
+
+// flock applies how to f's lock, retrying a call a signal interrupted.
+func flock(f *os.File, how int) error {
+	for {
+		err := syscall.Flock(int(f.Fd()), how)
+		if !errors.Is(err, syscall.EINTR) {
 			return err
 		}
-		defer func() { _ = r.Close() }()
-		return op(r)
-	}
-	return claimFS{
-		create: func(name string) error {
-			return inRoot(func(r *os.Root) error {
-				f, err := r.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-				if err != nil {
-					return err
-				}
-				return f.Close()
-			})
-		},
-		modTime: func(name string) (t time.Time, err error) {
-			err = inRoot(func(r *os.Root) error {
-				st, serr := r.Lstat(name)
-				if serr == nil {
-					t = st.ModTime()
-				}
-				return serr
-			})
-			return t, err
-		},
-		remove: func(name string) error {
-			return inRoot(func(r *os.Root) error { return r.Remove(name) })
-		},
-		list: func() ([]string, error) {
-			entries, err := os.ReadDir(dir)
-			names := make([]string, 0, len(entries))
-			for _, e := range entries {
-				names = append(names, e.Name())
-			}
-			return names, err
-		},
-		now: time.Now,
 	}
 }
 
-func claimName(opening int64, generation int) string {
-	return fmt.Sprintf("%s%d-%d", claimPrefix, opening, generation)
+// fetchUnderLock runs one attempt while holding the fetch lock: it reads
+// the gate, writes it MinFetchInterval ahead, sends, records the attempt
+// and releases the lock. The gate is read only under the lock, so a render
+// never fetches through an opening another render used while it waited to
+// run. sent is false, and nothing is sent, when another render holds the
+// lock, the lock cannot be taken, the gate is closed, or the gate cannot be
+// written: a render that sent without a written gate could not hold the
+// others off once it released the lock.
+func fetchUnderLock(g gateFS, now time.Time, fetch func() ([]byte, error)) (b []byte, sent bool, err error) {
+	unlock, lerr := g.lock()
+	if lerr != nil {
+		return nil, false, nil
+	}
+	defer unlock()
+	if !gateOpen(g, now) || writeGate(g, now.Add(MinFetchInterval)) != nil {
+		return nil, false, nil
+	}
+	b, err = fetch()
+	recordAttempt(g, now, err)
+	return b, true, err
 }
 
-// claim takes the right to fetch through the gate's opening: it creates the
-// opening's claim file exclusively, so across every process exactly one
-// create succeeds. A live claim already there means another render is
-// fetching: this one loses at once and never waits. A claim older than
-// ClaimLease, or dated more than ClaimLease ahead of the clock (the clock
-// moved back), was left by a render that died; the next generation's claim is
-// tried instead, so the dead claim is superseded without being removed and
-// two reclaimers still meet at one create. Any other failure to create the
-// claim authorizes nothing.
-//
-// After its create succeeds, the winner checks that the gate still holds
-// the same opening: a render that read the gate just before another
-// render's attempt replaced it must not fetch through an opening that has
-// already been used.
-func claim(fsys claimFS, gate string, opening int64, now time.Time) bool {
-	for generation := 0; ; generation++ {
-		name := claimName(opening, generation)
-		err := fsys.create(name)
-		if err == nil {
-			current, _ := gateOpening(gate, now)
-			return current == opening
-		}
-		if !errors.Is(err, fs.ErrExist) {
-			return false
-		}
-		claimed, err := fsys.modTime(name)
-		if err != nil {
-			return false
-		}
-		if age := fsys.now().Sub(claimed); age < ClaimLease && age > -ClaimLease {
-			return false
-		}
-	}
-}
-
-// dropPastClaims removes the claims of openings before the gate's current
-// one, after an attempt has been recorded. The current opening's claims,
-// and any later one's, are left alone: a render still holding one of
-// those may be fetching.
-func dropPastClaims(fsys claimFS, gate string, now time.Time) {
-	current, _ := gateOpening(gate, now)
-	names, err := fsys.list()
-	if err != nil {
-		return
-	}
-	for _, name := range names {
-		if opening, ok := claimOpening(name); ok && opening < current {
-			_ = fsys.remove(name)
-		}
-	}
-}
-
-// claimOpening is the opening a claim file's name belongs to; ok is false
-// for any name that is not a claim's.
-func claimOpening(name string) (opening int64, ok bool) {
-	rest, found := strings.CutPrefix(name, claimPrefix)
-	if !found {
-		return 0, false
-	}
-	i := strings.LastIndexByte(rest, '-')
-	if i < 0 {
-		return 0, false
-	}
-	if _, err := strconv.Atoi(rest[i+1:]); err != nil {
-		return 0, false
-	}
-	opening, err := strconv.ParseInt(rest[:i], 10, 64)
-	return opening, err == nil
+// writeGate sets the gate to open at the given moment.
+func writeGate(g gateFS, at time.Time) error {
+	return g.write(strconv.FormatInt(at.Unix(), 10))
 }
 
 // recordAttempt writes the earliest moment the next fetch may run: the floor
 // after this attempt, stretched to the server's Retry-After when that is
 // longer. A write failure leaves the previous gate in place.
-func recordAttempt(gate string, now time.Time, err error) {
+func recordAttempt(g gateFS, now time.Time, err error) {
 	hold := MinFetchInterval
 	var ra *RetryAfterError
 	if errors.As(err, &ra) && ra.After > hold {
 		hold = ra.After
 	}
-	_ = cache.Write(gate, strconv.FormatInt(now.Add(hold).Unix(), 10))
+	_ = writeGate(g, now.Add(hold))
 }
 
 // staleAge is the age of a fallback-served cache file: now minus its mtime,
