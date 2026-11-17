@@ -1012,13 +1012,14 @@ const (
 // marker, then, by its fetch mode: answers after a pause ("answer"), hangs
 // to be killed ("hang"), answers once the unhold file appears ("hold"), or
 // starts a child process that stays alive and then hangs ("child").
-// Started as that child, it leaves a child-<pid> marker and sleeps.
+// Started as that child, it leaves a child-<pid> marker and sleeps for at
+// most 30 s.
 func TestResolveHelperProcess(t *testing.T) {
 	if log := os.Getenv(helperChild); log != "" {
 		if err := os.WriteFile(filepath.Join(log, "child-"+strconv.Itoa(os.Getpid())), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		time.Sleep(time.Hour)
+		time.Sleep(30 * time.Second)
 		return
 	}
 	dir := os.Getenv(helperDir)
@@ -1101,14 +1102,18 @@ func startRenders(t *testing.T, dir, log string, renders []helperRender) []*exec
 			helperFetch+"="+fetch)
 		var out strings.Builder
 		cmd.Stdout, cmd.Stderr = &out, &out
+		// Its own process group holds the render and every process it
+		// starts, so cleanup reaches a child the test never learned of.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			if cmd.ProcessState == nil {
-				_ = cmd.Process.Kill()
 				_ = cmd.Wait()
 			}
+			waitGroupGone(t, cmd.Process.Pid)
 			if t.Failed() && out.Len() > 0 {
 				t.Logf("render %d output:\n%s", cmd.Process.Pid, out.String())
 			}
@@ -1116,6 +1121,19 @@ func startRenders(t *testing.T, dir, log string, renders []helperRender) []*exec
 		cmds = append(cmds, cmd)
 	}
 	return cmds
+}
+
+// waitGroupGone waits until no process is left in process group pgid.
+func waitGroupGone(t *testing.T, pgid int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !errors.Is(syscall.Kill(-pgid, 0), syscall.ESRCH) {
+		if time.Now().After(deadline) {
+			t.Errorf("process group %d still has a process 5 s after it was killed", pgid)
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // waitForFiles waits until dir holds n files whose names start with prefix.
@@ -1397,7 +1415,6 @@ func TestResolveLockIsNotInheritedByAChildProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
 	killRender(t, holder)
 	openGate(t, dir)
 	if n := renderTogether(t, dir, helperRender{owner: "A"}); n != 1 {
