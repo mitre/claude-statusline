@@ -420,7 +420,35 @@ func lockFetch(dir string) (unlock func(), err error) {
 		return nil, err
 	}
 	defer func() { _ = root.Close() }()
-	f, err := root.OpenFile(lockFile, os.O_CREATE|os.O_RDWR, 0o600)
+	return lockIn(root)
+}
+
+// lockDir is the access to the gate directory that lockIn needs; *os.Root
+// provides it, confined to the directory.
+type lockDir interface {
+	Lstat(name string) (fs.FileInfo, error)
+	OpenFile(name string, flag int, perm fs.FileMode) (*os.File, error)
+}
+
+// lockIn takes the exclusive lock on d's lock file without waiting.
+func lockIn(d lockDir) (unlock func(), err error) {
+	// The entry is checked without following it, before anything opens it:
+	// only a plain file is locked. Through a link two renders could lock
+	// different files (the gate is replaced on every write), and opening a
+	// special file can block. A missing entry is created exclusively, so a
+	// link planted after the check is never followed. A refused entry is
+	// left as it is.
+	flag := os.O_RDWR
+	st, err := d.Lstat(lockFile)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		flag |= os.O_CREATE | os.O_EXCL
+	case err != nil:
+		return nil, err
+	case !st.Mode().IsRegular():
+		return nil, errLockNotPlainFile
+	}
+	f, err := d.OpenFile(lockFile, flag, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -428,8 +456,35 @@ func lockFetch(dir string) (unlock func(), err error) {
 		_ = f.Close()
 		return nil, err
 	}
+	// The entry may have been replaced since it was checked: the lock holds
+	// only if the entry is still the plain file that was locked.
+	if err := sameLockFile(d, f); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
 	return func() { _ = f.Close() }, nil
 }
+
+// sameLockFile checks that f is a plain file and that d's lock entry,
+// examined without following it, is still f.
+func sameLockFile(d lockDir, f *os.File) error {
+	opened, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	entry, err := d.Lstat(lockFile)
+	if err != nil {
+		return err
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(entry, opened) {
+		return errLockNotPlainFile
+	}
+	return nil
+}
+
+// errLockNotPlainFile refuses a lock entry that is a link, a directory or a
+// special file.
+var errLockNotPlainFile = errors.New("usage.lock is not a plain file")
 
 // flock applies how to f's lock, retrying a call a signal interrupted.
 func flock(f *os.File, how int) error {
