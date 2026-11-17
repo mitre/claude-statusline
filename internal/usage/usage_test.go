@@ -1116,9 +1116,19 @@ func renderTogether(t *testing.T, dir string, renders ...helperRender) int {
 	cmds := startRenders(t, dir, log, renders)
 	waitForFiles(t, log, "ready-", len(renders))
 	release(t, log)
+	deadline := time.After(10 * time.Second)
 	for _, cmd := range cmds {
-		if err := cmd.Wait(); err != nil {
-			t.Errorf("render %d failed: %v", cmd.Process.Pid, err)
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("render %d failed: %v", cmd.Process.Pid, err)
+			}
+		case <-deadline:
+			t.Errorf("render %d still running after 10 s", cmd.Process.Pid)
+			_ = cmd.Process.Kill()
+			<-done
 		}
 	}
 	return countFiles(t, log, "fetch-")
@@ -1312,5 +1322,63 @@ func TestResolveLoserServesItsOwnCacheAtOnce(t *testing.T) {
 	got, staleFor, ok := resolveAs(dir, time.Minute, realNow, noFetch(t))
 	if !ok || string(got) != goodPayload || staleFor <= 0 {
 		t.Errorf("loser not served its own stale payload: ok=%v staleFor=%v", ok, staleFor)
+	}
+}
+
+func TestResolveRenderThatStartedLongAgoLosesToAFreshClaim(t *testing.T) {
+	// This render took its timestamp, then stalled for over the lease. In
+	// the meantime another render claimed the opening and is fetching. The
+	// fresh claim must hold this render off, not look dated ahead of it.
+	dir := t.TempDir()
+	realNow := time.Now()
+	writeClaim(t, dir, 0, 0, realNow)
+	resolveAs(dir, time.Hour, realNow.Add(-ClaimLease-time.Second), noFetch(t))
+}
+
+func TestResolveExpiredClaimSymlinkIsSupersededWithoutTouchingItsTarget(t *testing.T) {
+	// Something other than a render left the first claim as a symlink. Its
+	// age is the link's own, so once the lease has passed it is superseded
+	// like any dead claim rather than blocking every render for good.
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]string{
+		"dangling":                       "missing-target",
+		"pointing outside the cache dir": outside,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Symlink(target, filepath.Join(dir, claimName(0, 0))); err != nil {
+				t.Fatal(err)
+			}
+			fsys := osClaimFS(dir)
+			fsys.now = func() time.Time { return time.Now().Add(2 * ClaimLease) }
+			calls := 0
+			resolve(fsys, dir, testOwner, as(testOwner), time.Hour, time.Now(), func() ([]byte, error) { calls++; return []byte(goodPayload), nil })
+			if calls != 1 {
+				t.Errorf("fetch ran %d times past an expired claim symlink, want 1", calls)
+			}
+			if b, err := os.ReadFile(outside); err != nil || string(b) != "keep" {
+				t.Errorf("the symlink's target was changed: %q, %v", b, err)
+			}
+		})
+	}
+}
+
+func TestResolveLosersFinishWhileTheWinnerIsStillFetching(t *testing.T) {
+	// The winner's fetch is held open. Renders arriving meanwhile must
+	// return with what they have, not wait for it.
+	dir := t.TempDir()
+	log := t.TempDir()
+	winner := startRenders(t, dir, log, []helperRender{{owner: "A", hang: true}})[0]
+	waitForFiles(t, log, "ready-", 1)
+	release(t, log)
+	waitForFiles(t, log, "fetch-", 1)
+	if n := renderTogether(t, dir, helperRender{owner: "A"}, helperRender{owner: "B"}, helperRender{owner: "B"}); n != 0 {
+		t.Errorf("%d renders fetched while the winner held the opening, want 0", n)
+	}
+	if winner.ProcessState != nil {
+		t.Fatal("the winner exited before the other renders finished; the test proves nothing")
 	}
 }

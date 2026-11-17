@@ -388,12 +388,17 @@ type claimFS struct {
 	// create makes the named file only if it does not exist yet, and
 	// fails with an error matching fs.ErrExist if it does.
 	create func(name string) error
-	// modTime is the named file's modification time.
+	// modTime is the named entry's own modification time; a symlink is
+	// not followed, so a claim that is a link still ages.
 	modTime func(name string) (time.Time, error)
 	// remove deletes the named file.
 	remove func(name string) error
 	// list names the directory's files.
 	list func() ([]string, error)
+	// now reads the clock when a claim's age is judged. A render's own
+	// timestamp is taken when it starts, and a render can stall past the
+	// lease before it reaches the claim.
+	now func() time.Time
 }
 
 // osClaimFS reaches the claim files in dir through an os.Root, so a claim
@@ -419,7 +424,7 @@ func osClaimFS(dir string) claimFS {
 		},
 		modTime: func(name string) (t time.Time, err error) {
 			err = inRoot(func(r *os.Root) error {
-				st, serr := r.Stat(name)
+				st, serr := r.Lstat(name)
 				if serr == nil {
 					t = st.ModTime()
 				}
@@ -438,6 +443,7 @@ func osClaimFS(dir string) claimFS {
 			}
 			return names, err
 		},
+		now: time.Now,
 	}
 }
 
@@ -449,8 +455,8 @@ func claimName(opening int64, generation int) string {
 // opening's claim file exclusively, so across every process exactly one
 // create succeeds. A live claim already there means another render is
 // fetching: this one loses at once and never waits. A claim older than
-// ClaimLease, or dated more than ClaimLease ahead of now (the clock moved
-// back), was left by a render that died; the next generation's claim is
+// ClaimLease, or dated more than ClaimLease ahead of the clock (the clock
+// moved back), was left by a render that died; the next generation's claim is
 // tried instead, so the dead claim is superseded without being removed and
 // two reclaimers still meet at one create. Any other failure to create the
 // claim authorizes nothing.
@@ -474,7 +480,7 @@ func claim(fsys claimFS, gate string, opening int64, now time.Time) bool {
 		if err != nil {
 			return false
 		}
-		if age := now.Sub(claimed); age < ClaimLease && age > -ClaimLease {
+		if age := fsys.now().Sub(claimed); age < ClaimLease && age > -ClaimLease {
 			return false
 		}
 	}
