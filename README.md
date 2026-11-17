@@ -267,13 +267,20 @@ not describe that token; they show only the session payload's numbers.
 **How often it fetches.** One fetch gate is shared by every session and
 account on the machine: at most one request per opening (200 s, or the
 server's `Retry-After` when longer), whichever session renders first.
-Sessions that reach an open gate at the same moment do not all fetch: each
-tries to create that opening's claim file (`usage.claim-<opening>-<n>` in
-the cache directory) exclusively, only the one whose create succeeds
-fetches, and the others show their own cached numbers without waiting. A
-claim left by a render that was killed mid-fetch holds the others off for
-30 s; then one of them takes over. A render that cannot write its claim
-(a read-only cache directory, for example) does not fetch. When
+Only one session fetches at a time: it first takes an exclusive lock on
+`usage.lock` in the cache directory, without waiting. Holding the lock, it
+checks the gate, moves the gate 200 s ahead, sends the request, records the
+result and releases the lock. A session that cannot write the gate sends no
+request. A gate file that exists but cannot be read, or holds no time, is
+rewritten 200 s ahead and no request is sent, so the next opening fetches.
+Sessions that find the lock held show their own cached numbers
+without waiting. A session killed while holding the lock frees it at once;
+the gate it wrote still holds the next fetch until it passes. A stopped
+session (suspended, or paused in a debugger) keeps the lock, and the others
+keep showing cached numbers until it continues or exits. A session that
+cannot create or lock the file (a read-only cache directory, for example)
+does not fetch. Releases up to 0.3.1 do not take the lock; they still
+honour the gate. The lock needs the cache directory on a local disk. When
 several accounts are in use, one account can wait more than one opening for
 its own fetch while another account's session wins; there is no
 wall-clock bound on that wait.

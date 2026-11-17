@@ -24,12 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Sessions that rendered at the same moment while the usage fetch gate was
-  open could all call the endpoint, and all be rate-limited. The gate now
-  admits one fetch per opening: a render fetches only after creating that
-  opening's claim file exclusively, and the others serve their own cache
-  without waiting. A claim left by a killed render expires after 30 s, and a
-  render that cannot write a claim does not fetch. Claims of past openings
-  are removed.
+  open could all call the endpoint, and all be rate-limited. Only the render
+  holding an exclusive lock on `usage.lock` in the cache directory now
+  fetches. Holding it, the render checks the gate and moves it ahead before
+  sending, so no request goes out without a written gate. The others serve
+  their own cache without waiting. A killed render frees the lock at once; a
+  stopped one keeps it. A render that cannot take the lock or write the gate
+  does not fetch. A gate that exists but cannot be read, or holds no time,
+  is rewritten 200 s ahead without a fetch; before, it let the fetch
+  through. Releases up to 0.3.1 do not take the lock but still honour
+  the gate.
 - After `/login` to another account, the account row no longer shows the
   previous account's usage. The usage payload was one cached file for every
   account, served as current for the TTL and as "last good" after it. It is
