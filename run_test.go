@@ -1244,3 +1244,95 @@ func TestRunStaleExtraUsageCarriesItsAge(t *testing.T) {
 		})
 	}
 }
+
+// accountRow is the account row of a rendered frame, ANSI removed; "" when
+// the frame has none.
+func accountRow(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		plain := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(line, "")
+		if strings.HasPrefix(plain, "account") {
+			return plain
+		}
+	}
+	return ""
+}
+
+// stdinWith is a stdin payload carrying the given rate-limit or quota JSON.
+func stdinWith(limits string) string {
+	return `{"session_id":"0a1b2c3d-0000-4000-8000-000000000000","model":{"display_name":"Fable 5"},` +
+		`"workspace":{"current_dir":"/Users/dev/projects/demo-app"},` + limits + `}`
+}
+
+func TestRunStdinWindowsRenderOnlyWhatIsPresent(t *testing.T) {
+	// No endpoint data: the row shows exactly the windows stdin reports. An
+	// absent window is omitted, never "0%", and either window alone renders.
+	for _, c := range []struct {
+		name, limits, product string
+		meter                 string // the one meter the row must show
+	}{
+		{"five-hour only", `"rate_limits":{"five_hour":{"used_percentage":42}}`, "", "5h 42%"},
+		{"weekly only", `"rate_limits":{"seven_day":{"used_percentage":77}}`, "", "week 77%"},
+		{"null five-hour, weekly", `"rate_limits":{"five_hour":null,"seven_day":{"used_percentage":77}}`, "", "week 77%"},
+		{"antigravity five-hour bucket only", `"product":"antigravity","quota":{"gemini-5h":{"remaining_fraction":0.95}}`, "antigravity", "5h 5%"},
+		{"antigravity weekly bucket only", `"product":"antigravity","quota":{"gemini-weekly":{"remaining_fraction":0.25}}`, "antigravity", "week 75%"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d := e2eDeps(t, "full.json")
+			getenv := d.getenv
+			d.getenv = func(k string) string {
+				if k == "CLAUDE_CODE_OAUTH_TOKEN" && c.product == "" {
+					return "fixture-oauth-token" // stdin windows only, no endpoint
+				}
+				return getenv(k)
+			}
+			d.fetchUsage = func(string) ([]byte, error) {
+				t.Fatal("no endpoint fetch expected")
+				return nil, nil
+			}
+			d.stdin = strings.NewReader(stdinWith(c.limits))
+			out, errOut := run(d)
+			if errOut != "" {
+				t.Fatalf("unexpected stderr: %q", errOut)
+			}
+			if got := accountRow(out); !strings.HasSuffix(got, c.meter) || strings.Count(got, "%") != 1 {
+				t.Errorf("account row = %q, want the one meter %q", got, c.meter)
+			}
+		})
+	}
+}
+
+func TestRunWeeklyOnlyStdinKeepsTheStaleFiveHourReading(t *testing.T) {
+	// A stale payload with a five-hour reading (5%) and stdin carrying only
+	// the weekly window: the live weekly reading replaces the stale one, the
+	// stale five-hour reading stays with the age marker, and nothing reads
+	// "5h 0%".
+	d := e2eDeps(t, "full.json")
+	d.fetchUsage = func(string) ([]byte, error) { return nil, errors.New("network down") }
+	seedStaleUsage(t, d, e2eUsagePayload)
+	d.stdin = strings.NewReader(stdinWith(`"rate_limits":{"seven_day":{"used_percentage":77}}`))
+	out, errOut := run(d)
+	if errOut != "" {
+		t.Fatalf("unexpected stderr: %q", errOut)
+	}
+	if got, want := accountRow(out), "account  dev@example.com · 5h 5% · week 77% · (data 6m old)"; got != want {
+		t.Errorf("account row:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestRunWeeklyOnlyStdinOverAFreshPayloadWithoutFiveHour(t *testing.T) {
+	// A fresh payload reporting no five-hour window in progress, and stdin
+	// carrying only the weekly window: no five-hour meter appears.
+	d := e2eDeps(t, "full.json")
+	d.fetchUsage = func(string) ([]byte, error) {
+		return []byte(`{"five_hour": null, "seven_day": {"utilization": 13},
+  "extra_usage": {"is_enabled": false}, "spend": {"used": {"amount_minor": 0, "exponent": 2}}, "limits": []}`), nil
+	}
+	d.stdin = strings.NewReader(stdinWith(`"rate_limits":{"seven_day":{"used_percentage":77}}`))
+	out, errOut := run(d)
+	if errOut != "" {
+		t.Fatalf("unexpected stderr: %q", errOut)
+	}
+	if got, want := accountRow(out), "account  dev@example.com · week 13%"; got != want {
+		t.Errorf("account row:\n got %q\nwant %q", got, want)
+	}
+}

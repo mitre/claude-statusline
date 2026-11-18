@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The account row read each window from the session payload only when the
+  five-hour window was there: a payload with the five-hour window alone
+  showed a made-up `week 0%`, and a payload with only the weekly window (or
+  a null five-hour window) showed nothing. Each window is now read on its
+  own, for Claude Code's `rate_limits` and Antigravity's quota alike: a
+  window the payload does not carry is omitted (or keeps the endpoint's
+  reading), never shown as 0%.
 - The extra-usage badge on the model row (`⚠ EXTRA USAGE $…`, `· extra $…`)
   showed spend from a stale cached payload as if it were current, with no
   age, when the usage fetch was failing. It now carries its own dim age, for

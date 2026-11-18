@@ -233,9 +233,11 @@ the hot-only (≥80%) behavior.
 
 When the usage endpoint can't be reached, the row degrades in two stages.
 Claude Code v2.1.210+ sends the two all-model meters in the statusline
-payload itself, so `5h` switches to the **live** value, and `week` too when
-the payload carries a weekly window (no network needed — even when no cached
-payload exists at all). A fresh payload keeps its readings; a live stdin
+payload itself, so each of `5h` and `week` switches to the **live** value
+when the payload carries that window; either one alone is a reading, and a
+window the payload does not carry keeps the endpoint's reading or is omitted,
+never shown as 0% (no network needed — even when no cached payload exists at
+all). A fresh payload keeps its readings; a live stdin
 reading only fills a window that payload reports as not in progress.
 Endpoint-only account segments (a weekly reading
 stdin did not replace, plan-scoped limits, the per-model window) keep

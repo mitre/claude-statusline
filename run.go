@@ -205,7 +205,7 @@ func run(d deps) (string, string) {
 		// fills a window the fresh payload reports as not in progress.
 		switch {
 		case sess.RateLimitsOK && have && u.DataAge == 0:
-			if u.FiveHourAbsent {
+			if u.FiveHourAbsent && sess.R5OK {
 				u.FiveHourAbsent = false
 				u.U5, u.R5 = sess.R5Pct, usage.ResetLabelUnix(sess.R5ResetUnix, now)
 			}
@@ -214,12 +214,17 @@ func run(d deps) (string, string) {
 				u.U7, u.R7 = sess.R7Pct, usage.ResetLabelUnix(sess.R7ResetUnix, now)
 			}
 		case sess.RateLimitsOK:
-			// The host's live readings supersede the endpoint's. The
-			// five-hour reading is always present within RateLimitsOK; the
-			// weekly one may not be, and without it the endpoint's weekly
-			// reading (or its absence) stands — never replaced by 0%.
-			u.FiveHourAbsent = false
-			u.U5, u.R5 = sess.R5Pct, usage.ResetLabelUnix(sess.R5ResetUnix, now)
+			// The host's live readings supersede the endpoint's, window by
+			// window. Without endpoint data every window starts absent; a
+			// window stdin does not report keeps the endpoint's reading (or
+			// its absence) — never replaced by 0%.
+			if !have {
+				u.FiveHourAbsent, u.SevenDayAbsent = true, true
+			}
+			if sess.R5OK {
+				u.FiveHourAbsent = false
+				u.U5, u.R5 = sess.R5Pct, usage.ResetLabelUnix(sess.R5ResetUnix, now)
+			}
 			if sess.R7OK {
 				u.SevenDayAbsent = false
 				u.U7, u.R7 = sess.R7Pct, usage.ResetLabelUnix(sess.R7ResetUnix, now)
@@ -234,10 +239,10 @@ func run(d deps) (string, string) {
 					Reset: usage.ResetLabelUnix(sc.ResetUnix, now),
 				})
 			}
-			// Every visible 5h/week/scoped meter is live when the weekly
-			// window came from stdin or is absent, and no endpoint scoped
-			// limit remains. The model window qualifies separately.
-			u.MetersLive = (sess.R7OK || u.SevenDayAbsent) && !endpointScoped
+			// Every visible 5h/week/scoped meter is live when each window
+			// came from stdin or is absent, and no endpoint scoped limit
+			// remains. The model window qualifies separately.
+			u.MetersLive = (sess.R5OK || u.FiveHourAbsent) && (sess.R7OK || u.SevenDayAbsent) && !endpointScoped
 			have = true
 		}
 		if have {
