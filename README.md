@@ -127,7 +127,7 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | `[usage] enabled` | `true` | `false` skips the usage endpoint entirely |
 | `[usage] ttl_seconds` | `200` | How long a fetched payload is served before re-fetching. Floor 200 (a lower value is raised to 200, with a stderr note): the usage endpoint rate-limits faster polling, and a failed fetch is not retried before 200 s (or the server's `Retry-After`, capped at 1 hour) have passed since the response arrived |
 | `[colors]` `red`/`green`/`yellow`/`blue`/`cyan` | `"1"`/`"2"`/`"3"`/`"4"`/`"6"` (terminal ANSI) | Remap a palette slot to an ANSI index (`"0"`–`"255"`) or a truecolor `"#rrggbb"` hex; see [Colors](#colors) |
-| `[cache] dir` | platform user-cache dir | Cache location override |
+| `[cache] dir` | platform user-cache dir | Cache location override. The usage fetch gate and its lock stay in the platform user-cache dir; see "How often it fetches" under [What each row means](#what-each-row-means) |
 
 ### Colors
 
@@ -272,8 +272,15 @@ at 1 hour. A gate more than 2 hours ahead of the clock was left by a clock
 that moved back by hours, and counts as open, so the next session fetches
 instead of waiting for the clock to catch up. The extra hour keeps a real
 hold in place through a clock step back of under an hour.
+The gate (`usage.next-attempt`) and its lock (`usage.lock`) live in the
+platform user-cache dir (`~/Library/Caches/claude-statusline` on macOS),
+even for a session whose `[cache] dir` points elsewhere, so every session
+waits on the same gate; payloads follow `[cache] dir`. When the user-cache
+dir cannot be determined (no home directory, or a relative
+`XDG_CACHE_HOME`), the gate and lock stay in `[cache] dir`. When it is
+determined but cannot be created, that session does not fetch.
 Only one session fetches at a time: it first takes an exclusive lock on
-`usage.lock` in the cache directory, without waiting. Holding the lock, it
+`usage.lock` in the gate directory, without waiting. Holding the lock, it
 checks the gate, moves the gate 200 s ahead, sends the request, records the
 result and releases the lock. A session that cannot write the gate sends no
 request. A gate file that exists but cannot be read, or holds no time, is
@@ -283,14 +290,14 @@ without waiting. A session killed while holding the lock frees it at once;
 the gate it wrote still holds the next fetch until it passes. A stopped
 session (suspended, or paused in a debugger) keeps the lock, and the others
 keep showing cached numbers until it continues or exits. A session that
-cannot create or lock the file (a read-only cache directory, for example)
+cannot create or lock the file (a read-only gate directory, for example)
 does not fetch. Releases up to 0.3.1 do not take the lock; they still
 honour the gate. Only a plain file at `usage.lock` is locked: if that name
 is a link, a folder or a special file, no session fetches until it is
-replaced by a plain file, and the entry is left as it is. The cache
+replaced by a plain file, and the entry is left as it is. The gate
 directory is created with mode 0700 when missing, and is assumed to be
 yours: anyone who can write to it can stop the fetch or defeat the lock.
-The lock needs the cache directory on a local disk. When
+The lock needs the gate directory on a local disk. When
 several accounts are in use, one account can wait more than one opening for
 its own fetch while another account's session wins; there is no
 wall-clock bound on that wait.

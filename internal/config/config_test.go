@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,27 @@ import (
 
 	"github.com/mitre/claude-statusline/internal/render"
 )
+
+// TestMain points the process environment that Default and Load read the
+// per-user cache dir from (HOME, XDG_CACHE_HOME) at a temporary directory,
+// so no test resolves the developer's real cache.
+func TestMain(m *testing.M) {
+	os.Exit(sandboxed(m))
+}
+
+func sandboxed(m *testing.M) int {
+	dir, err := os.MkdirTemp("", "config-test-home-")
+	if err != nil {
+		panic(err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	for k, v := range map[string]string{"HOME": dir, "XDG_CACHE_HOME": filepath.Join(dir, ".cache")} {
+		if err := os.Setenv(k, v); err != nil {
+			panic(err)
+		}
+	}
+	return m.Run()
+}
 
 func TestLoadMissingFileGivesDefaults(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
@@ -471,5 +493,37 @@ func TestLoadUsageTTLSeconds(t *testing.T) {
 		if cfg, _ := Load(write("ok-"+ok+".toml", "[usage]\nttl_seconds = "+ok+"\n")); len(cfg.Diagnostics) != 0 {
 			t.Errorf("ttl_seconds=%s is valid and must produce no diagnostic: %q", ok, cfg.Diagnostics)
 		}
+	}
+}
+
+func TestGateDirIsTheDefaultCacheDirForTheSameBase(t *testing.T) {
+	// Every session's gate is where a default-config session keeps it, so
+	// a session with its own [cache] dir and a default one wait on the
+	// same gate.
+	if got, want := GateDir(os.UserCacheDir, "/elsewhere"), Default().CacheDir; got != want {
+		t.Errorf("GateDir = %q, want the default cache dir %q", got, want)
+	}
+}
+
+func TestGateDirStaysInTheConfiguredDirWhenTheBaseIsUnresolved(t *testing.T) {
+	const configured = "/configured/cache"
+	for name, base := range map[string]func() (string, error){
+		"error":        func() (string, error) { return "/ignored", errors.New("no home") },
+		"empty":        func() (string, error) { return "", nil },
+		"relative":     func() (string, error) { return "relative/cache", nil },
+		"dot-relative": func() (string, error) { return "./cache", nil },
+	} {
+		if got := GateDir(base, configured); got != configured {
+			t.Errorf("%s base: GateDir = %q, want the configured dir %q", name, got, configured)
+		}
+	}
+}
+
+func TestGateDirWithoutABaseEdgeStaysInTheConfiguredDir(t *testing.T) {
+	// No edge is not the process's own cache dir: the gate stays where the
+	// configuration puts it.
+	const configured = "/configured/cache"
+	if got := GateDir(nil, configured); got != configured {
+		t.Errorf("GateDir(nil) = %q, want the configured dir %q", got, configured)
 	}
 }

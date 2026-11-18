@@ -302,8 +302,8 @@ type Owner struct {
 // written. current reports the owner after any fetch attempt; if it
 // differs from owner (a /login during the request), nothing is returned or
 // cached: neither the response nor the cached payload.
-func Resolve(cacheDir string, owner Owner, current func() Owner, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) (raw []byte, staleFor time.Duration, ok bool) {
-	return resolve(osGateFS(cacheDir), cacheDir, owner, current, ttl, now, fetch)
+func Resolve(gateDir, cacheDir string, owner Owner, current func() Owner, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) (raw []byte, staleFor time.Duration, ok bool) {
+	return resolve(osGateFS(gateDir), cacheDir, owner, current, ttl, now, fetch)
 }
 
 // resolve is Resolve with the gate and the fetch lock reached through g.
@@ -410,7 +410,15 @@ type gateFS struct {
 func osGateFS(dir string) gateFS {
 	gate := filepath.Join(dir, nextAttemptFile)
 	return gateFS{
-		lock: func() (func(), error) { return lockFetch(dir) },
+		lock: func() (func(), error) {
+			// Created only when a fetch is wanted, after the owner check: a
+			// render without an owner touches nothing. A directory that
+			// cannot be created takes no lock, so it authorizes no fetch.
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				return nil, err
+			}
+			return lockFetch(dir)
+		},
 		read: func() (string, error) {
 			root, err := os.OpenRoot(dir)
 			if err != nil {

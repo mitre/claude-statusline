@@ -67,6 +67,16 @@ linters:
       - path: _test\.go
         linters: [gosec]
         text: "G703"
+      # The fetch gate's directory is created when a render first takes the
+      # fetch lock. Its path comes from os.UserCacheDir or the [cache] dir
+      # setting; the only taint source gosec finds is the separate-process
+      # test helper's USAGE_HELPER_DIR variable, which reaches this call
+      # through Resolve (lint with --tests=false reports nothing). Only this
+      # one call is excluded; every other path in the file stays checked.
+      - path: internal/usage/usage\.go
+        linters: [gosec]
+        text: "G703"
+        source: 'os\.MkdirAll\(dir, 0o700\)'
 
 formatters:
   enable:

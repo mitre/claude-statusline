@@ -97,6 +97,8 @@ cyan = "6"   # model name
 # Cache location. Defaults to the platform user-cache dir (on macOS:
 # /Users/you/Library/Caches/claude-statusline); set an ABSOLUTE path to
 # override — "~" is not expanded. Caches are disposable: deleting the
-# directory costs one cold render.
+# directory costs one cold render. The usage fetch gate and its lock stay in
+# the platform user-cache dir whatever this says, so every session waits on
+# the same gate.
 [cache]
 # dir = "/absolute/path/to/cache"

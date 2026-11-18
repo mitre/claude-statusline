@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A session whose `[cache] dir` pointed elsewhere kept its own usage fetch
+  gate and lock there, and fetched on its own schedule alongside the other
+  sessions. The gate and its lock now live in the platform user-cache dir
+  for every session; payloads still follow `[cache] dir`. When the
+  user-cache dir cannot be determined, they stay in `[cache] dir`.
 - After the system clock moved back, the usage fetch gate could sit hours
   ahead and no session fetched until the clock caught up. A gate more than
   2 hours ahead now counts as open: no hold this code writes is longer than
