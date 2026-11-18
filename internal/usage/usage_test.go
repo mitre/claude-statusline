@@ -766,7 +766,7 @@ var testOwner = Owner{Account: "acct-A", Fingerprint: "fp-A"}
 
 // resolveAs runs Resolve as testOwner, with the owner unchanged by the fetch.
 func resolveAs(dir string, ttl time.Duration, now time.Time, fetch func() ([]byte, error)) ([]byte, time.Duration, bool) {
-	return Resolve(dir, testOwner, func() Owner { return testOwner }, ttl, now, fetch)
+	return Resolve(dir, dir, testOwner, func() Owner { return testOwner }, ttl, now, fetch)
 }
 
 var (
@@ -797,11 +797,11 @@ func closeGate(t *testing.T, dir string) {
 func TestResolvePayloadIsKeyedByAccount(t *testing.T) {
 	dir := t.TempDir()
 	realNow := time.Now()
-	if _, _, ok := Resolve(dir, ownerA, as(ownerA), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil }); !ok {
+	if _, _, ok := Resolve(dir, dir, ownerA, as(ownerA), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil }); !ok {
 		t.Fatal("A's fetch not served")
 	}
 	// The gate is now shut for everyone; B has no payload of its own.
-	if got, _, ok := Resolve(dir, ownerB, as(ownerB), time.Hour, realNow, noFetch(t)); ok {
+	if got, _, ok := Resolve(dir, dir, ownerB, as(ownerB), time.Hour, realNow, noFetch(t)); ok {
 		t.Errorf("B was served A's payload: %q", got)
 	}
 }
@@ -811,9 +811,9 @@ func TestResolveServesPayloadOnlyToTheTokenThatFetchedIt(t *testing.T) {
 	// not yet the record, or the reverse): the payload is not served.
 	dir := t.TempDir()
 	realNow := time.Now()
-	Resolve(dir, ownerA, as(ownerA), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil })
+	Resolve(dir, dir, ownerA, as(ownerA), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil })
 	otherToken := Owner{Account: ownerA.Account, Fingerprint: ownerB.Fingerprint}
-	if got, _, ok := Resolve(dir, otherToken, as(otherToken), time.Hour, realNow, noFetch(t)); ok {
+	if got, _, ok := Resolve(dir, dir, otherToken, as(otherToken), time.Hour, realNow, noFetch(t)); ok {
 		t.Errorf("payload served to another token: %q", got)
 	}
 	// Fresh and stale alike: age the file past the TTL.
@@ -822,28 +822,92 @@ func TestResolveServesPayloadOnlyToTheTokenThatFetchedIt(t *testing.T) {
 	for _, f := range files {
 		_ = os.Chtimes(f, old, old)
 	}
-	if got, _, ok := Resolve(dir, otherToken, as(otherToken), time.Hour, realNow, noFetch(t)); ok {
+	if got, _, ok := Resolve(dir, dir, otherToken, as(otherToken), time.Hour, realNow, noFetch(t)); ok {
 		t.Errorf("stale payload served to another token: %q", got)
 	}
-	if _, staleFor, ok := Resolve(dir, ownerA, as(ownerA), time.Hour, realNow, noFetch(t)); !ok || staleFor == 0 {
+	if _, staleFor, ok := Resolve(dir, dir, ownerA, as(ownerA), time.Hour, realNow, noFetch(t)); !ok || staleFor == 0 {
 		t.Errorf("owner's own stale payload must still serve with its age: ok=%v staleFor=%v", ok, staleFor)
 	}
 }
 
 func TestResolveWithoutAnOwnerTouchesNothing(t *testing.T) {
-	// No account record or no readable token: no fetch, no read, no write.
+	// No account record or no readable token: no fetch, no read, no write,
+	// and the gate directory is not created.
 	for _, o := range []Owner{{}, {Account: ownerA.Account}, {Fingerprint: ownerA.Fingerprint}} {
 		dir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(dir, "usage"), []byte(goodPayload), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if got, _, ok := Resolve(dir, o, as(o), time.Hour, time.Now(), noFetch(t)); ok {
+		gateDir := filepath.Join(t.TempDir(), "gate")
+		if got, _, ok := Resolve(gateDir, dir, o, as(o), time.Hour, time.Now(), noFetch(t)); ok {
 			t.Errorf("owner %+v was served %q", o, got)
 		}
 		entries, _ := os.ReadDir(dir)
 		if len(entries) != 1 {
 			t.Errorf("owner %+v wrote files: %v", o, entries)
 		}
+		if _, err := os.Lstat(gateDir); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("owner %+v created the gate directory: %v", o, err)
+		}
+	}
+}
+
+// names lists dir's entries.
+func names(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, e := range entries {
+		out = append(out, e.Name())
+	}
+	return out
+}
+
+func TestResolveKeepsTheGateApartFromThePayload(t *testing.T) {
+	// The gate and the lock are created in the gate directory, which is
+	// created owner-only; the payload stays in the payload directory. A
+	// render with another payload directory waits on that same gate.
+	gateDir := filepath.Join(t.TempDir(), "gate")
+	payloadA, payloadB := t.TempDir(), t.TempDir()
+	if _, _, ok := Resolve(gateDir, payloadA, ownerA, as(ownerA), time.Hour, time.Now(), func() ([]byte, error) { return []byte(goodPayload), nil }); !ok {
+		t.Fatal("first render served nothing")
+	}
+	if got, want := names(t, gateDir), []string{lockFile, nextAttemptFile}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("gate directory holds %v, want %v", got, want)
+	}
+	if st, err := os.Stat(gateDir); err != nil || st.Mode().Perm() != 0o700 {
+		t.Errorf("gate directory mode: %v (%v), want 0700", st.Mode().Perm(), err)
+	}
+	if got, want := names(t, payloadA), []string{filepath.Base(payloadPath(payloadA, ownerA))}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("payload directory holds %v, want %v", got, want)
+	}
+	if got, _, ok := Resolve(gateDir, payloadB, ownerB, as(ownerB), time.Hour, time.Now(), noFetch(t)); ok {
+		t.Errorf("served %q with no payload of its own", got)
+	}
+	if got := names(t, payloadB); len(got) != 0 {
+		t.Errorf("the gate or lock went to the other payload directory: %v", got)
+	}
+}
+
+func TestResolveGateDirThatCannotBeCreatedAuthorizesNoFetch(t *testing.T) {
+	// The gate directory resolves but cannot be created (a file sits in its
+	// path): no lock, so no fetch, and the render still serves its own
+	// payload.
+	realNow := time.Now().Truncate(time.Second)
+	dir := staleFixture(t, realNow)
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, staleFor, ok := Resolve(filepath.Join(blocker, "gate"), dir, testOwner, as(testOwner), time.Minute, realNow, noFetch(t))
+	if !ok || string(got) != goodPayload || staleFor == 0 {
+		t.Errorf("own stale payload not served: ok=%v staleFor=%v got=%q", ok, staleFor, got)
+	}
+	if got := names(t, dir); len(got) != 1 {
+		t.Errorf("the gate or lock went to the payload directory: %v", got)
 	}
 }
 
@@ -853,7 +917,7 @@ func TestResolveNeverReadsTheLegacyPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	closeGate(t, dir)
-	if got, _, ok := Resolve(dir, ownerA, as(ownerA), time.Hour, time.Now(), noFetch(t)); ok {
+	if got, _, ok := Resolve(dir, dir, ownerA, as(ownerA), time.Hour, time.Now(), noFetch(t)); ok {
 		t.Errorf("legacy unkeyed payload was served: %q", got)
 	}
 }
@@ -865,7 +929,7 @@ func TestResolveDiscardsAFetchWhenTheOwnerChangesDuringIt(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			got, _, ok := Resolve(dir, ownerA, as(after), time.Hour, time.Now(), func() ([]byte, error) { return []byte(goodPayload), nil })
+			got, _, ok := Resolve(dir, dir, ownerA, as(after), time.Hour, time.Now(), func() ([]byte, error) { return []byte(goodPayload), nil })
 			if ok {
 				t.Errorf("a response fetched across an owner change was rendered: %q", got)
 			}
@@ -878,7 +942,7 @@ func TestResolveDiscardsAFetchWhenTheOwnerChangesDuringIt(t *testing.T) {
 
 func TestResolveCacheFilesCarryNoAccountID(t *testing.T) {
 	dir := t.TempDir()
-	Resolve(dir, ownerA, as(ownerA), time.Hour, time.Now(), func() ([]byte, error) { return []byte(goodPayload), nil })
+	Resolve(dir, dir, ownerA, as(ownerA), time.Hour, time.Now(), func() ([]byte, error) { return []byte(goodPayload), nil })
 	entries, _ := os.ReadDir(dir)
 	var names []string
 	for _, e := range entries {
@@ -906,7 +970,7 @@ func TestResolveAccountsInterleaved(t *testing.T) {
 			t.Run(fmt.Sprintf("%s, A stale=%v", name, aStale), func(t *testing.T) {
 				dir := t.TempDir()
 				realNow := time.Now().Truncate(time.Second)
-				Resolve(dir, ownerA, as(ownerA), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil })
+				Resolve(dir, dir, ownerA, as(ownerA), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil })
 				if aStale {
 					old := realNow.Add(-2 * time.Hour)
 					files, _ := filepath.Glob(filepath.Join(dir, "usage-*"))
@@ -916,7 +980,7 @@ func TestResolveAccountsInterleaved(t *testing.T) {
 				}
 				// B's turn: open the gate so B's fetch runs.
 				_ = os.Remove(filepath.Join(dir, nextAttemptFile))
-				gotB, _, okB := Resolve(dir, ownerB, as(ownerB), time.Hour, realNow, bFetch)
+				gotB, _, okB := Resolve(dir, dir, ownerB, as(ownerB), time.Hour, realNow, bFetch)
 				if okB && string(gotB) == goodPayload {
 					t.Fatalf("B was served A's payload")
 				}
@@ -924,7 +988,7 @@ func TestResolveAccountsInterleaved(t *testing.T) {
 					t.Errorf("B's own fetch not served: ok=%v", okB)
 				}
 				// A again, gate shut by B's attempt: A's own payload only.
-				gotA, staleFor, okA := Resolve(dir, ownerA, as(ownerA), time.Hour, realNow, noFetch(t))
+				gotA, staleFor, okA := Resolve(dir, dir, ownerA, as(ownerA), time.Hour, realNow, noFetch(t))
 				if !okA || string(gotA) != goodPayload {
 					t.Fatalf("A lost its own payload: ok=%v got=%q", okA, gotA)
 				}
@@ -962,13 +1026,13 @@ func TestResolveTwoTokensOfOneAccountKeepTheirOwnPayloads(t *testing.T) {
 	realNow := time.Now()
 	tok1 := Owner{Account: ownerA.Account, Fingerprint: "1111111111111111"}
 	tok2 := Owner{Account: ownerA.Account, Fingerprint: "2222222222222222"}
-	Resolve(dir, tok1, as(tok1), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil })
+	Resolve(dir, dir, tok1, as(tok1), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil })
 	_ = os.Remove(filepath.Join(dir, nextAttemptFile))
-	Resolve(dir, tok2, as(tok2), time.Hour, realNow, func() ([]byte, error) { return []byte(payloadB), nil })
-	if got, _, ok := Resolve(dir, tok1, as(tok1), time.Hour, realNow, noFetch(t)); !ok || string(got) != goodPayload {
+	Resolve(dir, dir, tok2, as(tok2), time.Hour, realNow, func() ([]byte, error) { return []byte(payloadB), nil })
+	if got, _, ok := Resolve(dir, dir, tok1, as(tok1), time.Hour, realNow, noFetch(t)); !ok || string(got) != goodPayload {
 		t.Errorf("token 1 lost its payload to token 2: ok=%v", ok)
 	}
-	if got, _, ok := Resolve(dir, tok2, as(tok2), time.Hour, realNow, noFetch(t)); !ok || string(got) != payloadB {
+	if got, _, ok := Resolve(dir, dir, tok2, as(tok2), time.Hour, realNow, noFetch(t)); !ok || string(got) != payloadB {
 		t.Errorf("token 2 lost its payload: ok=%v", ok)
 	}
 }
@@ -992,14 +1056,14 @@ func TestResolveServesNothingWhenTheOwnerChangesDuringAFailedFetch(t *testing.T)
 			t.Run(fname+", "+cname, func(t *testing.T) {
 				dir := t.TempDir()
 				realNow := time.Now()
-				Resolve(dir, ownerA, as(ownerA), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil })
+				Resolve(dir, dir, ownerA, as(ownerA), time.Hour, realNow, func() ([]byte, error) { return []byte(goodPayload), nil })
 				old := realNow.Add(-2 * time.Hour)
 				files, _ := filepath.Glob(filepath.Join(dir, "usage-*"))
 				for _, f := range files {
 					_ = os.Chtimes(f, old, old)
 				}
 				_ = os.Remove(filepath.Join(dir, nextAttemptFile))
-				if got, _, ok := Resolve(dir, ownerA, as(after), time.Hour, realNow, fail); ok {
+				if got, _, ok := Resolve(dir, dir, ownerA, as(after), time.Hour, realNow, fail); ok {
 					t.Errorf("served the previous owner's payload: %q", got)
 				}
 			})
@@ -1017,6 +1081,9 @@ const (
 	helperLog   = "USAGE_HELPER_LOG"
 	helperFetch = "USAGE_HELPER_FETCH"
 	helperChild = "USAGE_HELPER_CHILD"
+	// helperPayload is the render's payload directory; unset, the payload
+	// shares the gate directory.
+	helperPayload = "USAGE_HELPER_PAYLOAD"
 	// helperSupervise starts the process that leads the renders' group.
 	helperSupervise = "USAGE_HELPER_SUPERVISE"
 )
@@ -1075,7 +1142,11 @@ func TestResolveHelperProcess(t *testing.T) {
 		time.Sleep(300 * time.Millisecond)
 		return []byte(goodPayload), nil
 	}
-	Resolve(dir, owner, as(owner), time.Hour, time.Now(), fetch)
+	payloadDir := os.Getenv(helperPayload)
+	if payloadDir == "" {
+		payloadDir = dir
+	}
+	Resolve(dir, payloadDir, owner, as(owner), time.Hour, time.Now(), fetch)
 }
 
 // startChild starts a process from inside a render's fetch, the way the
@@ -1096,11 +1167,12 @@ func startChild(t *testing.T, log string) {
 }
 
 // helperRender describes one separate-process render: the account it runs
-// as ("A" or "B") and its fetch mode (see TestResolveHelperProcess); an
-// empty mode answers.
+// as ("A" or "B"), its fetch mode (see TestResolveHelperProcess; an empty
+// mode answers) and its payload directory (empty: the gate directory).
 type helperRender struct {
-	owner string
-	fetch string
+	owner   string
+	fetch   string
+	payload string
 }
 
 // startRenders starts one held render per entry, logging to log. The
@@ -1144,7 +1216,7 @@ func startRenders(t *testing.T, dir, log string, renders []helperRender) []*exec
 		}
 		cmd.Env = append(os.Environ(),
 			helperDir+"="+dir, helperLog+"="+log, helperOwner+"="+r.owner,
-			helperFetch+"="+fetch)
+			helperFetch+"="+fetch, helperPayload+"="+r.payload)
 		out := &strings.Builder{}
 		cmd.Stdout, cmd.Stderr = out, out
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: supervisor.Process.Pid}
@@ -1231,6 +1303,33 @@ func TestResolveSixRendersOfTwoAccountsFetchOnce(t *testing.T) {
 	}
 	if n := renderTogether(t, dir, renders...); n != 1 {
 		t.Errorf("%d renders fetched through one gate opening, want exactly 1", n)
+	}
+}
+
+func TestResolveSixRendersWithTheirOwnPayloadDirsFetchOnce(t *testing.T) {
+	// Two accounts, each with its own payload directory, share one gate
+	// directory that does not exist yet. Six renders reach the open gate
+	// together: exactly one fetches. The gate and the lock are only in the
+	// gate directory, and the one payload is in its own render's payload
+	// directory.
+	gateDir := filepath.Join(t.TempDir(), "gate")
+	payloadA, payloadB := t.TempDir(), t.TempDir()
+	var renders []helperRender
+	for range 3 {
+		renders = append(renders, helperRender{owner: "A", payload: payloadA}, helperRender{owner: "B", payload: payloadB})
+	}
+	if n := renderTogether(t, gateDir, renders...); n != 1 {
+		t.Errorf("%d renders fetched through one gate opening, want exactly 1", n)
+	}
+	if got, want := names(t, gateDir), []string{lockFile, nextAttemptFile}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("gate directory holds %v, want %v", got, want)
+	}
+	a, b := names(t, payloadA), names(t, payloadB)
+	wantA, wantB := filepath.Base(payloadPath(payloadA, ownerA)), filepath.Base(payloadPath(payloadB, ownerB))
+	aFetched := len(a) == 1 && a[0] == wantA && len(b) == 0
+	bFetched := len(b) == 1 && b[0] == wantB && len(a) == 0
+	if !aFetched && !bFetched {
+		t.Errorf("want the one payload in its own render's directory: A holds %v, B holds %v", a, b)
 	}
 }
 
@@ -1497,7 +1596,7 @@ func TestResolveFailedRecordLeavesThePreRequestGate(t *testing.T) {
 	if got, _, ok := resolveAs(dir, time.Hour, realNow, noFetch(t)); !ok || string(got) != goodPayload {
 		t.Errorf("the response was not cached: ok=%v got=%q", ok, got)
 	}
-	if got, _, ok := Resolve(dir, ownerB, as(ownerB), time.Hour, realNow.Add(time.Second), noFetch(t)); ok {
+	if got, _, ok := Resolve(dir, dir, ownerB, as(ownerB), time.Hour, realNow.Add(time.Second), noFetch(t)); ok {
 		t.Errorf("B was served %q with no payload of its own", got)
 	}
 }

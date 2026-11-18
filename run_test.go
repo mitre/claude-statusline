@@ -30,7 +30,13 @@ const (
 
 func e2eDeps(t testing.TB, stdinFixture string) deps {
 	t.Helper()
+	// config.Load and config.Default resolve the default cache dir from the
+	// process environment: point it away from the developer's real cache.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	cacheDir := t.TempDir()
+	// The per-user cache base the shared fetch gate lives under.
+	gateBase := t.TempDir()
 	cfgPath := filepath.Join(t.TempDir(), "statusline.toml")
 	// The fake runners below are CLI runners — pin the CLI engine. This also
 	// proves the config→engine wiring: if cfg.GitEngine never reached
@@ -71,8 +77,9 @@ func e2eDeps(t testing.TB, stdinFixture string) deps {
 		},
 		tokenFingerprint: func() (string, error) { return e2eFingerprint, nil },
 		// Hermetic: no legacy account record and no Antigravity config exist.
-		stat:    func(string) (os.FileInfo, error) { return nil, os.ErrNotExist },
-		readDir: func(string) ([]os.DirEntry, error) { return nil, os.ErrNotExist },
+		stat:         func(string) (os.FileInfo, error) { return nil, os.ErrNotExist },
+		readDir:      func(string) ([]os.DirEntry, error) { return nil, os.ErrNotExist },
+		userCacheDir: func() (string, error) { return gateBase, nil },
 	}
 }
 
@@ -1123,5 +1130,65 @@ func TestRunTokenSessionWithoutASavedLoginShowsStdinWindows(t *testing.T) {
 	}
 	if !strings.Contains(out, "account") || !strings.Contains(out, "5h 42%") {
 		t.Errorf("token session without a saved login must show its stdin windows: %q", out)
+	}
+}
+
+func TestRunOverriddenCacheDirSharesTheFetchGate(t *testing.T) {
+	// A session with its own [cache] dir still waits on the gate every
+	// session shares: once a render has fetched, a render with another
+	// [cache] dir does not fetch before the gate opens, and shows the
+	// session's own numbers.
+	first := e2eDeps(t, "full.json")
+	firstFetches := 0
+	first.fetchUsage = func(string) ([]byte, error) { firstFetches++; return []byte(e2eUsagePayload), nil }
+	if _, errOut := run(first); errOut != "" {
+		t.Fatalf("unexpected stderr: %q", errOut)
+	}
+	if firstFetches != 1 {
+		t.Fatalf("the first render fetched %d times through an open gate, want 1", firstFetches)
+	}
+
+	other := e2eDeps(t, "full.json")
+	other.userCacheDir = first.userCacheDir
+	otherFetches := 0
+	other.fetchUsage = func(string) ([]byte, error) { otherFetches++; return []byte(e2eUsagePayload), nil }
+	out, errOut := run(other)
+	if errOut != "" {
+		t.Fatalf("unexpected stderr: %q", errOut)
+	}
+	if otherFetches != 0 {
+		t.Errorf("a render with another [cache] dir fetched %d times while the shared gate was shut", otherFetches)
+	}
+	if !strings.Contains(out, "5h 42%") || !strings.Contains(out, "week 77%") {
+		t.Errorf("the session's own numbers must render: %q", out)
+	}
+	for _, name := range []string{"usage.next-attempt", "usage.lock"} {
+		if _, err := os.Lstat(filepath.Join(e2eCacheDir(t, other), name)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s in the configured [cache] dir: %v", name, err)
+		}
+	}
+}
+
+func TestRunGateDirThatCannotBeCreatedFetchesNothing(t *testing.T) {
+	// The per-user cache base resolves, but this program's directory under
+	// it cannot be created (a file sits at the base): no fetch, and the
+	// session's own numbers still render.
+	d := e2eDeps(t, "full.json")
+	base := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(base, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d.userCacheDir = func() (string, error) { return base, nil }
+	fetches := 0
+	d.fetchUsage = func(string) ([]byte, error) { fetches++; return []byte(e2eUsagePayload), nil }
+	out, errOut := run(d)
+	if errOut != "" {
+		t.Fatalf("unexpected stderr: %q", errOut)
+	}
+	if fetches != 0 {
+		t.Errorf("fetched %d times without the gate directory", fetches)
+	}
+	if !strings.Contains(out, "5h 42%") || !strings.Contains(out, "week 77%") {
+		t.Errorf("the session's own numbers must render: %q", out)
 	}
 }

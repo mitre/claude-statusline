@@ -52,6 +52,7 @@ func main() {
 		readFile:         os.ReadFile,
 		stat:             os.Stat,
 		readDir:          os.ReadDir,
+		userCacheDir:     os.UserCacheDir,
 		now:              time.Now,
 	})
 	if diag != "" {

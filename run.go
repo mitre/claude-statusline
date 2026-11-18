@@ -41,6 +41,11 @@ type deps struct {
 	// readDir lists a directory for the account resolver's exact-name
 	// check on the legacy record; nil means os.ReadDir.
 	readDir func(string) ([]os.DirEntry, error)
+	// userCacheDir is the base of the per-user cache dir (os.UserCacheDir),
+	// where every session's fetch gate and lock live whatever [cache] dir
+	// says. nil, an error, or an empty or relative base leaves them in the
+	// configured [cache] dir; nil never falls back to os.UserCacheDir.
+	userCacheDir func() (string, error)
 	// now is the render's clock, handed to the usage resolver and parser
 	// (reset-boundary expiry, stale age, reset labels); nil means time.Now.
 	// The fetch gate reads the wall clock when it decides, and the TTL check
@@ -181,7 +186,8 @@ func run(d deps) (string, string) {
 			current := func() usage.Owner { return owner(account.Resolve(d.getenv, fsys).AccountUUID) }
 			start := owner(id.AccountUUID)
 			fetch := func() ([]byte, error) { return d.fetchUsage(start.Fingerprint) }
-			if raw, staleFor, ok := usage.Resolve(cfg.CacheDir, start, current, ttl, now, fetch); ok {
+			gateDir := config.GateDir(d.userCacheDir, cfg.CacheDir)
+			if raw, staleFor, ok := usage.Resolve(gateDir, cfg.CacheDir, start, current, ttl, now, fetch); ok {
 				if p, uerr := usage.Parse(raw, now, sess.ModelName); uerr == nil {
 					u, have = p, true
 					u.DataAge = staleFor

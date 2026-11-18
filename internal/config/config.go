@@ -137,7 +137,28 @@ func defaultCacheDir() string {
 	if err != nil {
 		base = os.TempDir()
 	}
+	return cacheDirIn(base)
+}
+
+// cacheDirIn is this program's directory under a per-user cache base.
+func cacheDirIn(base string) string {
 	return filepath.Join(base, "claude-statusline")
+}
+
+// GateDir is the directory of the shared usage fetch gate and its lock:
+// this program's directory under the per-user cache base that base
+// reports, whatever [cache] dir says, so every session waits on one gate.
+// A base that is not resolved (no edge, an error, an empty or relative
+// path) leaves the gate in the configured dir.
+func GateDir(base func() (string, error), configured string) string {
+	if base == nil {
+		return configured
+	}
+	b, err := base()
+	if err != nil || !filepath.IsAbs(b) {
+		return configured
+	}
+	return cacheDirIn(b)
 }
 
 // Load reads path if it exists and overlays it onto defaults. A missing file
