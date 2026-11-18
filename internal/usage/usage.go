@@ -33,6 +33,12 @@ const MinFetchInterval = 200 * time.Second
 // off: a longer value, or one sent in error, is cut to an hour.
 const MaxRetryAfter = time.Hour
 
+// staleGateAhead is how far ahead of the clock a gate must be to count as
+// left by a clock that moved back: no hold this code writes is more than
+// MaxRetryAfter ahead, and the extra hour keeps a legitimate hold in place
+// through a clock step back of under an hour.
+const staleGateAhead = MaxRetryAfter + time.Hour
+
 // RetryAfterError reports that the endpoint rate-limited the fetch. After is
 // the server's Retry-After interval, zero when the response carried none.
 type RetryAfterError struct {
@@ -530,11 +536,10 @@ func fetchUnderLock(g gateFS, fetch func() ([]byte, error)) (b []byte, sent bool
 		_ = writeGate(g, now.Add(MinFetchInterval))
 		return nil, false, nil
 	}
-	// No hold this code writes is more than MaxRetryAfter ahead: a gate
-	// further ahead was written on a clock that has since moved back, and
-	// counts as open rather than holding every render off until the clock
-	// catches up.
-	held := now.Before(at) && at.Sub(now) <= MaxRetryAfter
+	// A gate more than staleGateAhead ahead was left by a clock that has
+	// since moved back, and counts as open rather than holding every
+	// render off until the clock catches up.
+	held := now.Before(at) && at.Sub(now) <= staleGateAhead
 	if held || writeGate(g, now.Add(MinFetchInterval)) != nil {
 		return nil, false, nil
 	}
