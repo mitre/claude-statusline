@@ -321,3 +321,68 @@ func TestFetchUsageSendsNoRequestForAnotherToken(t *testing.T) {
 		t.Fatal("fetchUsage = nil error; want a credential-changed failure")
 	}
 }
+
+// retryNow is a whole-second instant: an HTTP-date carries whole seconds.
+var retryNow = time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
+
+func TestRetryAfterParsesHTTPDate(t *testing.T) {
+	header := retryNow.Add(90 * time.Second).Format(http.TimeFormat)
+	if got := retryAfter(header, retryNow); got != 90*time.Second {
+		t.Errorf("retryAfter(%q) = %v, want 90s", header, got)
+	}
+}
+
+func TestRetryAfterReadsBothFormsAndRejectsTheRest(t *testing.T) {
+	// RFC 9110 §10.2.3: Retry-After is an HTTP-date or delay-seconds
+	// (1*DIGIT). Anything else, and any value that gives no wait, is 0, which
+	// the resolver reads as "apply the floor".
+	later := retryNow.Add(150 * time.Second)
+	for _, tc := range []struct {
+		header string
+		want   time.Duration
+	}{
+		{"120", 120 * time.Second},
+		{" 120 ", 120 * time.Second},
+		{later.Format(http.TimeFormat), 150 * time.Second},
+		{later.Format(time.RFC850), 150 * time.Second},
+		{later.Format(time.ANSIC), 150 * time.Second},
+		{"99999999", 99999999 * time.Second},
+		{"", 0},
+		{"soon", 0},
+		{"+120", 0},
+		{"-120", 0},
+		{"1.5", 0},
+		{"0", 0},
+		{"9223372037", 0},
+		{"99999999999999999999", 0},
+		{retryNow.Format(http.TimeFormat), 0},
+		{retryNow.Add(-time.Minute).Format(http.TimeFormat), 0},
+	} {
+		if got := retryAfter(tc.header, retryNow); got != tc.want {
+			t.Errorf("retryAfter(%q) = %v, want %v", tc.header, got, tc.want)
+		}
+	}
+}
+
+func TestFetchUsage429WithHTTPDateRetryAfter(t *testing.T) {
+	// The date form is measured from when the response arrives: the wait is
+	// the header's date minus the moment it was parsed, which lies between
+	// the readings taken before and after the call.
+	at := time.Now().Add(90 * time.Second).Truncate(time.Second)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", at.UTC().Format(http.TimeFormat))
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	pointUsageAt(t, srv.URL)
+	before := time.Now()
+	_, err := fetchUsage(fileCreds(t, "fixture-access-e2e"), fingerprintOf("fixture-access-e2e"))
+	after := time.Now()
+	var ra *usage.RetryAfterError
+	if !errors.As(err, &ra) {
+		t.Fatalf("fetchUsage error = %v; want *usage.RetryAfterError", err)
+	}
+	if ra.After < at.Sub(after) || ra.After > at.Sub(before) {
+		t.Errorf("RetryAfterError.After = %v, want between %v and %v", ra.After, at.Sub(after), at.Sub(before))
+	}
+}

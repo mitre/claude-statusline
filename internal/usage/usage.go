@@ -29,6 +29,10 @@ import (
 // retried on the next render. Config enforces the same floor on ttl_seconds.
 const MinFetchInterval = 200 * time.Second
 
+// MaxRetryAfter bounds how long a server's Retry-After can hold fetching
+// off: a longer value, or one sent in error, is cut to an hour.
+const MaxRetryAfter = time.Hour
+
 // RetryAfterError reports that the endpoint rate-limited the fetch. After is
 // the server's Retry-After interval, zero when the response carried none.
 type RetryAfterError struct {
@@ -277,8 +281,11 @@ type Owner struct {
 //
 // Fetch attempts are throttled independently of the TTL: once an attempt is
 // made — success, network error, rate limit or a rejected body alike — no
-// further attempt happens before MinFetchInterval has passed (or the
-// server's Retry-After, when longer). Renders in between serve the cache.
+// further attempt happens before MinFetchInterval has passed since the
+// response (or the server's Retry-After, when longer, up to MaxRetryAfter).
+// Renders in between serve the cache. Every gate time is read from the gate
+// edge's clock; now serves only the payload (freshness, reset labels, stale
+// age).
 // The gate is one file shared by every account. Only the render holding the
 // fetch lock fetches (see lockFetch); the others serve their cache without
 // waiting.
@@ -304,7 +311,7 @@ func resolve(g gateFS, cacheDir string, owner Owner, current func() Owner, ttl t
 			return b, 0, true
 		}
 	}
-	if b, sent, err := fetchUnderLock(g, now, fetch); sent {
+	if b, sent, err := fetchUnderLock(g, fetch); sent {
 		if current == nil || current() != owner {
 			// The record or the token changed while the request was out:
 			// neither the response nor this owner's cache is shown.
@@ -387,6 +394,10 @@ type gateFS struct {
 	read func() (contents string, err error)
 	// write replaces the gate's contents.
 	write func(contents string) error
+	// now is the clock every gate time decision reads: whether the gate is
+	// open, the gate written before the request and the hold after the
+	// response.
+	now func() time.Time
 }
 
 // osGateFS is the gate and the fetch lock in dir.
@@ -404,6 +415,7 @@ func osGateFS(dir string) gateFS {
 			return string(b), err
 		},
 		write: func(contents string) error { return cache.Write(gate, contents) },
+		now:   time.Now,
 	}
 }
 
@@ -504,12 +516,13 @@ func flock(f *os.File, how int) error {
 // lock, the lock cannot be taken, the gate is closed, or the gate cannot be
 // written: a render that sent without a written gate could not hold the
 // others off once it released the lock.
-func fetchUnderLock(g gateFS, now time.Time, fetch func() ([]byte, error)) (b []byte, sent bool, err error) {
+func fetchUnderLock(g gateFS, fetch func() ([]byte, error)) (b []byte, sent bool, err error) {
 	unlock, lerr := g.lock()
 	if lerr != nil {
 		return nil, false, nil
 	}
 	defer unlock()
+	now := g.now()
 	at, ok := readGate(g)
 	if !ok {
 		// The last hold is unknown: hold the fetch off for one floor and
@@ -521,7 +534,9 @@ func fetchUnderLock(g gateFS, now time.Time, fetch func() ([]byte, error)) (b []
 		return nil, false, nil
 	}
 	b, err = fetch()
-	recordAttempt(g, now, err)
+	// The hold runs from when the response arrived, not from when the
+	// request was sent.
+	recordAttempt(g, g.now(), err)
 	return b, true, err
 }
 
@@ -530,14 +545,15 @@ func writeGate(g gateFS, at time.Time) error {
 	return g.write(strconv.FormatInt(at.Unix(), 10))
 }
 
-// recordAttempt writes the earliest moment the next fetch may run: the floor
-// after this attempt, stretched to the server's Retry-After when that is
-// longer. A write failure leaves the previous gate in place.
+// recordAttempt writes the earliest moment the next fetch may run, counted
+// from now, when the response arrived: the floor, stretched to the server's
+// Retry-After when that is longer, up to MaxRetryAfter. A write failure
+// leaves the gate written before the request in place.
 func recordAttempt(g gateFS, now time.Time, err error) {
 	hold := MinFetchInterval
 	var ra *RetryAfterError
-	if errors.As(err, &ra) && ra.After > hold {
-		hold = ra.After
+	if errors.As(err, &ra) {
+		hold = max(MinFetchInterval, min(ra.After, MaxRetryAfter))
 	}
 	_ = writeGate(g, now.Add(hold))
 }

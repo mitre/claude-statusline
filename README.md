@@ -125,7 +125,7 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | `[account] show_stale_age` | `true` | Dim age marker when stale known-good data is served |
 | `[account] bars` | `false` | Draw each meter as a 10-segment bar like the context row (`5h ▓▓░░░░░░░░ 28%`) |
 | `[usage] enabled` | `true` | `false` skips the usage endpoint entirely |
-| `[usage] ttl_seconds` | `200` | How long a fetched payload is served before re-fetching. Floor 200 (a lower value is raised to 200, with a stderr note): the usage endpoint rate-limits faster polling, and a failed fetch is not retried before 200 s (or the server's `Retry-After`) have passed |
+| `[usage] ttl_seconds` | `200` | How long a fetched payload is served before re-fetching. Floor 200 (a lower value is raised to 200, with a stderr note): the usage endpoint rate-limits faster polling, and a failed fetch is not retried before 200 s (or the server's `Retry-After`, capped at 1 hour) have passed since the response arrived |
 | `[colors]` `red`/`green`/`yellow`/`blue`/`cyan` | `"1"`/`"2"`/`"3"`/`"4"`/`"6"` (terminal ANSI) | Remap a palette slot to an ANSI index (`"0"`–`"255"`) or a truecolor `"#rrggbb"` hex; see [Colors](#colors) |
 | `[cache] dir` | platform user-cache dir | Cache location override |
 
@@ -265,8 +265,10 @@ usage endpoint and the saved email entirely, because the saved login does
 not describe that token; they show only the session payload's numbers.
 
 **How often it fetches.** One fetch gate is shared by every session and
-account on the machine: at most one request per opening (200 s, or the
-server's `Retry-After` when longer), whichever session renders first.
+account on the machine: at most one request per opening, whichever session
+renders first. The next opening is 200 s after the response arrived, or the
+server's `Retry-After` when longer (in seconds or as an HTTP date), capped
+at 1 hour.
 Only one session fetches at a time: it first takes an exclusive lock on
 `usage.lock` in the cache directory, without waiting. Holding the lock, it
 checks the gate, moves the gate 200 s ahead, sends the request, records the
