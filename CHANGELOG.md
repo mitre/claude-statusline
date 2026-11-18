@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The extra-usage badge on the model row (`⚠ EXTRA USAGE $…`, `· extra $…`)
+  showed spend from a stale cached payload as if it were current, with no
+  age, when the usage fetch was failing. It now carries its own dim age, for
+  example `(6m old)`, also when the account row is hidden or shows only live
+  meters. `[account] show_stale_age = false` hides it with the account-row
+  marker.
 - A session whose `[cache] dir` pointed elsewhere kept its own usage fetch
   gate and lock there, and fetched on its own schedule alongside the other
   sessions. The gate and its lock now live in the platform user-cache dir

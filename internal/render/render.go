@@ -379,15 +379,25 @@ func AccountRow(u Usage, o Options) string {
 		// Identity alone is not a reading: no meter, no row.
 		return ""
 	}
-	if u.DataAge > 0 && o.Account.ShowStaleAge && (!u.MetersLive || u.ModelFamily != "") {
+	if age, stale := staleAge(u, o); stale && (!u.MetersLive || u.ModelFamily != "") {
 		// Stale-good fallback engaged: qualify the stale data with a
 		// factual, dim age — informational tier, never alarm styling (red
 		// stays reserved for billing/API alarms). MetersLive is false
 		// while a stale weekly or endpoint scoped meter is visible; the
 		// endpoint-sourced model window always qualifies.
-		parts = append(parts, dimS.Render("(data "+ageLabel(u.DataAge)+" old)"))
+		parts = append(parts, dimS.Render("(data "+age+" old)"))
 	}
 	return lbl("account") + strings.Join(parts, sepDot)
+}
+
+// staleAge reports the served payload's age label when the stale-good
+// fallback is engaged and stale ages are shown ([account] show_stale_age).
+// Every segment drawn from the endpoint payload qualifies itself with it.
+func staleAge(u Usage, o Options) (label string, stale bool) {
+	if u.DataAge <= 0 || !o.Account.ShowStaleAge {
+		return "", false
+	}
+	return ageLabel(u.DataAge), true
 }
 
 // ageLabel formats a data age at minute granularity in the activity row's
@@ -446,8 +456,20 @@ func ExtraBadge(u Usage, o Options) string {
 	}
 	cred := fmt.Sprintf("%.2f", float64(u.CreditsMinor)/math.Pow10(u.CreditsExp))
 	budgetMinor := int(math.Round(o.Model.ExtraBudget * math.Pow10(u.CreditsExp)))
+	// Spend comes only from the endpoint payload: a stale payload makes the
+	// badge stale, so it carries its own dim age (the account row may be
+	// hidden, or show only live meters and no marker). The alarm stays:
+	// spend only grows within a billing period.
+	age, stale := staleAge(u, o)
 	if u.CreditsMinor >= budgetMinor {
-		return "  " + p.alarm.Render(" ⚠ EXTRA USAGE $"+cred+" ")
+		badge := "  " + p.alarm.Render(" ⚠ EXTRA USAGE $"+cred+" ")
+		if stale {
+			badge += " " + dimS.Render("("+age+" old)")
+		}
+		return badge
+	}
+	if stale {
+		return dimS.Render(" · extra $" + cred + " (" + age + " old)")
 	}
 	return dimS.Render(" · extra $" + cred)
 }

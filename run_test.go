@@ -1201,3 +1201,46 @@ func TestRunGateDirThatCannotBeCreatedFetchesNothing(t *testing.T) {
 		t.Errorf("the session's own numbers must render: %q", out)
 	}
 }
+
+// e2eExtraSpendPayload has extra usage enabled with $12.34 spent, over the
+// default $5.00 budget, and both windows with no scoped limit.
+const e2eExtraSpendPayload = `{"five_hour": {"utilization": 5.9}, "seven_day": {"utilization": 13},
+  "extra_usage": {"is_enabled": true}, "spend": {"used": {"amount_minor": 1234, "exponent": 2}},
+  "limits": []}`
+
+func TestRunStaleExtraUsageCarriesItsAge(t *testing.T) {
+	// The extra-usage badge on the model row comes only from the endpoint
+	// payload. Served stale, it carries its own age: with the account row
+	// hidden, and with every account meter live (no account-row marker).
+	for _, c := range []struct {
+		name, stdin, config string
+		wantAccountMarker   bool
+	}{
+		{"account row hidden", e2eStdinNoRateLimits, "[rows]\naccount = false\n", false},
+		{"account meters live", "", "", false}, // full.json: both windows live
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d := e2eDeps(t, "full.json")
+			if c.config != "" {
+				appendConfig(t, d, c.config)
+			}
+			d.fetchUsage = func(string) ([]byte, error) { return nil, errors.New("network down") }
+			seedStaleUsage(t, d, e2eExtraSpendPayload)
+			if c.stdin != "" {
+				d.stdin = strings.NewReader(c.stdin)
+			}
+
+			out, errOut := run(d)
+			if errOut != "" {
+				t.Fatalf("config must parse cleanly: %q", errOut)
+			}
+			model, _, _ := strings.Cut(out, "\n")
+			if want := "⚠ EXTRA USAGE $12.34 \x1b[m \x1b[2m(6m old)\x1b[m"; !strings.Contains(model, want) {
+				t.Errorf("stale extra usage must carry its age on the model row:\n got %q\nwant %q", model, want)
+			}
+			if got := strings.Contains(out, "(data 6m old)"); got != c.wantAccountMarker {
+				t.Errorf("account-row marker present = %v, want %v: %q", got, c.wantAccountMarker, out)
+			}
+		})
+	}
+}

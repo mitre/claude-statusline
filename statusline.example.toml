@@ -69,8 +69,9 @@ email_style = "normal"
 show_resets = "always"
 # When the usage endpoint can't be reached and the last known-good payload
 # is served instead, a trailing dim "(data 6m old)" marks the served
-# payload's age. false hides the marker (the meters still show the stale
-# values either way — the marker only names their age).
+# payload's age, and a stale extra-usage badge on the model row carries its
+# own "(6m old)". false hides both (the stale values still show either way —
+# the age only names how old they are).
 show_stale_age = true
 # Draw each meter with the context row's 10-segment bar between its name and
 # percentage ("5h ▓▓░░░░░░░░ 28%"), in the meter's own threshold color.
