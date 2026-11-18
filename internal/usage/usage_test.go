@@ -1847,3 +1847,68 @@ func TestResolveCapsRetryAfterAtOneHour(t *testing.T) {
 		}
 	}
 }
+
+// setGate writes a gate opening at the given moment.
+func setGate(t *testing.T, dir string, at time.Time) {
+	t.Helper()
+	must(t, os.WriteFile(filepath.Join(dir, nextAttemptFile), []byte(strconv.FormatInt(at.Unix(), 10)), 0o600))
+}
+
+func TestResolveOpensAGateLeftFarAhead(t *testing.T) {
+	// No hold this code writes is more than MaxRetryAfter ahead, so a gate
+	// 3 h ahead was left by a clock that has since moved back by hours: it
+	// counts as open, and the attempt then sets the usual hold from the
+	// response.
+	dir := staleFixture(t, time.Now())
+	c := newGateClock()
+	setGate(t, dir, c.now().Add(3*time.Hour))
+	calls := 0
+	resolveOnClock(dir, c, func() ([]byte, error) {
+		calls++
+		c.advance(5 * time.Second)
+		return []byte(goodPayload), nil
+	})
+	if calls != 1 {
+		t.Fatalf("fetched %d times through a gate 3 h ahead, want 1", calls)
+	}
+	if at, want := gateAt(t, dir), c.now().Add(MinFetchInterval); !at.Equal(want) {
+		t.Errorf("gate after the attempt = %v, want %v", at, want)
+	}
+}
+
+func TestResolveFarAheadBoundaryIsTwoHours(t *testing.T) {
+	// A gate up to MaxRetryAfter ahead is a hold this code may have
+	// written; another hour of margin keeps such a hold through a clock
+	// step back of under an hour. Beyond that the gate counts as open.
+	for ahead, wantCalls := range map[time.Duration]int{
+		3601 * time.Second: 0,
+		7200 * time.Second: 0,
+		7201 * time.Second: 1,
+	} {
+		dir := staleFixture(t, time.Now())
+		c := newGateClock()
+		setGate(t, dir, c.now().Add(ahead))
+		calls := 0
+		resolveOnClock(dir, c, func() ([]byte, error) { calls++; return []byte(goodPayload), nil })
+		if calls != wantCalls {
+			t.Errorf("gate %v ahead: fetched %d times, want %d", ahead, calls, wantCalls)
+		}
+	}
+}
+
+func TestResolveKeepsAFullHoldThroughASmallClockStepBack(t *testing.T) {
+	// A 429 asked for an hour; then the clock steps back. However the step
+	// compares with the hold, under an hour it must not reopen the gate
+	// early.
+	for _, back := range []time.Duration{time.Second, 59*time.Minute + 59*time.Second} {
+		dir := staleFixture(t, time.Now())
+		c := newGateClock()
+		resolveOnClock(dir, c, func() ([]byte, error) { return nil, &RetryAfterError{After: time.Hour} })
+		c.advance(-back)
+		calls := 0
+		resolveOnClock(dir, c, func() ([]byte, error) { calls++; return []byte(goodPayload), nil })
+		if calls != 0 {
+			t.Errorf("clock stepped back %v after a 1 h hold: fetched %d times, want 0", back, calls)
+		}
+	}
+}

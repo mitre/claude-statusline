@@ -268,7 +268,10 @@ not describe that token; they show only the session payload's numbers.
 account on the machine: at most one request per opening, whichever session
 renders first. The next opening is 200 s after the response arrived, or the
 server's `Retry-After` when longer (in seconds or as an HTTP date), capped
-at 1 hour.
+at 1 hour. A gate more than 2 hours ahead of the clock was left by a clock
+that moved back by hours, and counts as open, so the next session fetches
+instead of waiting for the clock to catch up. The extra hour keeps a real
+hold in place through a clock step back of under an hour.
 Only one session fetches at a time: it first takes an exclusive lock on
 `usage.lock` in the cache directory, without waiting. Holding the lock, it
 checks the gate, moves the gate 200 s ahead, sends the request, records the
