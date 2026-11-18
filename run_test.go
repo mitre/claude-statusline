@@ -167,8 +167,8 @@ func TestRunGitDeadlineServesStaleCacheWithinBudget(t *testing.T) {
 		}
 		return "", errors.New("unexpected git call")
 	}
-	if out, _ := run(seeded); !strings.Contains(out, "gone-stale") || !strings.Contains(out, "~7") {
-		t.Fatalf("cache seeding render failed: %q", out)
+	if out, errOut := run(seeded); errOut != "" || !strings.Contains(out, "gone-stale") || !strings.Contains(out, "~7") {
+		t.Fatalf("cache seeding render failed: out %q stderr %q", out, errOut)
 	}
 
 	// A pathological worktree: git blocks far past the deadline. A correct
@@ -186,8 +186,11 @@ func TestRunGitDeadlineServesStaleCacheWithinBudget(t *testing.T) {
 	}
 
 	start := time.Now()
-	out, _ := run(blocked)
+	out, errOut := run(blocked)
 	elapsed := time.Since(start)
+	if errOut != "" {
+		t.Fatalf("config must parse cleanly: %q", errOut)
+	}
 
 	if !strings.Contains(out, "gone-stale") || !strings.Contains(out, "~7") {
 		t.Errorf("stale cached branch/dirty not served on git deadline: %q", out)
@@ -244,7 +247,10 @@ func TestRunGitTimeoutZeroDisablesDeadline(t *testing.T) {
 		}
 	}
 
-	out, _ := run(d)
+	out, errOut := run(d)
+	if errOut != "" {
+		t.Fatalf("config must parse cleanly: %q", errOut)
+	}
 	if !strings.Contains(out, "⎇ main") || !strings.Contains(out, "~1") {
 		t.Errorf("git_timeout_ms=0 must disable the deadline (live ~1 expected): %q", out)
 	}
@@ -362,7 +368,10 @@ func TestRunStaleAgeMarkerToggleOff(t *testing.T) {
 
 	seedStaleUsage(t, d, e2eUsagePayload)
 
-	out, _ := run(d)
+	out, errOut := run(d)
+	if errOut != "" {
+		t.Fatalf("config must parse cleanly: %q", errOut)
+	}
 	want := "\x1b[2maccount  \x1b[mdev@example.com \x1b[2m·\x1b[m \x1b[32m5h 5%\x1b[m \x1b[2m·\x1b[m \x1b[32mweek 13%\x1b[m"
 	if !strings.Contains(out, want) || strings.Contains(out, "old)") {
 		t.Errorf("show_stale_age=false must serve stale meters without the marker:\n got %q\nwant row %q", out, want)
