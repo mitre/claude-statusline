@@ -42,9 +42,9 @@ type deps struct {
 	// check on the legacy record; nil means os.ReadDir.
 	readDir func(string) ([]os.DirEntry, error)
 	// now is the render's clock, handed to the usage resolver and parser
-	// (fetch gate, reset-boundary expiry, stale age, reset labels); nil
-	// means time.Now. The TTL check inside cache.ReadFresh reads the wall
-	// clock itself.
+	// (reset-boundary expiry, stale age, reset labels); nil means time.Now.
+	// The fetch gate reads the wall clock when it decides, and the TTL check
+	// inside cache.ReadFresh reads it too.
 	now func() time.Time
 }
 

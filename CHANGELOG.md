@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The hold after a usage fetch now starts when the response arrives, not
+  when the render started, and every gate decision reads one clock. A
+  `Retry-After` sent as an HTTP date is honoured (only the seconds form was
+  read), a seconds value too large to hold no longer wraps to a negative
+  wait, and the server's value is capped at 1 hour.
 - Sessions that rendered at the same moment while the usage fetch gate was
   open could all call the endpoint, and all be rate-limited. Only the render
   holding an exclusive lock on `usage.lock` in the cache directory now

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -142,7 +143,7 @@ func fetchUsage(creds tokenSource, fingerprint string) ([]byte, error) {
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		_ = resp.Body.Close()
-		return nil, &usage.RetryAfterError{After: retryAfter(resp.Header.Get("Retry-After"))}
+		return nil, &usage.RetryAfterError{After: retryAfter(resp.Header.Get("Retry-After"), time.Now())}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if cerr := resp.Body.Close(); err == nil {
@@ -151,13 +152,30 @@ func fetchUsage(creds tokenSource, fingerprint string) ([]byte, error) {
 	return body, err
 }
 
-// retryAfter parses the delay-seconds form of a Retry-After header. The
-// HTTP-date form and anything unparseable yield zero, which the resolver
-// treats as "apply the floor".
-func retryAfter(header string) time.Duration {
-	secs, err := strconv.Atoi(strings.TrimSpace(header))
-	if err != nil || secs <= 0 {
+// retryAfter reads a Retry-After header (RFC 9110 §10.2.3) received at now:
+// delay-seconds (digits only) or an HTTP-date in any of the three forms
+// net/http parses. A value that gives no wait, does not fit a
+// time.Duration, or is not one of those forms yields zero, which the
+// resolver treats as "apply the floor". The upper bound is the resolver's
+// (usage.MaxRetryAfter), not this parser's.
+func retryAfter(header string, now time.Time) time.Duration {
+	h := strings.TrimSpace(header)
+	if h == "" {
 		return 0
 	}
-	return time.Duration(secs) * time.Second
+	if strings.Trim(h, "0123456789") == "" {
+		secs, err := strconv.ParseInt(h, 10, 64)
+		if err != nil || secs <= 0 || secs > math.MaxInt64/int64(time.Second) {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	at, err := http.ParseTime(h)
+	if err != nil {
+		return 0
+	}
+	if wait := at.Sub(now); wait > 0 {
+		return wait
+	}
+	return 0
 }

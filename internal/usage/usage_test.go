@@ -665,20 +665,23 @@ func TestResolveNeverAttemptsFetchWithinMinFetchInterval(t *testing.T) {
 	// stale, renders arrive every few hundred milliseconds and the endpoint
 	// rate-limits the storm. One attempt per MinFetchInterval, no matter
 	// how the attempt ended; stale-good is served in between.
-	realNow := time.Now().Truncate(time.Second)
-	dir := staleFixture(t, realNow)
+	c := newGateClock()
+	dir := staleFixture(t, time.Now())
 	calls := 0
 	failing := func() ([]byte, error) { calls++; return nil, errors.New("network down") }
 
-	if _, _, ok := resolveAs(dir, time.Minute, realNow, failing); !ok {
+	if _, _, ok := resolveOnClock(dir, c, failing); !ok {
 		t.Fatal("stale-good fallback not served on the first failure")
 	}
-	resolveAs(dir, time.Minute, realNow.Add(time.Second), failing)
-	resolveAs(dir, time.Minute, realNow.Add(MinFetchInterval-time.Second), failing)
+	c.advance(time.Second)
+	resolveOnClock(dir, c, failing)
+	c.advance(MinFetchInterval - 2*time.Second)
+	resolveOnClock(dir, c, failing)
 	if calls != 1 {
 		t.Fatalf("fetch attempted %d times within MinFetchInterval, want exactly 1", calls)
 	}
-	resolveAs(dir, time.Minute, realNow.Add(MinFetchInterval+time.Second), failing)
+	c.advance(2 * time.Second)
+	resolveOnClock(dir, c, failing)
 	if calls != 2 {
 		t.Errorf("fetch attempted %d times after MinFetchInterval elapsed, want 2", calls)
 	}
@@ -687,39 +690,49 @@ func TestResolveNeverAttemptsFetchWithinMinFetchInterval(t *testing.T) {
 func TestResolveThrottlesAfterRejectedPayloadToo(t *testing.T) {
 	// A fetch that "succeeds" with a non-usage body (an error payload) is an
 	// attempt like any other and must be throttled the same way.
-	realNow := time.Now().Truncate(time.Second)
-	dir := staleFixture(t, realNow)
+	c := newGateClock()
+	dir := staleFixture(t, time.Now())
 	calls := 0
 	errBody := func() ([]byte, error) { calls++; return []byte(`{"error":{"type":"rate_limit_error"}}`), nil }
-	resolveAs(dir, time.Minute, realNow, errBody)
-	resolveAs(dir, time.Minute, realNow.Add(5*time.Second), errBody)
+	resolveOnClock(dir, c, errBody)
+	c.advance(5 * time.Second)
+	resolveOnClock(dir, c, errBody)
 	if calls != 1 {
 		t.Errorf("fetch attempted %d times, want 1", calls)
+	}
+	c.advance(MinFetchInterval)
+	resolveOnClock(dir, c, errBody)
+	if calls != 2 {
+		t.Errorf("fetch attempted %d times after the floor passed, want 2", calls)
 	}
 }
 
 func TestResolveHonorsRetryAfterLongerThanFloor(t *testing.T) {
 	// A 429 carrying Retry-After longer than the floor holds fetching off
 	// for the server's full interval; shorter values still get the floor.
-	realNow := time.Now().Truncate(time.Second)
-	dir := staleFixture(t, realNow)
+	c := newGateClock()
+	dir := staleFixture(t, time.Now())
 	calls := 0
 	limited := func() ([]byte, error) { calls++; return nil, &RetryAfterError{After: 15 * time.Minute} }
-	resolveAs(dir, time.Minute, realNow, limited)
-	resolveAs(dir, time.Minute, realNow.Add(MinFetchInterval+time.Second), limited)
+	resolveOnClock(dir, c, limited)
+	c.advance(MinFetchInterval + time.Second)
+	resolveOnClock(dir, c, limited)
 	if calls != 1 {
 		t.Fatalf("fetch attempted %d times inside the server's Retry-After, want 1", calls)
 	}
-	resolveAs(dir, time.Minute, realNow.Add(15*time.Minute+time.Second), limited)
+	c.advance(15*time.Minute - MinFetchInterval)
+	resolveOnClock(dir, c, limited)
 	if calls != 2 {
 		t.Errorf("fetch attempted %d times after Retry-After elapsed, want 2", calls)
 	}
 
-	dir = staleFixture(t, realNow)
+	c = newGateClock()
+	dir = staleFixture(t, time.Now())
 	calls = 0
 	short := func() ([]byte, error) { calls++; return nil, &RetryAfterError{After: 5 * time.Second} }
-	resolveAs(dir, time.Minute, realNow, short)
-	resolveAs(dir, time.Minute, realNow.Add(10*time.Second), short)
+	resolveOnClock(dir, c, short)
+	c.advance(10 * time.Second)
+	resolveOnClock(dir, c, short)
 	if calls != 1 {
 		t.Errorf("fetch attempted %d times: a short Retry-After must not undercut the floor", calls)
 	}
@@ -1501,12 +1514,12 @@ func TestResolveLockErrorFetchesNothing(t *testing.T) {
 }
 
 // assertGateRewritten checks that the render held the fetch off for one
-// floor: the gate now opens MinFetchInterval after realNow, and the lock is
-// free again.
-func assertGateRewritten(t *testing.T, dir string, realNow time.Time) {
+// floor: the gate now opens MinFetchInterval after from, and the lock is free
+// again.
+func assertGateRewritten(t *testing.T, dir string, from time.Time) {
 	t.Helper()
-	if at, want := gateAt(t, dir), realNow.Add(MinFetchInterval).Truncate(time.Second); !at.Equal(want) {
-		t.Errorf("the gate opens at %v, want %v: one floor from now", at, want)
+	if at, want := gateAt(t, dir), from.Add(MinFetchInterval); !at.Equal(want) {
+		t.Errorf("the gate opens at %v, want %v: one floor from the gate clock", at, want)
 	}
 	holdLock(t, dir)()
 }
@@ -1516,12 +1529,12 @@ func TestResolveMalformedGateHoldsTheFetchOffForOneFloor(t *testing.T) {
 	// hold has passed: no fetch now, and the gate is rewritten so the next
 	// opening fetches.
 	dir := t.TempDir()
-	realNow := time.Now()
+	c := newGateClock()
 	if err := os.WriteFile(filepath.Join(dir, nextAttemptFile), []byte("not a time"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	resolveAs(dir, time.Hour, realNow, noFetch(t))
-	assertGateRewritten(t, dir, realNow)
+	resolveOnClock(dir, c, noFetch(t))
+	assertGateRewritten(t, dir, c.now())
 }
 
 func TestResolveUnreadableGateHoldsTheFetchOffForOneFloor(t *testing.T) {
@@ -1530,13 +1543,13 @@ func TestResolveUnreadableGateHoldsTheFetchOffForOneFloor(t *testing.T) {
 		t.Skip("root reads files whatever their permissions")
 	}
 	dir := t.TempDir()
-	realNow := time.Now()
+	c := newGateClock()
 	closeGate(t, dir)
 	if err := os.Chmod(filepath.Join(dir, nextAttemptFile), 0o000); err != nil {
 		t.Fatal(err)
 	}
-	resolveAs(dir, time.Hour, realNow, noFetch(t))
-	assertGateRewritten(t, dir, realNow)
+	resolveOnClock(dir, c, noFetch(t))
+	assertGateRewritten(t, dir, c.now())
 }
 
 // resolveCounting runs one render in dir with an open gate and reports how
@@ -1774,5 +1787,63 @@ func TestSameLockFileRefusesAnOpenedSpecialFile(t *testing.T) {
 	defer func() { _ = f.Close() }()
 	if err := sameLockFile(root, f); err == nil {
 		t.Error("accepted an opened FIFO as the lock file")
+	}
+}
+
+// gateClock is a controllable clock for the gate edge, on whole seconds as
+// the gate file stores them.
+type gateClock struct{ t time.Time }
+
+func newGateClock() *gateClock {
+	return &gateClock{t: time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)}
+}
+
+func (c *gateClock) now() time.Time          { return c.t }
+func (c *gateClock) advance(d time.Duration) { c.t = c.t.Add(d) }
+
+// renderStart is the now every resolveOnClock render passes to resolve: it
+// never moves, so only the edge clock can drive the gate.
+var renderStart = time.Date(2026, 11, 18, 8, 0, 0, 0, time.UTC)
+
+// resolveOnClock runs resolve as testOwner with the gate edge reading c.
+func resolveOnClock(dir string, c *gateClock, fetch func() ([]byte, error)) ([]byte, time.Duration, bool) {
+	g := osGateFS(dir)
+	g.now = c.now
+	return resolve(g, dir, testOwner, as(testOwner), time.Minute, renderStart, fetch)
+}
+
+func TestResolveHoldStartsWhenTheResponseArrives(t *testing.T) {
+	// The gate is written from the clock before the request, and the hold
+	// after the attempt runs from a reading taken once the response is in,
+	// however long the request took.
+	dir := t.TempDir()
+	c := newGateClock()
+	sent := c.now()
+	resolveOnClock(dir, c, func() ([]byte, error) {
+		if at, want := gateAt(t, dir), sent.Add(MinFetchInterval); !at.Equal(want) {
+			t.Errorf("gate before the request = %v, want %v", at, want)
+		}
+		c.advance(30 * time.Second)
+		return []byte(goodPayload), nil
+	})
+	if at, want := gateAt(t, dir), sent.Add(30*time.Second+MinFetchInterval); !at.Equal(want) {
+		t.Errorf("gate after the response = %v, want %v: the hold starts when the response arrives", at, want)
+	}
+}
+
+func TestResolveCapsRetryAfterAtOneHour(t *testing.T) {
+	// A server's Retry-After holds fetching off for at most an hour.
+	for after, hold := range map[time.Duration]time.Duration{
+		3600 * time.Second:     3600 * time.Second,
+		3601 * time.Second:     3600 * time.Second,
+		99999999 * time.Second: 3600 * time.Second,
+	} {
+		dir := t.TempDir()
+		c := newGateClock()
+		sent := c.now()
+		resolveOnClock(dir, c, func() ([]byte, error) { return nil, &RetryAfterError{After: after} })
+		if at, want := gateAt(t, dir), sent.Add(hold); !at.Equal(want) {
+			t.Errorf("Retry-After %v: gate = %v, want %v", after, at, want)
+		}
 	}
 }
