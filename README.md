@@ -122,7 +122,7 @@ behavior shown above. `$CLAUDE_STATUSLINE_CONFIG` overrides the path.
 | `[account] show_email` | `true` | Account email scope label |
 | `[account] email_style` | `"normal"` | `"dim"` quiets the email to the furniture tier |
 | `[account] show_resets` | `"always"` | `"quiet"` shows reset times only on hot (≥80%) meters |
-| `[account] show_stale_age` | `true` | Dim age marker when stale known-good data is served |
+| `[account] show_stale_age` | `true` | Dim age when stale known-good data is served: the account-row marker and the age on the extra-usage badge |
 | `[account] bars` | `false` | Draw each meter as a 10-segment bar like the context row (`5h ▓▓░░░░░░░░ 28%`) |
 | `[usage] enabled` | `true` | `false` skips the usage endpoint entirely |
 | `[usage] ttl_seconds` | `200` | How long a fetched payload is served before re-fetching. Floor 200 (a lower value is raised to 200, with a stderr note): the usage endpoint rate-limits faster polling, and a failed fetch is not retried before 200 s (or the server's `Retry-After`, capped at 1 hour) have passed since the response arrived |
@@ -242,11 +242,14 @@ stdin did not replace, plan-scoped limits, the per-model window) keep
 serving the last known-good payload, qualified by a trailing dim
 `(data 6m old)` age marker whenever such stale data is actually visible; a
 row of only live meters carries no marker, and a row with no meter is not
-rendered. The model row's extra-usage badge also comes from that payload
-and carries no age marker. On hosts whose payload lacks
+rendered. The model row's extra-usage badge also comes only from that
+payload, so a stale badge carries its own dim age
+(`⚠ EXTRA USAGE $12.34 (6m old)`, `· extra $3.10 (6m old)`), whether or not
+the account row is shown; the alarm stays, since spend only grows within a
+billing period. On hosts whose payload lacks
 `rate_limits`, the old behavior remains: the whole row serves the stale
 payload with the marker, and is omitted when there is no data it can show —
-values are never fabricated. `show_stale_age = false` hides the marker.
+values are never fabricated. `show_stale_age = false` hides both ages.
 
 **Whose usage is shown.** The fetched payload is cached per account and
 token: the file is named by a hash of the account ID in Claude Code's

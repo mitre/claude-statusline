@@ -459,6 +459,29 @@ func TestExtraBadge(t *testing.T) {
 	}
 }
 
+func TestExtraBadgeOnAStalePayloadCarriesItsAge(t *testing.T) {
+	// Extra usage only comes from the endpoint payload: when the stale-good
+	// fallback serves it, the badge says how old it is, on the badge itself,
+	// so it is qualified even when the account row is not shown. The alarm
+	// stays: spend only grows within a billing period.
+	o := DefaultOptions() // default budget $5.00
+	over := Usage{ExtraEnabled: true, CreditsMinor: 1234, CreditsExp: 2, DataAge: 6 * time.Minute}
+	if got, want := ExtraBadge(over, o), "  \x1b[1;37;41m ⚠ EXTRA USAGE $12.34 \x1b[m \x1b[2m(6m old)\x1b[m"; got != want {
+		t.Errorf("stale alarm:\n got %q\nwant %q", got, want)
+	}
+	under := Usage{ExtraEnabled: true, CreditsMinor: 310, CreditsExp: 2, DataAge: 6 * time.Minute}
+	if got, want := ExtraBadge(under, o), "\x1b[2m · extra $3.10 (6m old)\x1b[m"; got != want {
+		t.Errorf("stale tally:\n got %q\nwant %q", got, want)
+	}
+
+	// show_stale_age = false hides this age as it hides the account row's.
+	off := DefaultOptions()
+	off.Account.ShowStaleAge = false
+	if got, want := ExtraBadge(over, off), "  \x1b[1;37;41m ⚠ EXTRA USAGE $12.34 \x1b[m"; got != want {
+		t.Errorf("show_stale_age=false:\n got %q\nwant %q", got, want)
+	}
+}
+
 func TestExtraBadgeBudgetGatesTheAlarm(t *testing.T) {
 	// Spend below the accepted budget is expected, not an emergency: it
 	// stays a dim tally so nothing is hidden, and the alarm is reserved for
