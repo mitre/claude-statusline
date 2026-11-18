@@ -365,21 +365,24 @@ func TestRetryAfterReadsBothFormsAndRejectsTheRest(t *testing.T) {
 }
 
 func TestFetchUsage429WithHTTPDateRetryAfter(t *testing.T) {
-	// The date form is measured from when the response arrives.
+	// The date form is measured from when the response arrives: the wait is
+	// the header's date minus the moment it was parsed, which lies between
+	// the readings taken before and after the call.
+	at := time.Now().Add(90 * time.Second).Truncate(time.Second)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Retry-After", time.Now().UTC().Add(90*time.Second).Format(http.TimeFormat))
+		w.Header().Set("Retry-After", at.UTC().Format(http.TimeFormat))
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer srv.Close()
 	pointUsageAt(t, srv.URL)
+	before := time.Now()
 	_, err := fetchUsage(fileCreds(t, "fixture-access-e2e"), fingerprintOf("fixture-access-e2e"))
+	after := time.Now()
 	var ra *usage.RetryAfterError
 	if !errors.As(err, &ra) {
 		t.Fatalf("fetchUsage error = %v; want *usage.RetryAfterError", err)
 	}
-	// The header has whole seconds, so up to a second is lost to rounding,
-	// plus the time between the header and the parse.
-	if ra.After <= 88*time.Second || ra.After > 90*time.Second {
-		t.Errorf("RetryAfterError.After = %v, want just under 90s", ra.After)
+	if ra.After < at.Sub(after) || ra.After > at.Sub(before) {
+		t.Errorf("RetryAfterError.After = %v, want between %v and %v", ra.After, at.Sub(after), at.Sub(before))
 	}
 }
