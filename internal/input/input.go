@@ -224,12 +224,13 @@ func agyBucket(quota map[string]agyQuotaWindow, key string) (pct int, resetUnix 
 }
 
 // selectAgyQuotaFamily picks the quota family ("3p" or "gemini") the model
-// draws from among the families with any bucket, and the other family whose
+// draws from among the families with a usable bucket (one agyBucket accepts;
+// an empty or null bucket does not count), and the other family whose
 // five-hour bucket is shown as a scoped meter ("" for none).
 func selectAgyQuotaFamily(modelName string, quota map[string]agyQuotaWindow) (family, other string) {
 	has := func(f string) bool {
-		_, h := quota[f+"-5h"]
-		_, w := quota[f+"-weekly"]
+		_, _, h := agyBucket(quota, f+"-5h")
+		_, _, w := agyBucket(quota, f+"-weekly")
 		return h || w
 	}
 	modelLower := strings.ToLower(modelName)

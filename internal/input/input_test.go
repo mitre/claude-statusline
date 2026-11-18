@@ -199,6 +199,24 @@ func TestParseRateLimitsWindowPresence(t *testing.T) {
 	}
 }
 
+func TestParseAntigravityFamilyNeedsAUsableBucket(t *testing.T) {
+	// A family whose buckets are all unusable (empty, null, or without a
+	// remaining fraction) is not chosen: the other family's valid five-hour
+	// bucket still gives the reading, as when the unusable bucket is absent.
+	for _, weekly := range []string{`{}`, `null`, `{"remaining_fraction":null}`} {
+		j := `{"product":"antigravity","model":{"display_name":"Claude Opus 5.5"},"quota":{` +
+			`"3p-weekly":` + weekly + `,"gemini-5h":{"remaining_fraction":0.9}}}`
+		s, err := Parse(strings.NewReader(j))
+		if err != nil {
+			t.Fatalf("3p-weekly %s: Parse: %v", weekly, err)
+		}
+		if !s.RateLimitsOK || !s.R5OK || s.R5Pct != 10 || s.R7OK {
+			t.Errorf("3p-weekly %s: RateLimitsOK=%v R5OK=%v R5Pct=%d R7OK=%v, want true/true/10/false",
+				weekly, s.RateLimitsOK, s.R5OK, s.R5Pct, s.R7OK)
+		}
+	}
+}
+
 func TestParseRateLimitsAbsentOrMalformed(t *testing.T) {
 	for _, j := range []string{
 		`{"model":{"display_name":"Fable 5"}}`,
