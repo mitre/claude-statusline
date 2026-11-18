@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- After the system clock moved back, the usage fetch gate could sit hours
+  ahead and no session fetched until the clock caught up. A gate more than
+  1 hour ahead (no hold this code writes is longer) now counts as open.
 - The hold after a usage fetch now starts when the response arrives, not
   when the render started, and every gate decision reads one clock. A
   `Retry-After` sent as an HTTP date is honoured (only the seconds form was

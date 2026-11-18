@@ -530,7 +530,12 @@ func fetchUnderLock(g gateFS, fetch func() ([]byte, error)) (b []byte, sent bool
 		_ = writeGate(g, now.Add(MinFetchInterval))
 		return nil, false, nil
 	}
-	if now.Before(at) || writeGate(g, now.Add(MinFetchInterval)) != nil {
+	// No hold this code writes is more than MaxRetryAfter ahead: a gate
+	// further ahead was written on a clock that has since moved back, and
+	// counts as open rather than holding every render off until the clock
+	// catches up.
+	held := now.Before(at) && at.Sub(now) <= MaxRetryAfter
+	if held || writeGate(g, now.Add(MinFetchInterval)) != nil {
 		return nil, false, nil
 	}
 	b, err = fetch()
