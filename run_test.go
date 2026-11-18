@@ -1336,3 +1336,42 @@ func TestRunWeeklyOnlyStdinOverAFreshPayloadWithoutFiveHour(t *testing.T) {
 		t.Errorf("account row:\n got %q\nwant %q", got, want)
 	}
 }
+
+func TestRunAntigravityShowsAnotherFamilysQuotaOnlyUnderItsName(t *testing.T) {
+	// A Claude model in Antigravity draws from the 3p quota. With only
+	// Gemini buckets in the quota, the Gemini five-hour bucket shows under
+	// its own name, never as this session's "5h", and a Gemini weekly
+	// bucket does not show at all.
+	for _, c := range []struct {
+		name, quota string
+		want        string // the account row's meters, "" for no account row
+	}{
+		{"gemini five-hour only", `"gemini-5h":{"remaining_fraction":0.9}`, "gemini-5h 10%"},
+		{"gemini weekly only", `"gemini-weekly":{"remaining_fraction":0.9}`, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d := e2eDeps(t, "full.json")
+			d.fetchUsage = func(string) ([]byte, error) {
+				t.Fatal("an Antigravity session does not fetch the endpoint")
+				return nil, nil
+			}
+			d.stdin = strings.NewReader(`{"session_id":"0a1b2c3d-0000-4000-8000-000000000000","product":"antigravity",` +
+				`"model":{"display_name":"Claude Opus 5.5"},"workspace":{"current_dir":"/Users/dev/projects/demo-app"},` +
+				`"quota":{` + c.quota + `}}`)
+			out, errOut := run(d)
+			if errOut != "" {
+				t.Fatalf("unexpected stderr: %q", errOut)
+			}
+			row := accountRow(out)
+			if c.want == "" {
+				if row != "" {
+					t.Errorf("want no account row, got %q", row)
+				}
+				return
+			}
+			if !strings.HasSuffix(row, c.want) || strings.Count(row, "%") != 1 {
+				t.Errorf("account row = %q, want the one meter %q", row, c.want)
+			}
+		})
+	}
+}

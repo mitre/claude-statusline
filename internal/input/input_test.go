@@ -2,6 +2,7 @@ package input
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -199,20 +200,40 @@ func TestParseRateLimitsWindowPresence(t *testing.T) {
 	}
 }
 
-func TestParseAntigravityFamilyNeedsAUsableBucket(t *testing.T) {
-	// A family whose buckets are all unusable (empty, null, or without a
-	// remaining fraction) is not chosen: the other family's valid five-hour
-	// bucket still gives the reading, as when the unusable bucket is absent.
-	for _, weekly := range []string{`{}`, `null`, `{"remaining_fraction":null}`} {
-		j := `{"product":"antigravity","model":{"display_name":"Claude Opus 5.5"},"quota":{` +
-			`"3p-weekly":` + weekly + `,"gemini-5h":{"remaining_fraction":0.9}}}`
+func TestParseAntigravityReadsOnlyTheModelsOwnFamily(t *testing.T) {
+	// The five-hour and weekly windows come only from the quota family the
+	// model draws from (Claude, GPT and 3p models: 3p; others: gemini). The
+	// other family's five-hour bucket shows under its own name, never as
+	// this session's window; its weekly bucket does not show. An own family
+	// with no usable bucket (absent, empty, null, no fraction) leaves both
+	// windows absent.
+	for _, c := range []struct {
+		name, model, quota string
+		rateLimitsOK       bool
+		scoped             string // "name pct" of the one scoped meter, "" for none
+	}{
+		{"claude model, gemini weekly only", "Claude Opus 5.5", `"gemini-weekly":{"remaining_fraction":0.9}`, false, ""},
+		{"gemini model, 3p weekly only", "Gemini 3.5 Pro", `"3p-weekly":{"remaining_fraction":0.23}`, false, ""},
+		{"claude model, gemini five-hour only", "Claude Opus 5.5", `"gemini-5h":{"remaining_fraction":0.9}`, true, "gemini-5h 10"},
+		{"gemini model, 3p five-hour only", "Gemini 3.5 Pro", `"3p-5h":{"remaining_fraction":0.77}`, true, "3p-5h 23"},
+		{"claude model, empty 3p weekly", "Claude Opus 5.5", `"3p-weekly":{},"gemini-5h":{"remaining_fraction":0.9}`, true, "gemini-5h 10"},
+		{"claude model, null 3p weekly", "Claude Opus 5.5", `"3p-weekly":null,"gemini-5h":{"remaining_fraction":0.9}`, true, "gemini-5h 10"},
+		{"claude model, 3p weekly without a fraction", "Claude Opus 5.5", `"3p-weekly":{"remaining_fraction":null},"gemini-5h":{"remaining_fraction":0.9}`, true, "gemini-5h 10"},
+	} {
+		j := `{"product":"antigravity","model":{"display_name":"` + c.model + `"},"quota":{` + c.quota + `}}`
 		s, err := Parse(strings.NewReader(j))
 		if err != nil {
-			t.Fatalf("3p-weekly %s: Parse: %v", weekly, err)
+			t.Fatalf("%s: Parse: %v", c.name, err)
 		}
-		if !s.RateLimitsOK || !s.R5OK || s.R5Pct != 10 || s.R7OK {
-			t.Errorf("3p-weekly %s: RateLimitsOK=%v R5OK=%v R5Pct=%d R7OK=%v, want true/true/10/false",
-				weekly, s.RateLimitsOK, s.R5OK, s.R5Pct, s.R7OK)
+		if s.R5OK || s.R7OK || s.RateLimitsOK != c.rateLimitsOK {
+			t.Errorf("%s: R5OK=%v R7OK=%v RateLimitsOK=%v, want false/false/%v", c.name, s.R5OK, s.R7OK, s.RateLimitsOK, c.rateLimitsOK)
+		}
+		var scoped []string
+		for _, m := range s.ScopedMeters {
+			scoped = append(scoped, fmt.Sprintf("%s %d", m.Name, m.Pct))
+		}
+		if got := strings.Join(scoped, ","); got != c.scoped {
+			t.Errorf("%s: scoped meters = %q, want %q", c.name, got, c.scoped)
 		}
 	}
 }
