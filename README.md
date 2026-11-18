@@ -90,7 +90,7 @@ Point Antigravity CLI at the binary in `~/.gemini/antigravity-cli/settings.json`
 When running inside Antigravity (`"product": "antigravity"`):
 - **Model row auth badge**: Auto-detects the plan tier (e.g. `Google AI Ultra` renders as green `Ultra` badge, `Pro` renders as `Pro`, or `Sub`).
 - **Account identity & plan tier**: Reads user email and plan tier directly from the stdin payload (e.g. `lippold@example.com · Google AI Ultra`).
-- **Live quota meters**: Automatically maps Antigravity's quota pools (`gemini-5h`, `gemini-weekly`, `3p-5h`, `3p-weekly`) into live 5h/week rate limits with local timezone reset times.
+- **Live quota meters**: Maps the quota pools of the family the session's model draws from (`3p-5h`/`3p-weekly` for Claude, GPT and 3p models; `gemini-5h`/`gemini-weekly` for the others) into live 5h/week meters with local timezone reset times; each pool shows only when the quota carries it. The other family's five-hour pool, while in use, shows under its own name (`gemini-5h 10%`), never as the session's `5h`.
 - **Model family routing**: Dynamically selects Gemini or 3p quota pools based on the active model family, and renders secondary pools as scoped meters when utilized.
 - **API key safety**: Bypasses Anthropic OAuth endpoints and suppresses false metered-billing warnings when `ANTHROPIC_API_KEY` is present in the host environment.
 
@@ -233,9 +233,11 @@ the hot-only (≥80%) behavior.
 
 When the usage endpoint can't be reached, the row degrades in two stages.
 Claude Code v2.1.210+ sends the two all-model meters in the statusline
-payload itself, so `5h` switches to the **live** value, and `week` too when
-the payload carries a weekly window (no network needed — even when no cached
-payload exists at all). A fresh payload keeps its readings; a live stdin
+payload itself, so each of `5h` and `week` switches to the **live** value
+when the payload carries that window; either one alone is a reading, and a
+window the payload does not carry keeps the endpoint's reading or is omitted,
+never shown as 0% (no network needed — even when no cached payload exists at
+all). A fresh payload keeps its readings; a live stdin
 reading only fills a window that payload reports as not in progress.
 Endpoint-only account segments (a weekly reading
 stdin did not replace, plan-scoped limits, the per-model window) keep

@@ -31,15 +31,15 @@ type Session struct {
 	Effort      string
 	FastMode    bool
 	Exceeds200k bool
-	// RateLimitsOK gates the stdin-sourced meter fallback — true only when
-	// rate_limits carries five_hour.used_percentage or quota carries
-	// valid quota windows (the same strict shape gate usage.Parse applies to
-	// endpoint payloads; never fabricated).
+	// RateLimitsOK gates the stdin-sourced meter fallback: true when the
+	// payload carries a reading — a window (R5OK or R7OK) from rate_limits
+	// or the Antigravity quota, or a scoped quota meter. Never fabricated.
 	RateLimitsOK bool
-	// R7OK: the weekly window is present in this stdin payload. Within
-	// RateLimitsOK the five-hour window is always present; the weekly one
-	// may not be, and its absence must never read as 0%.
-	R7OK         bool
+	// R5OK and R7OK: the five-hour and the weekly window are present in this
+	// stdin payload (a window with a used percentage, or a valid quota
+	// bucket). Either may be present alone; an absent or null window is
+	// absent, and its absence must never read as 0%.
+	R5OK, R7OK   bool
 	R5Pct, R7Pct int
 	// Reset moments as epoch seconds (the stdin encoding; the endpoint
 	// serves RFC3339). 0 = absent, no label.
@@ -142,15 +142,17 @@ func Parse(r io.Reader) (Session, error) {
 		}
 	}
 	if fh := p.RateLimits.FiveHour; fh != nil && fh.UsedPercentage != nil {
-		s.RateLimitsOK = true
+		s.R5OK = true
 		s.R5Pct = int(math.Floor(max(0.0, min(100.0, *fh.UsedPercentage))))
 		s.R5ResetUnix = fh.ResetsAt
-		if sd := p.RateLimits.SevenDay; sd != nil && sd.UsedPercentage != nil {
-			s.R7OK = true
-			s.R7Pct = int(math.Floor(max(0.0, min(100.0, *sd.UsedPercentage))))
-			s.R7ResetUnix = sd.ResetsAt
-		}
-	} else if len(p.Quota) > 0 {
+	}
+	if sd := p.RateLimits.SevenDay; sd != nil && sd.UsedPercentage != nil {
+		s.R7OK = true
+		s.R7Pct = int(math.Floor(max(0.0, min(100.0, *sd.UsedPercentage))))
+		s.R7ResetUnix = sd.ResetsAt
+	}
+	s.RateLimitsOK = s.R5OK || s.R7OK
+	if !s.RateLimitsOK && len(p.Quota) > 0 {
 		parseAgyQuota(&s, p.Quota)
 	}
 	return s, nil
@@ -184,51 +186,45 @@ func parseAgyWindow(w agyQuotaWindow) (pct int, resetUnix int64, ok bool) {
 	return pct, resetUnix, true
 }
 
+// parseAgyQuota reads the Antigravity quota. The five-hour and weekly
+// windows come only from the quota family the model draws from, each
+// present on its own; the other family's five-hour bucket, while in use,
+// shows as a scoped meter under its own name, never as this session's
+// window.
 func parseAgyQuota(s *Session, quota map[string]agyQuotaWindow) {
-	hKey, wKey, sKey := selectAgyQuotaKeys(s.ModelName, quota)
-	if hKey == "" {
-		return
+	family, other := agyQuotaFamilies(s.ModelName)
+	if pct, rUnix, ok := agyBucket(quota, family+"-5h"); ok {
+		s.R5OK, s.R5Pct, s.R5ResetUnix = true, pct, rUnix
 	}
-	if fh, ok := quota[hKey]; ok {
-		if pct, rUnix, valid := parseAgyWindow(fh); valid {
-			s.RateLimitsOK = true
-			s.R5Pct = pct
-			s.R5ResetUnix = rUnix
-			if sd, ok := quota[wKey]; ok {
-				if wpct, wrUnix, wvalid := parseAgyWindow(sd); wvalid {
-					s.R7OK = true
-					s.R7Pct = wpct
-					s.R7ResetUnix = wrUnix
-				}
-			}
-			if sKey != "" {
-				if sec, ok := quota[sKey]; ok {
-					if spct, srUnix, svalid := parseAgyWindow(sec); svalid && spct > 0 {
-						s.ScopedMeters = append(s.ScopedMeters, ScopedMeter{
-							Name:      sKey,
-							Pct:       spct,
-							ResetUnix: srUnix,
-						})
-					}
-				}
-			}
-		}
+	if pct, rUnix, ok := agyBucket(quota, family+"-weekly"); ok {
+		s.R7OK, s.R7Pct, s.R7ResetUnix = true, pct, rUnix
 	}
+	sKey := other + "-5h"
+	if spct, srUnix, ok := agyBucket(quota, sKey); ok && spct > 0 {
+		s.ScopedMeters = append(s.ScopedMeters, ScopedMeter{
+			Name:      sKey,
+			Pct:       spct,
+			ResetUnix: srUnix,
+		})
+	}
+	s.RateLimitsOK = s.R5OK || s.R7OK || len(s.ScopedMeters) > 0
 }
 
-func selectAgyQuotaKeys(modelName string, quota map[string]agyQuotaWindow) (primary5h, primaryWeek, sec5h string) {
+// agyBucket parses the quota bucket named key, if present and valid.
+func agyBucket(quota map[string]agyQuotaWindow, key string) (pct int, resetUnix int64, ok bool) {
+	w, found := quota[key]
+	if !found {
+		return 0, 0, false
+	}
+	return parseAgyWindow(w)
+}
+
+// agyQuotaFamilies names the quota family the model draws from ("3p" for
+// Claude, GPT and 3p models, "gemini" for the others) and the other family.
+func agyQuotaFamilies(modelName string) (family, other string) {
 	modelLower := strings.ToLower(modelName)
-	is3p := strings.Contains(modelLower, "claude") || strings.Contains(modelLower, "gpt") || strings.Contains(modelLower, "3p")
-	if is3p {
-		if _, ok := quota["3p-5h"]; ok {
-			return "3p-5h", "3p-weekly", "gemini-5h"
-		}
+	if strings.Contains(modelLower, "claude") || strings.Contains(modelLower, "gpt") || strings.Contains(modelLower, "3p") {
+		return "3p", "gemini"
 	}
-	if _, ok := quota["gemini-5h"]; ok {
-		return "gemini-5h", "gemini-weekly", "3p-5h"
-	}
-	if _, ok := quota["3p-5h"]; ok {
-		return "3p-5h", "3p-weekly", ""
-	}
-	return "", "", ""
+	return "gemini", "3p"
 }

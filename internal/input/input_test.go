@@ -2,6 +2,7 @@ package input
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,6 +167,77 @@ func TestParseRateLimitsWeeklyPresence(t *testing.T) {
 	}
 }
 
+func TestParseRateLimitsWindowPresence(t *testing.T) {
+	// Each window is present only when the payload reports it; a window
+	// that is absent or null is absent, never 0%, and either window alone
+	// is a reading.
+	for _, c := range []struct {
+		name         string
+		j            string
+		r5, r7       bool
+		r5Pct, r7Pct int
+	}{
+		{"claude both windows", `{"rate_limits":{"five_hour":{"used_percentage":19},"seven_day":{"used_percentage":45}}}`, true, true, 19, 45},
+		{"claude five-hour only", `{"rate_limits":{"five_hour":{"used_percentage":19}}}`, true, false, 19, 0},
+		{"claude weekly only", `{"rate_limits":{"seven_day":{"used_percentage":77,"resets_at":1784556000}}}`, false, true, 0, 77},
+		{"claude null five-hour, weekly present", `{"rate_limits":{"five_hour":null,"seven_day":{"used_percentage":77}}}`, false, true, 0, 77},
+		{"claude five-hour without a percentage, weekly present", `{"rate_limits":{"five_hour":{},"seven_day":{"used_percentage":77}}}`, false, true, 0, 77},
+		{"antigravity five-hour only", `{"product":"antigravity","model":{"display_name":"Gemini 3.5 Pro"},"quota":{` +
+			`"gemini-5h":{"remaining_fraction":0.9}}}`, true, false, 10, 0},
+		{"antigravity weekly only", `{"product":"antigravity","model":{"display_name":"Gemini 3.5 Pro"},"quota":{` +
+			`"gemini-weekly":{"remaining_fraction":0.25}}}`, false, true, 0, 75},
+	} {
+		s, err := Parse(strings.NewReader(c.j))
+		if err != nil {
+			t.Fatalf("%s: Parse: %v", c.name, err)
+		}
+		if !s.RateLimitsOK || s.R5OK != c.r5 || s.R7OK != c.r7 {
+			t.Errorf("%s: RateLimitsOK=%v R5OK=%v R7OK=%v, want true/%v/%v", c.name, s.RateLimitsOK, s.R5OK, s.R7OK, c.r5, c.r7)
+		}
+		if s.R5Pct != c.r5Pct || s.R7Pct != c.r7Pct {
+			t.Errorf("%s: percentages = %d/%d, want %d/%d", c.name, s.R5Pct, s.R7Pct, c.r5Pct, c.r7Pct)
+		}
+	}
+}
+
+func TestParseAntigravityReadsOnlyTheModelsOwnFamily(t *testing.T) {
+	// The five-hour and weekly windows come only from the quota family the
+	// model draws from (Claude, GPT and 3p models: 3p; others: gemini). The
+	// other family's five-hour bucket shows under its own name, never as
+	// this session's window; its weekly bucket does not show. An own family
+	// with no usable bucket (absent, empty, null, no fraction) leaves both
+	// windows absent.
+	for _, c := range []struct {
+		name, model, quota string
+		rateLimitsOK       bool
+		scoped             string // "name pct" of the one scoped meter, "" for none
+	}{
+		{"claude model, gemini weekly only", "Claude Opus 5.5", `"gemini-weekly":{"remaining_fraction":0.9}`, false, ""},
+		{"gemini model, 3p weekly only", "Gemini 3.5 Pro", `"3p-weekly":{"remaining_fraction":0.23}`, false, ""},
+		{"claude model, gemini five-hour only", "Claude Opus 5.5", `"gemini-5h":{"remaining_fraction":0.9}`, true, "gemini-5h 10"},
+		{"gemini model, 3p five-hour only", "Gemini 3.5 Pro", `"3p-5h":{"remaining_fraction":0.77}`, true, "3p-5h 23"},
+		{"claude model, empty 3p weekly", "Claude Opus 5.5", `"3p-weekly":{},"gemini-5h":{"remaining_fraction":0.9}`, true, "gemini-5h 10"},
+		{"claude model, null 3p weekly", "Claude Opus 5.5", `"3p-weekly":null,"gemini-5h":{"remaining_fraction":0.9}`, true, "gemini-5h 10"},
+		{"claude model, 3p weekly without a fraction", "Claude Opus 5.5", `"3p-weekly":{"remaining_fraction":null},"gemini-5h":{"remaining_fraction":0.9}`, true, "gemini-5h 10"},
+	} {
+		j := `{"product":"antigravity","model":{"display_name":"` + c.model + `"},"quota":{` + c.quota + `}}`
+		s, err := Parse(strings.NewReader(j))
+		if err != nil {
+			t.Fatalf("%s: Parse: %v", c.name, err)
+		}
+		if s.R5OK || s.R7OK || s.RateLimitsOK != c.rateLimitsOK {
+			t.Errorf("%s: R5OK=%v R7OK=%v RateLimitsOK=%v, want false/false/%v", c.name, s.R5OK, s.R7OK, s.RateLimitsOK, c.rateLimitsOK)
+		}
+		var scoped []string
+		for _, m := range s.ScopedMeters {
+			scoped = append(scoped, fmt.Sprintf("%s %d", m.Name, m.Pct))
+		}
+		if got := strings.Join(scoped, ","); got != c.scoped {
+			t.Errorf("%s: scoped meters = %q, want %q", c.name, got, c.scoped)
+		}
+	}
+}
+
 func TestParseRateLimitsAbsentOrMalformed(t *testing.T) {
 	for _, j := range []string{
 		`{"model":{"display_name":"Fable 5"}}`,
@@ -178,7 +250,7 @@ func TestParseRateLimitsAbsentOrMalformed(t *testing.T) {
 			t.Fatalf("Parse(%s): %v", j, err)
 		}
 		if s.RateLimitsOK {
-			t.Errorf("RateLimitsOK = true for %s — the shape gate requires five_hour.used_percentage", j)
+			t.Errorf("RateLimitsOK = true for %s — no window carries a used percentage", j)
 		}
 	}
 }
