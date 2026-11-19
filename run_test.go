@@ -333,13 +333,16 @@ func TestRunIndexLockBadgeWiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The repository is real: let the probe see it, and nothing else.
-	hermetic := d.stat
-	d.stat = func(p string) (os.FileInfo, error) {
-		if strings.HasPrefix(p, repo+string(filepath.Separator)) {
-			return os.Stat(p)
+	seeRepo := func(d *deps) {
+		hermetic := d.stat
+		d.stat = func(p string) (os.FileInfo, error) {
+			if strings.HasPrefix(p, repo+string(filepath.Separator)) {
+				return os.Stat(p)
+			}
+			return hermetic(p)
 		}
-		return hermetic(p)
 	}
+	seeRepo(&d)
 	d.stdin = strings.NewReader(`{"session_id":"0a1b2c3d-0000-4000-8000-000000000000",` +
 		`"model":{"display_name":"Fable 5"},"workspace":{"current_dir":"` + repo + `"},` +
 		`"context_window":{"used_percentage":30,"context_window_size":1000000},` +
@@ -358,6 +361,7 @@ func TestRunIndexLockBadgeWiring(t *testing.T) {
 	// The e2e config already holds an open [project] table — append the bare
 	// key (a second [project] header is a TOML duplicate-table error).
 	d2 := e2eDeps(t, "full.json")
+	seeRepo(&d2)
 	appendConfig(t, d2, "lock_badge = false\n")
 	d2.stdin = strings.NewReader(`{"session_id":"0a1b2c3d-0000-4000-8000-000000000000",` +
 		`"model":{"display_name":"Fable 5"},"workspace":{"current_dir":"` + repo + `"},` +
