@@ -34,24 +34,30 @@ cat <<EOF
 class ClaudeStatusline < Formula
   desc "Fast, configurable status line for Claude Code"
   homepage "https://github.com/mitre/claude-statusline"
-  version "${VER}"
   license "Apache-2.0"
 
+  livecheck do
+    url :stable
+    strategy :github_latest
+  end
+
   on_macos do
-    if Hardware::CPU.arm?
+    on_arm do
       url "${BASE}/claude-statusline-${VER}-darwin-arm64.tar.gz"
       sha256 "${DARWIN_ARM}"
-    else
+    end
+    on_intel do
       url "${BASE}/claude-statusline-${VER}-darwin-amd64.tar.gz"
       sha256 "${DARWIN_AMD}"
     end
   end
 
   on_linux do
-    if Hardware::CPU.arm?
+    on_arm do
       url "${BASE}/claude-statusline-${VER}-linux-arm64.tar.gz"
       sha256 "${LINUX_ARM}"
-    else
+    end
+    on_intel do
       url "${BASE}/claude-statusline-${VER}-linux-amd64.tar.gz"
       sha256 "${LINUX_AMD}"
     end
