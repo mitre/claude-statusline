@@ -76,8 +76,14 @@ func e2eDeps(t testing.TB, stdinFixture string) deps {
 			return []byte(`{"oauthAccount":{"accountUuid":"` + e2eAccountUUID + `","emailAddress":"dev@example.com"}}`), nil
 		},
 		tokenFingerprint: func() (string, error) { return e2eFingerprint, nil },
-		// Hermetic: no legacy account record and no Antigravity config exist.
-		stat:         func(string) (os.FileInfo, error) { return nil, os.ErrNotExist },
+		// Hermetic: the fixture cwd is a git repository (runGit above models
+		// it), and no legacy account record or Antigravity config exists.
+		stat: func(p string) (os.FileInfo, error) {
+			if p == "/Users/dev/projects/demo-app/.git" {
+				return os.Stat(os.TempDir())
+			}
+			return nil, os.ErrNotExist
+		},
 		readDir:      func(string) ([]os.DirEntry, error) { return nil, os.ErrNotExist },
 		userCacheDir: func() (string, error) { return gateBase, nil },
 	}
@@ -325,6 +331,14 @@ func TestRunIndexLockBadgeWiring(t *testing.T) {
 	held := time.Now().Add(-14 * time.Minute)
 	if err := os.Chtimes(lock, held, held); err != nil {
 		t.Fatal(err)
+	}
+	// The repository is real: let the probe see it, and nothing else.
+	hermetic := d.stat
+	d.stat = func(p string) (os.FileInfo, error) {
+		if strings.HasPrefix(p, repo+string(filepath.Separator)) {
+			return os.Stat(p)
+		}
+		return hermetic(p)
 	}
 	d.stdin = strings.NewReader(`{"session_id":"0a1b2c3d-0000-4000-8000-000000000000",` +
 		`"model":{"display_name":"Fable 5"},"workspace":{"current_dir":"` + repo + `"},` +

@@ -43,12 +43,16 @@ type Options struct {
 	Engine   string        // "auto" (default), "gogit", "cli"
 	Budget   time.Duration // in-process read budget; <= 0 disables the bound
 
-	// LockBadge enables the index.lock age check (one os.Stat, both
+	// LockBadge enables the index.lock age check (one Stat, both
 	// engines); LockBadgeAfter is the strictly-greater-than age threshold
 	// below which a present lock stays silent — a lock is often legitimate
 	// (any index write; an editor-open commit holds it for minutes).
 	LockBadge      bool
 	LockBadgeAfter time.Duration
+
+	// Stat is the filesystem probe for the repository check and the
+	// index.lock check; nil means os.Stat.
+	Stat func(string) (os.FileInfo, error)
 
 	// inproc is the in-process reader seam for tests; nil means go-git.
 	inproc func(cwd string) (string, int, error)
@@ -56,10 +60,16 @@ type Options struct {
 	now func() time.Time
 }
 
-// Get returns the branch label ("?" when unknown, "@<sha>" when detached),
-// the dirty-file count, and — when enabled and strictly past the threshold —
-// the age of a held .git/index.lock, maintaining the per-directory caches.
+// Get returns the branch label ("?" when unknown, "@<sha>" when detached, ""
+// when cwd is outside any repository), the dirty-file count, and — when
+// enabled and strictly past the threshold — the age of a held
+// .git/index.lock, maintaining the per-directory caches.
 func Get(o Options, cwd string) (string, int, time.Duration) {
+	// Outside any repository there is no branch to show, and no engine may
+	// run: a non-repo directory must never fork git on every render.
+	if dotGit, _ := findDotGit(o.stat(), cwd); dotGit == "" {
+		return "", 0, 0
+	}
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(cwd)) // hash.Hash.Write never returns an error
 	key := fmt.Sprintf("%x", h.Sum64())
@@ -85,20 +95,29 @@ func Get(o Options, cwd string) (string, int, time.Duration) {
 	return branch, dirty, lockAge(o, cwd)
 }
 
+// stat returns the injected filesystem probe, or os.Stat when none is set.
+func (o Options) stat() func(string) (os.FileInfo, error) {
+	if o.Stat != nil {
+		return o.Stat
+	}
+	return os.Stat
+}
+
 // lockAge reports how long .git/index.lock has been held once strictly past
 // the threshold; zero otherwise (absent, young, disabled, or non-repo cwd).
 // Engine-independent by design: an escalated huge repo is the most likely
 // home of a long operation. Pure filesystem — never a subprocess, never a
-// lock taken, exactly one os.Stat of index.lock itself.
+// lock taken, exactly one Stat of index.lock itself.
 func lockAge(o Options, cwd string) time.Duration {
 	if !o.LockBadge {
 		return 0
 	}
-	gitdir := discoverGitDir(cwd)
+	stat := o.stat()
+	gitdir := discoverGitDir(stat, cwd)
 	if gitdir == "" {
 		return 0
 	}
-	st, err := os.Stat(filepath.Join(gitdir, "index.lock"))
+	st, err := stat(filepath.Join(gitdir, "index.lock"))
 	if err != nil {
 		return 0
 	}
@@ -118,32 +137,42 @@ func lockAge(o Options, cwd string) time.Duration {
 // own directory — the linked-worktree and submodule form, whose private git
 // dir is where that worktree's index and index.lock live). Empty when cwd is
 // outside any repository or the pointer file is malformed.
-func discoverGitDir(cwd string) string {
+func discoverGitDir(stat func(string) (os.FileInfo, error), cwd string) string {
+	p, st := findDotGit(stat, cwd)
+	if p == "" {
+		return ""
+	}
+	if st.IsDir() {
+		return p
+	}
+	b, err := readPointerFile(p)
+	if err != nil {
+		return ""
+	}
+	target, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir:")
+	if !ok {
+		return ""
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return ""
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(p), target)
+	}
+	return target
+}
+
+// findDotGit returns the nearest ".git" entry at or above cwd and its stat,
+// or "" when cwd is outside any repository.
+func findDotGit(stat func(string) (os.FileInfo, error), cwd string) (string, os.FileInfo) {
 	for dir := cwd; ; dir = filepath.Dir(dir) {
 		p := filepath.Join(dir, ".git")
-		if st, err := os.Stat(p); err == nil {
-			if st.IsDir() {
-				return p
-			}
-			b, err := readPointerFile(p)
-			if err != nil {
-				return ""
-			}
-			target, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir:")
-			if !ok {
-				return ""
-			}
-			target = strings.TrimSpace(target)
-			if target == "" {
-				return ""
-			}
-			if !filepath.IsAbs(target) {
-				target = filepath.Join(dir, target)
-			}
-			return target
+		if st, err := stat(p); err == nil {
+			return p, st
 		}
 		if filepath.Dir(dir) == dir {
-			return ""
+			return "", nil
 		}
 	}
 }
@@ -206,8 +235,15 @@ func inprocGet(o Options, cwd, branchPath, dirtyPath, markerPath string) (string
 
 // gogitRead is the real in-process engine: branch from HEAD, dirty count
 // from a worktree status walk (the `git status --porcelain` line count).
+//
+// EnableDotGitCommonDir follows a linked worktree's "commondir" file
+// (gitrepository-layout(5)): its private git dir holds HEAD and the index, but
+// branch refs and objects live in the main repository's common dir. Without
+// it HEAD's branch does not resolve, the branch reads as unknown, and every
+// tracked file counts as dirty. A plain checkout has no commondir file and is
+// read exactly as before.
 func gogitRead(cwd string) (string, int, error) {
-	repo, err := gogit.PlainOpenWithOptions(cwd, &gogit.PlainOpenOptions{DetectDotGit: true})
+	repo, err := gogit.PlainOpenWithOptions(cwd, &gogit.PlainOpenOptions{DetectDotGit: true, EnableDotGitCommonDir: true})
 	if err != nil {
 		return "", 0, err
 	}

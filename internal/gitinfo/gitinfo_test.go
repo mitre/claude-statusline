@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +16,16 @@ import (
 )
 
 const cwd = "/Users/dev/projects/demo-app"
+
+// fixtureRepoStat stands in for the filesystem when a test models a
+// repository at the fixture cwd through the engine seams: the fixture cwd has
+// a ".git" directory, and nothing else exists.
+func fixtureRepoStat(p string) (os.FileInfo, error) {
+	if p == filepath.Join(cwd, ".git") {
+		return os.Stat(os.TempDir())
+	}
+	return nil, os.ErrNotExist
+}
 
 // initRepo creates a real on-disk repository via go-git (no git binary).
 func initRepo(t *testing.T) (string, *gogit.Worktree) {
@@ -121,7 +132,7 @@ func TestOverrunWritesMarkerAndEscalatesNextRender(t *testing.T) {
 		cliCalls++
 		return cli(d, args...)
 	}
-	opts := Options{CacheDir: cacheDir, Run: counted, Budget: 30 * time.Millisecond, inproc: slow}
+	opts := Options{CacheDir: cacheDir, Run: counted, Budget: 30 * time.Millisecond, inproc: slow, Stat: fixtureRepoStat}
 
 	// Render 1: the budget is already burned — no CLI call THIS render,
 	// marker written, degraded values served (no stale caches seeded).
@@ -154,7 +165,7 @@ func TestForcedEnginesOverrideAutoSelection(t *testing.T) {
 		return "", errors.New("unreachable")
 	}
 	inproc := func(string) (string, int, error) { return "forced-inproc", 2, nil }
-	branch, dirty, _ := Get(Options{CacheDir: cacheDir, Run: fatalRun, Engine: "gogit", Budget: time.Second, inproc: inproc}, cwd)
+	branch, dirty, _ := Get(Options{CacheDir: cacheDir, Run: fatalRun, Engine: "gogit", Budget: time.Second, inproc: inproc, Stat: fixtureRepoStat}, cwd)
 	if branch != "forced-inproc" || dirty != 2 {
 		t.Errorf("forced gogit = %q, %d; want forced-inproc, 2", branch, dirty)
 	}
@@ -168,7 +179,7 @@ func TestForcedEnginesOverrideAutoSelection(t *testing.T) {
 		"[branch --show-current]":                  "cli-branch\n",
 		"[--no-optional-locks status --porcelain]": "",
 	})
-	branch, dirty, _ = Get(Options{CacheDir: t.TempDir(), Run: cli, Engine: "cli", inproc: fatalInproc}, cwd)
+	branch, dirty, _ = Get(Options{CacheDir: t.TempDir(), Run: cli, Engine: "cli", inproc: fatalInproc, Stat: fixtureRepoStat}, cwd)
 	if branch != "cli-branch" || dirty != 0 {
 		t.Errorf("forced cli = %q, %d; want cli-branch, 0", branch, dirty)
 	}
@@ -191,7 +202,7 @@ func TestBranchAndDirty(t *testing.T) {
 		"[branch --show-current]":                  "main\n",
 		"[--no-optional-locks status --porcelain]": "?? SESSION-KICKOFF.md\n?? docs/\n",
 	})
-	branch, dirty, _ := Get(Options{CacheDir: dir, Run: run, Engine: "cli"}, cwd)
+	branch, dirty, _ := Get(Options{CacheDir: dir, Run: run, Engine: "cli", Stat: fixtureRepoStat}, cwd)
 	if branch != "main" || dirty != 2 {
 		t.Errorf("Get = %q, %d; want main, 2", branch, dirty)
 	}
@@ -204,7 +215,7 @@ func TestDetachedHeadShowsShortSHA(t *testing.T) {
 		"[rev-parse --short HEAD]":                 "abc1234\n",
 		"[--no-optional-locks status --porcelain]": "",
 	})
-	branch, _, _ := Get(Options{CacheDir: dir, Run: run, Engine: "cli"}, cwd)
+	branch, _, _ := Get(Options{CacheDir: dir, Run: run, Engine: "cli", Stat: fixtureRepoStat}, cwd)
 	if branch != "@abc1234" {
 		t.Errorf("branch = %q, want @abc1234", branch)
 	}
@@ -212,7 +223,7 @@ func TestDetachedHeadShowsShortSHA(t *testing.T) {
 
 func TestGitFailureFallsBack(t *testing.T) {
 	dir := t.TempDir()
-	branch, dirty, _ := Get(Options{CacheDir: dir, Run: runnerFor(nil), Engine: "cli"}, cwd)
+	branch, dirty, _ := Get(Options{CacheDir: dir, Run: runnerFor(nil), Engine: "cli", Stat: fixtureRepoStat}, cwd)
 	if branch != "?" || dirty != 0 {
 		t.Errorf("Get on failure = %q, %d; want \"?\", 0", branch, dirty)
 	}
@@ -224,7 +235,7 @@ func TestCleanTreeDirtyZero(t *testing.T) {
 		"[branch --show-current]":                  "main\n",
 		"[--no-optional-locks status --porcelain]": "",
 	})
-	_, dirty, _ := Get(Options{CacheDir: dir, Run: run, Engine: "cli"}, cwd)
+	_, dirty, _ := Get(Options{CacheDir: dir, Run: run, Engine: "cli", Stat: fixtureRepoStat}, cwd)
 	if dirty != 0 {
 		t.Errorf("dirty = %d, want 0 for clean tree", dirty)
 	}
@@ -246,7 +257,7 @@ func TestStaleCachesServedWhenGitFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	branch, dirty, _ := Get(Options{CacheDir: dir, Run: runnerFor(nil), Engine: "cli"}, cwd) // every git call fails
+	branch, dirty, _ := Get(Options{CacheDir: dir, Run: runnerFor(nil), Engine: "cli", Stat: fixtureRepoStat}, cwd) // every git call fails
 	if branch != "feature-x" || dirty != 4 {
 		t.Errorf("Get(git down, stale caches present) = %q, %d; want \"feature-x\", 4", branch, dirty)
 	}
@@ -268,7 +279,7 @@ func TestStatusUsesNoOptionalLocks(t *testing.T) {
 		}
 		return "main\n", nil
 	}
-	Get(Options{CacheDir: dir, Run: run, Engine: "cli"}, cwd)
+	Get(Options{CacheDir: dir, Run: run, Engine: "cli", Stat: fixtureRepoStat}, cwd)
 	if statusArgs != "[--no-optional-locks status --porcelain]" {
 		t.Errorf("status args = %s; want [--no-optional-locks status --porcelain]", statusArgs)
 	}
@@ -283,7 +294,7 @@ func TestCacheFilesUseFNVKeys(t *testing.T) {
 		"[branch --show-current]":                  "main\n",
 		"[--no-optional-locks status --porcelain]": "?? x\n",
 	})
-	Get(Options{CacheDir: dir, Run: run, Engine: "cli"}, cwd)
+	Get(Options{CacheDir: dir, Run: run, Engine: "cli", Stat: fixtureRepoStat}, cwd)
 	const key = "e6531ce5fc09ac4f" // fnv1a-64 of the cwd fixture above
 	if _, err := os.Stat(filepath.Join(dir, "branch-"+key)); err != nil {
 		t.Errorf("branch cache not at FNV key: %v", err)
@@ -527,21 +538,77 @@ func TestEscalationWithNilRunnerDegrades(t *testing.T) {
 	}
 }
 
-// The boundary the escalation must NOT cross: a cwd that is genuinely not a
-// repository keeps the degraded values and never spawns a git subprocess —
-// otherwise every non-repo directory would fork git on every render.
-func TestNonRepoCwdDegradesWithoutCLI(t *testing.T) {
+// gitCLI runs the real git binary in dir; tests that need git's own layout
+// (a linked worktree) use it to build fixtures and as the CLI engine.
+func gitCLI(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=dev", "GIT_AUTHOR_EMAIL=dev@example.com",
+		"GIT_COMMITTER_NAME=dev", "GIT_COMMITTER_EMAIL=dev@example.com")
+	out, err := cmd.Output()
+	return string(out), err
+}
+
+// A linked worktree (`git worktree add`) has a ".git" pointer file and a
+// private git dir holding its own HEAD and index, while the branch refs and
+// objects live in the main repository's common dir. Both engines must report
+// that worktree's branch and git's own dirty count.
+func TestGetLinkedWorktreeReportsItsBranchAndDirtyCount(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary required to create a linked worktree")
+	}
+	mainDir := t.TempDir()
+	mustGit := func(dir string, args ...string) {
+		t.Helper()
+		if _, err := gitCLI(dir, args...); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+	mustGit(mainDir, "init", "-q", "-b", "main")
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		if err := os.WriteFile(filepath.Join(mainDir, name), []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustGit(mainDir, "add", ".")
+	mustGit(mainDir, "commit", "-q", "-m", "three files")
+	wtDir := filepath.Join(t.TempDir(), "wt")
+	mustGit(mainDir, "worktree", "add", "-q", "-b", "scratch", wtDir)
+	if err := os.WriteFile(filepath.Join(wtDir, "a.txt"), []byte("edited"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	porcelain, err := gitCLI(wtDir, "status", "--porcelain")
+	if err != nil || countLines(porcelain) != 1 {
+		t.Fatalf("fixture: git status --porcelain = %q, %v; want one line", porcelain, err)
+	}
+
+	for _, engine := range []string{"gogit", "cli"} {
+		branch, dirty, _ := Get(Options{CacheDir: t.TempDir(), Run: gitCLI, Engine: engine, Budget: 5 * time.Second}, wtDir)
+		if branch != "scratch" || dirty != 1 {
+			t.Errorf("%s engine in a linked worktree = %q, %d; want scratch, 1", engine, branch, dirty)
+		}
+	}
+}
+
+// A cwd that is genuinely not inside a repository has no branch to show: Get
+// returns an empty branch and no dirty count on every engine, so the project
+// row omits the branch segment instead of drawing "⎇ ?". It also never spawns
+// a git subprocess (every non-repo directory would otherwise fork git on
+// every render) and never escalates.
+func TestNonRepoCwdHasNoBranchAndNeverRunsGit(t *testing.T) {
 	nonRepo := t.TempDir()
-	cacheDir := t.TempDir()
 	fatalRun := func(_ string, _ ...string) (string, error) {
 		t.Error("CLI git invoked for a non-repository cwd")
 		return "", errors.New("unreachable")
 	}
-	branch, dirty, _ := Get(Options{CacheDir: cacheDir, Run: fatalRun, Budget: time.Second}, nonRepo)
-	if branch != "?" || dirty != 0 {
-		t.Errorf("non-repo render = %q, %d; want degraded \"?\", 0", branch, dirty)
-	}
-	if _, err := os.Stat(filepath.Join(cacheDir, "engine-cli-"+fnvKey(nonRepo))); err == nil {
-		t.Error("escalation marker written for a non-repository cwd")
+	for _, engine := range []string{"auto", "gogit", "cli"} {
+		cacheDir := t.TempDir()
+		branch, dirty, _ := Get(Options{CacheDir: cacheDir, Run: fatalRun, Engine: engine, Budget: time.Second}, nonRepo)
+		if branch != "" || dirty != 0 {
+			t.Errorf("%s engine, non-repo cwd = %q, %d; want \"\", 0", engine, branch, dirty)
+		}
+		if _, err := os.Stat(filepath.Join(cacheDir, "engine-cli-"+fnvKey(nonRepo))); err == nil {
+			t.Errorf("%s engine: escalation marker written for a non-repository cwd", engine)
+		}
 	}
 }
