@@ -152,6 +152,7 @@ func run(d deps) (string, string) {
 			Budget:         deadline,
 			LockBadge:      cfg.LockBadge,
 			LockBadgeAfter: time.Duration(cfg.LockBadgeAfterS) * time.Second,
+			Stat:           stat,
 		}, sess.CWD)
 	} else {
 		st.Branch = "?"

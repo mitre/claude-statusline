@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- In a linked git worktree (`git worktree add`), the project row showed
+  `⎇ ?` and counted every tracked file as dirty: the in-process git reader
+  did not follow the worktree's `commondir` to the main repository's
+  branches. It now shows the worktree's branch and git's own dirty count.
+- A directory outside any git repository no longer shows `⎇ ?`: the project
+  row has no branch segment there, and no git command runs for it.
+
 ### Security
 
 - Cache files are written through a temporary file created exclusively under
