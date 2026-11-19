@@ -6,24 +6,30 @@
 class ClaudeStatusline < Formula
   desc "Fast, configurable status line for Claude Code"
   homepage "https://github.com/mitre/claude-statusline"
-  version "9.9.9"
   license "Apache-2.0"
 
+  livecheck do
+    url :stable
+    strategy :github_latest
+  end
+
   on_macos do
-    if Hardware::CPU.arm?
+    on_arm do
       url "https://github.com/mitre/claude-statusline/releases/download/v9.9.9/claude-statusline-9.9.9-darwin-arm64.tar.gz"
       sha256 "2222222222222222222222222222222222222222222222222222222222222222"
-    else
+    end
+    on_intel do
       url "https://github.com/mitre/claude-statusline/releases/download/v9.9.9/claude-statusline-9.9.9-darwin-amd64.tar.gz"
       sha256 "1111111111111111111111111111111111111111111111111111111111111111"
     end
   end
 
   on_linux do
-    if Hardware::CPU.arm?
+    on_arm do
       url "https://github.com/mitre/claude-statusline/releases/download/v9.9.9/claude-statusline-9.9.9-linux-arm64.tar.gz"
       sha256 "4444444444444444444444444444444444444444444444444444444444444444"
-    else
+    end
+    on_intel do
       url "https://github.com/mitre/claude-statusline/releases/download/v9.9.9/claude-statusline-9.9.9-linux-amd64.tar.gz"
       sha256 "3333333333333333333333333333333333333333333333333333333333333333"
     end
