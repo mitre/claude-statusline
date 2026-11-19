@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Cache files are written through a temporary file created exclusively under
+  a random name. The temporary name used to be predictable
+  (`<file>.<pid>`), and the write followed a symlink planted at it: in a
+  cache directory another account could write to, that overwrote the
+  symlink's target and left the cache file as a symlink. A failed write no
+  longer leaves its temporary file behind.
+
 ## [0.4.0] - 2026-11-18
 
 ### Added
