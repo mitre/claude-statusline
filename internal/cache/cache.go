@@ -6,8 +6,8 @@
 package cache
 
 import (
-	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -35,9 +35,26 @@ func ReadStale(path string) (string, bool) {
 }
 
 // Write atomically replaces path's content via temp file + rename.
-func Write(path, content string) error {
-	tmp := fmt.Sprintf("%s.%d", path, os.Getpid())
-	if err := os.WriteFile(tmp, []byte(content), 0o600); err != nil {
+//
+// The temp file is created exclusively (O_EXCL, mode 0600) under a random name
+// in path's directory, so a symlink or file another actor planted at a
+// predictable name is never written through. It is removed on every error.
+func Write(path, content string) (err error) {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmp)
+		}
+	}()
+	_, err = f.WriteString(content)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)

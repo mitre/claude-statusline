@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,6 +89,68 @@ func TestReadStaleMissesOnUnreadablePath(t *testing.T) {
 	dir := t.TempDir() // a directory is not a readable cache file
 	if got, ok := ReadStale(dir); ok {
 		t.Errorf("ReadStale(%q) = %q, true; want miss for unreadable path", dir, got)
+	}
+}
+
+// A cache dir another actor can write to may hold a symlink at a name the
+// writer can predict. Write must never write through it, and path must end up
+// a regular file of its own.
+func TestWriteDoesNotFollowAPlantedTempSymlink(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "usage-x")
+	victim := filepath.Join(dir, "victim")
+	if err := os.WriteFile(victim, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	planted := fmt.Sprintf("%s.%d", p, os.Getpid())
+	if err := os.Symlink(victim, planted); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Write(p, "new"); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	if b, _ := os.ReadFile(victim); string(b) != "original" {
+		t.Errorf("symlink target overwritten: victim = %q, want \"original\"", b)
+	}
+	info, err := os.Lstat(p)
+	if err != nil {
+		t.Fatalf("Lstat(path): %v", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		t.Errorf("path mode = %v, want a regular 0600 file", info.Mode())
+	}
+	if b, _ := os.ReadFile(p); string(b) != "new" {
+		t.Errorf("path content = %q, want \"new\"", b)
+	}
+	if target, err := os.Readlink(planted); err != nil || target != victim {
+		t.Errorf("planted symlink disturbed: Readlink = %q, %v", target, err)
+	}
+}
+
+// When the rename fails after the temp file exists, Write reports the error
+// and leaves no temp file behind.
+func TestWriteRemovesTempFileWhenRenameFails(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "occupied")
+	if err := os.Mkdir(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p, "child"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Write(p, "new"); err == nil {
+		t.Fatal("Write over a non-empty directory = nil error, want failure")
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "occupied" {
+		t.Errorf("temp debris left after a failed rename: %v", entries)
 	}
 }
 
