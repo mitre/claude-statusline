@@ -1183,13 +1183,15 @@ if [ "$1" = venv ]; then
   cat > "$v/bin/litellm" <<'LITELLM'
 ` + litellm + `LITELLM
   chmod 700 "$v/bin/litellm"
-  : > "$v/bin/python"
+  printf '#!/bin/sh\nexec python3 "$@"\n' > "$v/bin/python"
+  chmod 700 "$v/bin/python"
 fi
 `,
 	}
 	if curlCode != "" {
 		shims["curl"] = `printf '%s\n' "$*" >> "` + f.rec + `/curl.args"
 case "$*" in
+  *model/info*) cat "` + f.rec + `/model-info.json" ;;
   *-w*) printf '` + curlCode + `' ;;
   *) printf '{"data":[{"id":"mock"},{"id":"local"}]}' ;;
 esac
@@ -1560,5 +1562,55 @@ func TestLocalEndpointStartRefusesMalformedReadyTimeout(t *testing.T) {
 				t.Errorf("a proxy was launched before ENDPOINT_READY_TIMEOUT=%q was refused", timeout)
 			}
 		})
+	}
+}
+
+func TestLocalEndpointModelReportsTheLocalOllamaModel(t *testing.T) {
+	// The model comes from the running proxy's /v1/model/info (LiteLLM has
+	// parsed the YAML), so route order and config comments cannot matter.
+	cases := []struct {
+		name, info, want string
+		fails            bool
+	}{
+		{"local route listed last", `{"data":[{"model_name":"mock","litellm_params":{"model":"anthropic/mock"}},{"model_name":"local","litellm_params":{"model":"ollama_chat/gemma4:e2b"}}]}`, "gemma4:e2b", false},
+		{"params before name", `{"data":[{"litellm_params":{"model":"ollama_chat/qwen3:8b"},"model_name":"local"},{"model_name":"mock","litellm_params":{"model":"ollama_chat/other:1b"}}]}`, "qwen3:8b", false},
+		{"no local route", `{"data":[{"model_name":"mock","litellm_params":{"model":"ollama_chat/gemma4:e2b"}}]}`, "", true},
+		{"local route twice", `{"data":[{"model_name":"local","litellm_params":{"model":"ollama_chat/a:1b"}},{"model_name":"local","litellm_params":{"model":"ollama_chat/b:1b"}}]}`, "", true},
+		{"not an ollama model", `{"data":[{"model_name":"local","litellm_params":{"model":"anthropic/claude-x"}}]}`, "", true},
+		{"empty model name after prefix", `{"data":[{"model_name":"local","litellm_params":{"model":"ollama_chat/"}}]}`, "", true},
+		{"not JSON", `<html>proxy error</html>`, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newEndpointFixture(t, "200")
+			if err := os.WriteFile(filepath.Join(f.rec, "model-info.json"), []byte(tc.info), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if out, err := f.do(t, "start"); err != nil {
+				t.Fatalf("start: %v: %s", err, out)
+			}
+			cmd := exec.Command("sh", f.script, "model")
+			cmd.Env = f.env
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			err := cmd.Run()
+			if tc.fails {
+				if err == nil || stdout.Len() != 0 {
+					t.Errorf("model must fail and print no model, got %q (err %v, stderr %q)", stdout.String(), err, stderr.String())
+				}
+				return
+			}
+			if err != nil || strings.TrimSpace(stdout.String()) != tc.want {
+				t.Errorf("model = %q (err %v, stderr %q), want %q", stdout.String(), err, stderr.String(), tc.want)
+			}
+		})
+	}
+}
+
+func TestLocalEndpointModelNeedsARunningEndpoint(t *testing.T) {
+	f := newEndpointFixture(t, "200")
+	out, err := f.do(t, "model")
+	if err == nil || !strings.Contains(out, "endpoint-up") {
+		t.Errorf("model with no endpoint running must fail and point at make endpoint-up: %v: %s", err, out)
 	}
 }
