@@ -1614,3 +1614,411 @@ func TestLocalEndpointModelNeedsARunningEndpoint(t *testing.T) {
 		t.Errorf("model with no endpoint running must fail and point at make endpoint-up: %v: %s", err, out)
 	}
 }
+
+func TestLocalEndpointRunDirPrintsTheRunDirectory(t *testing.T) {
+	f := newEndpointFixture(t, "200")
+	out, err := f.do(t, "run-dir")
+	if err != nil || strings.TrimSpace(out) != f.run {
+		t.Errorf("run-dir = %q (err %v), want %q", out, err, f.run)
+	}
+}
+
+// scripts/live-check.sh runs the installed Claude Code interactively in a
+// private tmux server against the local endpoint, with a throwaway HOME and
+// config dir, and keeps the statusline payload of the finished turn. The
+// shims stand in for tmux (runs the session command, records keys) and
+// claude (records its environment, renders the statusline at start, waits
+// for the prompt, fires the Stop hook, renders the post-turn payload, waits
+// for /exit). The invariants: nothing of the caller's environment reaches
+// Claude Code, the key never reaches a command line or a kept file, and the
+// throwaway dirs and the tmux server are gone on every exit path.
+
+type liveCheckFixture struct {
+	*endpointFixture
+	script string // the copied scripts/live-check.sh
+	out    string // LIVE_CHECK_OUT
+	sl     string // the fake STATUSLINE
+}
+
+const (
+	liveStartPayload = `{"marker":"start","context_window":{"total_output_tokens":0}}`
+	liveTurnPayload  = `{"marker":"post-turn","context_window":{"total_output_tokens":7}}`
+)
+
+func newLiveCheckFixture(t *testing.T, startEndpoint bool) *liveCheckFixture {
+	t.Helper()
+	f := &liveCheckFixture{endpointFixture: newEndpointFixture(t, "200")}
+	f.script = filepath.Join(filepath.Dir(f.endpointFixture.script), "live-check.sh")
+	src, err := os.ReadFile("scripts/live-check.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.script, src, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f.out = t.TempDir()
+	f.sl = filepath.Join(t.TempDir(), "statusline")
+	if err := os.WriteFile(f.sl, []byte("#!/bin/sh\nprintf 'rendered %s\\n' \"$(sed -n 's/.*\"marker\":\"\\([^\"]*\\)\".*/\\1/p')\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"start.json": liveStartPayload, "turn.json": liveTurnPayload} {
+		if err := os.WriteFile(filepath.Join(f.rec, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := f.rec
+	shimPath(t, map[string]string{
+		"tmux": `rec="` + rec + `"
+sock=
+if [ "$1" = -S ]; then sock=$2; shift 2; fi
+sub=$1; shift
+case "$sub" in
+new-session)
+  dir=.
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -d) shift ;;
+      -s|-x|-y) shift 2 ;;
+      -c) dir=$2; shift 2 ;;
+      --) shift; break ;;
+      *) break ;;
+    esac
+  done
+  printf '%s\n' "$sock" > "$rec/tmux.socket"
+  printf '%s\n' "$*" >> "$rec/tmux.argv"
+  ( cd "$dir" && exec "$@" ) > "$rec/session.log" 2>&1 &
+  echo $! > "$rec/session.pid"
+  ;;
+send-keys)
+  while [ $# -gt 0 ]; do case "$1" in -t) shift 2 ;; -l) shift ;; *) break ;; esac; done
+  printf '%s\n' "$*" >> "$rec/keys"
+  ;;
+has-session)
+  kill -0 "$(cat "$rec/session.pid" 2>/dev/null)" 2>/dev/null
+  ;;
+kill-server)
+  touch "$rec/tmux.killed"
+  kill "$(cat "$rec/session.pid" 2>/dev/null)" 2>/dev/null
+  exit 0
+  ;;
+esac
+`,
+		"claude": `rec="` + rec + `"
+if [ "$1" = --version ]; then echo "9.9.9 (Claude Code)"; exit 0; fi
+env | sort > "$rec/claude.env"
+printf '%s\n' "$*" > "$rec/claude.argv"
+[ "$1" = --settings ] || { echo "claude shim: expected --settings" >&2; exit 2; }
+cp "$2" "$rec/settings.json"
+cp "$CLAUDE_CONFIG_DIR/.claude.json" "$rec/seed.json"
+sl=$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]))["statusLine"]["command"])' "$2")
+stop=$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]))["hooks"]["Stop"][0]["hooks"][0]["command"])' "$2")
+sh -c "$sl" < "$rec/start.json" > /dev/null
+waitkey() { i=0; until grep -qx -- "$1" "$rec/keys" 2>/dev/null; do i=$((i + 1)); [ $i -gt 300 ] && exit 3; sleep 0.1; done; }
+waitkey Enter
+[ -f "$rec/hang" ] && exec sleep 300
+early() { sleep 1.5; grep -qx /exit "$rec/keys" && touch "$rec/exit-early"; }
+if [ -f "$rec/stop-first" ]; then
+  echo '{}' | sh -c "$stop"; early
+  sh -c "$sl" < "$rec/turn.json" > /dev/null
+else
+  sh -c "$sl" < "$rec/turn.json" > /dev/null; early
+  echo '{}' | sh -c "$stop"
+fi
+waitkey /exit
+`,
+	})
+	// The endpoint fixture copied PATH before these shims existed.
+	f.env = append(f.env, "PATH="+os.Getenv("PATH"))
+	if startEndpoint {
+		if out, err := f.do(t, "start"); err != nil {
+			t.Fatalf("start: %v: %s", err, out)
+		}
+	}
+	return f
+}
+
+func (f *liveCheckFixture) check(t *testing.T, extraEnv ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("sh", f.script)
+	cmd.Env = append(append(append([]string{}, f.env...),
+		"ROUTE=mock", "STATUSLINE="+f.sl, "VARS=", "LIVE_CHECK_OUT="+f.out, "LIVE_CHECK_TIMEOUT=20"),
+		extraEnv...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// parseEnvDump parses `env | sort` output; values never span lines in these tests.
+func parseEnvDump(s string) map[string]string {
+	m := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(s), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			m[k] = v
+		}
+	}
+	return m
+}
+
+func outputDir(t *testing.T, out string) string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if dir, ok := strings.CutPrefix(line, "output: "); ok {
+			return strings.TrimSpace(dir)
+		}
+	}
+	t.Fatalf("live-check printed no output directory:\n%s", out)
+	return ""
+}
+
+func TestLiveCheckRunsClaudeIsolatedAndCapturesPayload(t *testing.T) {
+	callerHome := t.TempDir()
+	t.Setenv("HOME", callerHome)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(callerHome, ".claude"))
+	t.Setenv("ANTHROPIC_API_KEY", "caller-api-key")
+	t.Setenv("ANTHROPIC_BASE_URL", "https://caller.example.com")
+	t.Setenv("CALLER_ONLY", "leak")
+	f := newLiveCheckFixture(t, true)
+	pwned := filepath.Join(t.TempDir(), "pwned")
+	inject := "$(touch${IFS}" + pwned + ")" // no space: VARS values cannot hold one
+
+	out, err := f.check(t, "VARS=CLAUDE_CODE_USE_GATEWAY=1 INJECT="+inject)
+	if err != nil {
+		t.Fatalf("live-check: %v:\n%s\nsession log:\n%s", err, out, f.recorded(t, "session.log"))
+	}
+
+	key, err := os.ReadFile(filepath.Join(f.run, "key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := parseEnvDump(f.recorded(t, "claude.env"))
+	want := map[string]string{
+		"TERM":                          "xterm-256color",
+		"DISABLE_AUTOUPDATER":           "1",
+		"ANTHROPIC_BASE_URL":            "http://127.0.0.1:4999",
+		"ANTHROPIC_AUTH_TOKEN":          string(key),
+		"ANTHROPIC_MODEL":               "mock",
+		"ANTHROPIC_SMALL_FAST_MODEL":    "mock",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL": "mock",
+		"CLAUDE_CODE_USE_GATEWAY":       "1",
+		"INJECT":                        inject,
+	}
+	for k, v := range want {
+		if env[k] != v {
+			t.Errorf("claude saw %s=%q, want %q", k, env[k], v)
+		}
+	}
+	// PWD, SHLVL, _ and OLDPWD are what a POSIX shell adds on its own.
+	allowed := map[string]bool{"PATH": true, "HOME": true, "CLAUDE_CONFIG_DIR": true, "PWD": true, "SHLVL": true, "_": true, "OLDPWD": true}
+	for k := range env {
+		if _, ok := want[k]; !ok && !allowed[k] {
+			t.Errorf("claude saw %s, which is not on the allowlist", k)
+		}
+	}
+	home, cfg := env["HOME"], env["CLAUDE_CONFIG_DIR"]
+	if home == "" || home == callerHome || strings.HasPrefix(home, callerHome+"/") {
+		t.Errorf("claude HOME = %q, want a fresh directory (caller HOME %q)", home, callerHome)
+	}
+	if cfg == "" || cfg == os.Getenv("CLAUDE_CONFIG_DIR") || strings.HasPrefix(cfg, callerHome+"/") {
+		t.Errorf("claude CLAUDE_CONFIG_DIR = %q, want a fresh directory", cfg)
+	}
+	if _, err := os.Stat(pwned); !os.IsNotExist(err) {
+		t.Error("a VARS value was run as shell")
+	}
+
+	var seed map[string]any
+	if err := json.Unmarshal([]byte(f.recorded(t, "seed.json")), &seed); err != nil {
+		t.Fatalf("seeded .claude.json: %v", err)
+	}
+	projects, _ := seed["projects"].(map[string]any)
+	if seed["hasCompletedOnboarding"] != true || len(seed) != 3 || len(projects) != 1 {
+		t.Errorf("seed must hold only onboarding, theme and one trusted project: %v", seed)
+	}
+	if p, _ := projects[env["PWD"]].(map[string]any); p["hasTrustDialogAccepted"] != true {
+		t.Errorf("seed must trust the session's working directory %q: %v", env["PWD"], projects)
+	}
+
+	dir := outputDir(t, out)
+	if !strings.HasPrefix(dir, f.out+"/") {
+		t.Errorf("output directory %q is not under LIVE_CHECK_OUT %q", dir, f.out)
+	}
+	for name, want := range map[string]string{
+		"capture.json":       liveTurnPayload,
+		"rows.txt":           "rendered post-turn\n",
+		"claude-version.txt": "9.9.9 (Claude Code)\n",
+	} {
+		got, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil || string(got) != want {
+			t.Errorf("%s = %q (%v), want %q", name, got, err, want)
+		}
+	}
+	keys := f.recorded(t, "keys")
+	if !strings.Contains(keys, "\nEnter\n") || !strings.HasSuffix(keys, "/exit\nEnter\n") {
+		t.Errorf("tmux keys must be a prompt, Enter, /exit, Enter; got:\n%s", keys)
+	}
+	sock := strings.TrimSpace(f.recorded(t, "tmux.socket"))
+	if sock == "" || !strings.HasPrefix(sock, filepath.Dir(home)+"/") {
+		t.Errorf("tmux must run on a private -S socket inside the throwaway directory, got %q (HOME %q)", sock, home)
+	}
+
+	kept := []string{out, f.recorded(t, "tmux.argv"), f.recorded(t, "claude.argv"), f.recorded(t, "settings.json"), f.recorded(t, "seed.json")}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		b, _ := os.ReadFile(filepath.Join(dir, e.Name()))
+		kept = append(kept, string(b))
+	}
+	for _, s := range kept {
+		if strings.Contains(s, string(key)) {
+			t.Errorf("the key reached a command line, the output or a kept file:\n%s", s)
+		}
+	}
+	assertLiveCheckCleanedUp(t, f, home, cfg, sock)
+}
+
+func assertLiveCheckCleanedUp(t *testing.T, f *liveCheckFixture, dirs ...string) {
+	t.Helper()
+	for _, d := range dirs {
+		if _, err := os.Stat(d); !os.IsNotExist(err) {
+			t.Errorf("throwaway directory %q was left behind", d)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(f.rec, "tmux.killed")); err != nil {
+		t.Error("the private tmux server was not stopped")
+	}
+}
+
+func TestLiveCheckWaitsForTheStopHookAndThePostTurnCapture(t *testing.T) {
+	// Either signal alone can come first: the turn is over only when the
+	// Stop hook has fired and a capture shows the turn's output tokens.
+	for _, stopFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stop hook first %v", stopFirst), func(t *testing.T) {
+			f := newLiveCheckFixture(t, true)
+			if stopFirst {
+				if err := os.WriteFile(filepath.Join(f.rec, "stop-first"), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if out, err := f.check(t); err != nil {
+				t.Fatalf("live-check: %v:\n%s", err, out)
+			}
+			if _, err := os.Stat(filepath.Join(f.rec, "exit-early")); err == nil {
+				t.Error("/exit was sent before the turn had ended")
+			}
+		})
+	}
+}
+
+func TestLiveCheckRefusesBeforeStartingClaude(t *testing.T) {
+	cases := []struct {
+		name, want string
+		env        []string
+		down       bool
+	}{
+		{"endpoint down", "endpoint-up", nil, true},
+		{"unknown route", "ROUTE", []string{"ROUTE=remote"}, false},
+		{"statusline missing", "make build", []string{"STATUSLINE=/nonexistent/claude-statusline"}, false},
+		{"lowercase var name", "VARS", []string{"VARS=lower=1"}, false},
+		{"var without value", "VARS", []string{"VARS=JUSTNAME"}, false},
+		{"var the helper manages", "HOME", []string{"VARS=HOME=/Users/someone"}, false},
+		{"var given twice", "twice", []string{"VARS=A_B=1 A_B=2"}, false},
+		{"zero-padded timeout", "LIVE_CHECK_TIMEOUT", []string{"LIVE_CHECK_TIMEOUT=08"}, false},
+		{"zero timeout", "LIVE_CHECK_TIMEOUT", []string{"LIVE_CHECK_TIMEOUT=0"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLiveCheckFixture(t, !tc.down)
+			out, err := f.check(t, tc.env...)
+			if err == nil || !strings.Contains(out, tc.want) {
+				t.Errorf("live-check must refuse naming %q: %v:\n%s", tc.want, err, out)
+			}
+			if _, err := os.Stat(filepath.Join(f.rec, "tmux.argv")); !os.IsNotExist(err) {
+				t.Error("a session was started before the refusal")
+			}
+		})
+	}
+}
+
+func TestLiveCheckRefusesWithoutTmux(t *testing.T) {
+	f := newLiveCheckFixture(t, true)
+	bin := t.TempDir()
+	dirname, err := exec.LookPath("dirname")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dirname, filepath.Join(bin, "dirname")); err != nil {
+		t.Fatal(err)
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(sh, f.script)
+	cmd.Env = append(append([]string{}, f.env...), "PATH="+bin, "ROUTE=mock", "STATUSLINE="+f.sl, "LIVE_CHECK_OUT="+f.out)
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "tmux") {
+		t.Errorf("live-check without tmux must refuse naming it: %v:\n%s", err, out)
+	}
+}
+
+func TestLiveCheckLocalRouteNeedsAPulledModelWithTools(t *testing.T) {
+	const info = `{"data":[{"model_name":"local","litellm_params":{"model":"ollama_chat/gemma9:1b"}}]}`
+	withTools := "  Capabilities\n    completion\n    tools\n    thinking\n\n"
+	noTools := "  Capabilities\n    completion\n    thinking\n        tools-like-level    true\n\n  Parameters\n    tools    1\n"
+	cases := []struct {
+		name, ollama, want string
+		fails              bool
+	}{
+		{"not pulled", `echo "Error: model '$2' not found" >&2; exit 1`, "endpoint-pull", true},
+		{"no tools capability", `printf '` + noTools + `'`, "tools", true},
+		{"tools capability", `printf '` + withTools + `'`, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLiveCheckFixture(t, false)
+			if err := os.WriteFile(filepath.Join(f.rec, "model-info.json"), []byte(info), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if out, err := f.do(t, "start"); err != nil {
+				t.Fatalf("start: %v: %s", err, out)
+			}
+			shimPath(t, map[string]string{"ollama": `printf '%s\n' "$*" >> "` + f.rec + `/ollama.args"
+` + tc.ollama + "\n"})
+			f.env = append(f.env, "PATH="+os.Getenv("PATH"))
+			out, err := f.check(t, "ROUTE=local")
+			if tc.fails {
+				if err == nil || !strings.Contains(out, tc.want) {
+					t.Errorf("must refuse naming %q: %v:\n%s", tc.want, err, out)
+				}
+				if _, err := os.Stat(filepath.Join(f.rec, "tmux.argv")); !os.IsNotExist(err) {
+					t.Error("a session was started before the refusal")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("live-check ROUTE=local: %v:\n%s", err, out)
+			}
+			if got := f.recorded(t, "ollama.args"); !strings.Contains(got, "show gemma9:1b") {
+				t.Errorf("ollama must be asked about the model the proxy names, got %q", got)
+			}
+			env := parseEnvDump(f.recorded(t, "claude.env"))
+			if env["ANTHROPIC_MODEL"] != "local" || env["ANTHROPIC_SMALL_FAST_MODEL"] != "local" {
+				t.Errorf("ROUTE=local must select the local route for both models: %v", env)
+			}
+		})
+	}
+}
+
+func TestLiveCheckTimesOutAndCleansUp(t *testing.T) {
+	f := newLiveCheckFixture(t, true)
+	if err := os.WriteFile(filepath.Join(f.rec, "hang"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	out, err := f.check(t, "LIVE_CHECK_TIMEOUT=2")
+	if err == nil || !strings.Contains(out, "within 2s") {
+		t.Errorf("a turn that never finishes must time out with a message: %v:\n%s", err, out)
+	}
+	if d := time.Since(start); d > 15*time.Second {
+		t.Errorf("timeout took %v", d)
+	}
+	env := parseEnvDump(f.recorded(t, "claude.env"))
+	assertLiveCheckCleanedUp(t, f, env["HOME"], env["CLAUDE_CONFIG_DIR"])
+}

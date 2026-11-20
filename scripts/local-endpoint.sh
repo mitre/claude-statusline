@@ -8,6 +8,7 @@
 #   local-endpoint.sh stop     end the process start began; remove run files
 #   local-endpoint.sh status   exit 0 and describe it when running, else exit 3
 #   local-endpoint.sh model    the Ollama model behind the local route
+#   local-endpoint.sh run-dir  the run directory (key, port and pid files)
 #
 # Run state lives in the user cache directory (ENDPOINT_RUN_DIR overrides):
 # the pid and its start time, a per-run key (mode 0600), the curl header
@@ -240,8 +241,9 @@ start) start ;;
 stop) stop ;;
 status) status ;;
 model) model ;;
+run-dir) echo "$RUN" ;;
 *)
-  echo "usage: local-endpoint.sh start|stop|status|model" >&2
+  echo "usage: local-endpoint.sh start|stop|status|model|run-dir" >&2
   exit 2
   ;;
 esac
