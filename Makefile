@@ -4,7 +4,7 @@ DIST   := dist
 .PHONY: build test vet lint vuln race cover fuzz bench check release snapshot clean \
 	tools hooks preflight release-checksums publish-formula dev-install \
 	require-golangci-lint require-govulncheck require-goreleaser \
-	endpoint-lock require-uv
+	endpoint-lock require-uv endpoint-up endpoint-down endpoint-status endpoint-pull
 
 COVER_MIN ?= 90
 PKG_COVER_MIN ?= 85
@@ -73,6 +73,28 @@ endpoint-lock: require-uv
 	  --universal --python-version $(LITELLM_PYTHON) --generate-hashes \
 	  --excludes $(LITELLM_EXCLUDES) \
 	  --custom-compile-command 'make endpoint-lock' --output-file $(LITELLM_LOCK)
+
+# The local test endpoint (scripts/local-endpoint.sh): LiteLLM on 127.0.0.1
+# with the routes in scripts/local-endpoint/litellm.yaml. Developer-only.
+endpoint-up: require-uv
+	LITELLM_VERSION='$(LITELLM_VERSION)' LITELLM_PYTHON='$(LITELLM_PYTHON)' sh scripts/local-endpoint.sh start
+
+endpoint-down:
+	sh scripts/local-endpoint.sh stop
+
+endpoint-status:
+	sh scripts/local-endpoint.sh status
+
+# Pulls the Ollama model the "local" route names. The model is named only in
+# the config, so changing it there is the whole change.
+endpoint-pull:
+	@command -v ollama >/dev/null 2>&1 || { \
+	  echo "FAIL: ollama is missing — install Ollama: https://ollama.com/download" >&2; exit 1; }
+	@model=$$(awk '/model_name:/ { local = ($$NF == "local") } \
+	  local && $$1 == "model:" && $$2 ~ /^ollama_chat\// { sub(/^ollama_chat\//, "", $$2); print $$2; exit }' \
+	  scripts/local-endpoint/litellm.yaml); \
+	[ -n "$$model" ] || { echo "FAIL: no ollama_chat model on the local route in scripts/local-endpoint/litellm.yaml" >&2; exit 1; }; \
+	echo "ollama pull $$model"; ollama pull "$$model"
 
 # The one gate: everything a card close (and CI) must prove, in one command.
 # (race runs the full suite under the race detector; cover re-runs for the
