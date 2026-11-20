@@ -1542,3 +1542,23 @@ func TestLocalEndpointRefusesWhileAnotherCommandHoldsTheLock(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestLocalEndpointStartRefusesMalformedReadyTimeout(t *testing.T) {
+	// "08" passes a digits-only check but is invalid octal in shell
+	// arithmetic; it must be refused before anything starts.
+	for _, timeout := range []string{"08", "0", "abc", "-5"} {
+		t.Run(timeout, func(t *testing.T) {
+			f := newEndpointFixture(t, "200")
+			out, err := f.do(t, "start", "ENDPOINT_READY_TIMEOUT="+timeout)
+			if err == nil {
+				t.Fatalf("start must refuse ENDPOINT_READY_TIMEOUT=%q, output: %s", timeout, out)
+			}
+			if f.recorded(t, "uv.args") != "" {
+				t.Errorf("work began before ENDPOINT_READY_TIMEOUT=%q was refused", timeout)
+			}
+			if _, err := os.Stat(filepath.Join(f.run, "pid")); !os.IsNotExist(err) {
+				t.Errorf("a proxy was launched before ENDPOINT_READY_TIMEOUT=%q was refused", timeout)
+			}
+		})
+	}
+}

@@ -146,7 +146,10 @@ start() {
     die "the lock pins litellm ${locked:-nothing}, the Makefile pins $LITELLM_VERSION — run: make endpoint-lock"
   case "$PORT" in '' | *[!0-9]*) die "ENDPOINT_PORT must be a number" ;; esac
 
-  case "$TIMEOUT" in '' | *[!0-9]*) die "ENDPOINT_READY_TIMEOUT must be a number of seconds" ;; esac
+  # A leading zero would make shell arithmetic read the value as octal
+  # ("08" fails after the proxy has started), so only plain positive
+  # decimals are accepted.
+  case "$TIMEOUT" in '' | 0* | *[!0-9]*) die "ENDPOINT_READY_TIMEOUT must be a positive whole number of seconds without leading zeros" ;; esac
 
   lock
   if running; then
