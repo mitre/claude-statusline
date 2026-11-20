@@ -441,10 +441,10 @@ func TestRunAntigravityEndToEnd(t *testing.T) {
 	d.fetchUsage = func(string) ([]byte, error) { return nil, errors.New("no anthropic endpoint") }
 	d.readFile = func(_ string) ([]byte, error) { return nil, os.ErrNotExist }
 	d.stdin = strings.NewReader(`{
-		"session_id": "9233d019-88e0-4ce2-a28c-6de1295fad0a",
+		"session_id": "0a1b2c3d-0000-4000-8000-000000000000",
 		"product": "antigravity",
 		"plan_tier": "Google AI Ultra",
-		"email": "lippold@gmail.com",
+		"email": "dev@example.com",
 		"cwd": "/Users/dev/projects/demo-app",
 		"workspace": {"current_dir": "/Users/dev/projects/demo-app"},
 		"model": {"display_name": "Gemini 3.8 Flash (High)", "effort": "high"},
@@ -470,7 +470,7 @@ func TestRunAntigravityEndToEnd(t *testing.T) {
 	if !strings.Contains(out, "22%") || !strings.Contains(out, ">200k") {
 		t.Errorf("missing context bar: %q", out)
 	}
-	if !strings.Contains(out, "account") || !strings.Contains(out, "lippold@gmail.com") {
+	if !strings.Contains(out, "account") || !strings.Contains(out, "dev@example.com") {
 		t.Errorf("missing account email: %q", out)
 	}
 	if !strings.Contains(out, "Google AI Ultra") {
@@ -505,10 +505,10 @@ func TestRunAntigravityConfigLoaded(t *testing.T) {
 	// The config file lives on the real filesystem under a temp HOME.
 	d.stat = os.Stat
 	const stdin = `{
-		"session_id": "9233d019-88e0-4ce2-a28c-6de1295fad0a",
+		"session_id": "0a1b2c3d-0000-4000-8000-000000000000",
 		"product": "antigravity",
 		"plan_tier": "Google AI Ultra",
-		"email": "lippold@gmail.com",
+		"email": "dev@example.com",
 		"cwd": "/Users/dev/projects/demo-app",
 		"cost": {"total_lines_added": 12, "total_lines_removed": 5},
 		"quota": {
@@ -554,9 +554,9 @@ func TestRunAntigravityIgnoresAnthropicAPIKeyBadge(t *testing.T) {
 	}
 	// Antigravity payload with NO plan_tier specified
 	d.stdin = strings.NewReader(`{
-		"session_id": "9233d019-88e0-4ce2-a28c-6de1295fad0a",
+		"session_id": "0a1b2c3d-0000-4000-8000-000000000000",
 		"product": "antigravity",
-		"email": "lippold@gmail.com",
+		"email": "dev@example.com",
 		"cwd": "/Users/dev/projects/demo-app",
 		"quota": {
 			"gemini-5h": {"remaining_fraction": 0.95, "reset_time": "2026-10-04T18:43:54Z"}
