@@ -1108,3 +1108,301 @@ func TestReleaseScriptRefusesWithoutNotes(t *testing.T) {
 		}
 	}
 }
+
+// ---- scripts/local-endpoint.sh: the developer-only LiteLLM test endpoint.
+// The script runs in a scratch copy of the repo layout (scripts/ plus a
+// fixture lock and config), with PATH shims for uv and curl: uv "creates" a
+// virtualenv whose litellm is a recorder that stays alive like the proxy.
+// The invariants under test: loopback only, the pinned and hash-checked
+// install, a per-run key that never reaches argv or output, and stop ending
+// exactly the process start began.
+
+type endpointFixture struct {
+	script string // the copied scripts/local-endpoint.sh
+	run    string // ENDPOINT_RUN_DIR
+	rec    string // where the shims record what they saw
+	lock   string
+	config string
+	env    []string
+}
+
+const fakeEndpointKeyLeak = "LEAK-TEST-MARKER"
+
+// newEndpointFixture copies the script beside a fixture lock pinning
+// litellm 9.9.9 and installs the shims. curlCode is what the readiness
+// probe answers ("200" ready, "000" never ready).
+func newEndpointFixture(t *testing.T, curlCode string) *endpointFixture {
+	t.Helper()
+	root := t.TempDir()
+	f := &endpointFixture{
+		script: filepath.Join(root, "scripts", "local-endpoint.sh"),
+		run:    filepath.Join(root, "run"),
+		rec:    filepath.Join(root, "rec"),
+		lock:   filepath.Join(root, "scripts", "local-endpoint", "requirements.txt"),
+		config: filepath.Join(root, "scripts", "local-endpoint", "litellm.yaml"),
+	}
+	for _, d := range []string{filepath.Dir(f.lock), f.rec} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src, err := os.ReadFile("scripts/local-endpoint.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.script, src, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lock := "litellm==9.9.9 \\\n    --hash=sha256:" + strings.Repeat("0", 64) + "\n"
+	if err := os.WriteFile(f.lock, []byte(lock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.config, []byte("model_list: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The fake litellm records argv, whether the key arrived, and the key
+	// itself (to compare with the key file); it prints a line containing
+	// the key, so the timeout path's log tail has something to redact, then
+	// stays alive in place of the proxy.
+	litellm := `#!/bin/sh
+printf '%s\n' "$*" >> "` + f.rec + `/litellm.args"
+printf '%s' "${LITELLM_MASTER_KEY:-}" > "` + f.rec + `/litellm.key"
+echo "proxy starting ` + fakeEndpointKeyLeak + ` ${LITELLM_MASTER_KEY:-}"
+exec sleep 300
+`
+	shimPath(t, map[string]string{
+		"uv": `printf '%s\n' "$*" >> "` + f.rec + `/uv.args"
+if [ "$1" = venv ]; then
+  for a in "$@"; do v="$a"; done
+  mkdir -p "$v/bin"
+  cat > "$v/bin/litellm" <<'LITELLM'
+` + litellm + `LITELLM
+  chmod 700 "$v/bin/litellm"
+  : > "$v/bin/python"
+fi
+`,
+		"curl": `printf '%s\n' "$*" >> "` + f.rec + `/curl.args"
+case "$*" in
+  *-w*) printf '` + curlCode + `' ;;
+  *) printf '{"data":[{"id":"mock"},{"id":"local"}]}' ;;
+esac
+`,
+	})
+	f.env = append(os.Environ(),
+		"ENDPOINT_RUN_DIR="+f.run,
+		"ENDPOINT_PORT=4999",
+		"ENDPOINT_READY_TIMEOUT=2",
+		"LITELLM_VERSION=9.9.9",
+		"LITELLM_PYTHON=3.12",
+	)
+	t.Cleanup(func() { _, _ = f.do(t, "stop") })
+	return f
+}
+
+func (f *endpointFixture) do(t *testing.T, verb string, extraEnv ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("sh", f.script, verb)
+	cmd.Env = append(append([]string{}, f.env...), extraEnv...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func (f *endpointFixture) recorded(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(f.rec, name))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func (f *endpointFixture) pid(t *testing.T) int {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(f.run, "pid"))
+	if err != nil {
+		t.Fatalf("no pid file after start: %v", err)
+	}
+	var pid int
+	if _, err := fmt.Sscanf(string(b), "%d", &pid); err != nil {
+		t.Fatalf("pid file %q: %v", b, err)
+	}
+	return pid
+}
+
+func processAlive(pid int) bool {
+	return exec.Command("kill", "-0", fmt.Sprint(pid)).Run() == nil
+}
+
+func TestLocalEndpointStartRunsPinnedLiteLLMOnLoopback(t *testing.T) {
+	f := newEndpointFixture(t, "200")
+	out, err := f.do(t, "start")
+	if err != nil {
+		t.Fatalf("start: %v: %s", err, out)
+	}
+
+	uv := f.recorded(t, "uv.args")
+	if !strings.Contains(uv, "--require-hashes") || !strings.Contains(uv, "-r "+f.lock) {
+		t.Errorf("LiteLLM must be installed hash-checked from the lock, uv saw:\n%s", uv)
+	}
+	if !strings.Contains(uv, "--python 3.12") {
+		t.Errorf("the virtualenv must use LITELLM_PYTHON, uv saw:\n%s", uv)
+	}
+	args := f.recorded(t, "litellm.args")
+	for _, want := range []string{"--host 127.0.0.1", "--port 4999", "--config " + f.config} {
+		if !strings.Contains(args, want) {
+			t.Errorf("litellm argv %q lacks %q", args, want)
+		}
+	}
+
+	key := f.recorded(t, "litellm.key")
+	if len(key) < 32 {
+		t.Fatalf("LiteLLM got no master key through its environment (got %q)", key)
+	}
+	keyFile := filepath.Join(f.run, "key")
+	b, err := os.ReadFile(keyFile)
+	if err != nil || string(b) != key {
+		t.Errorf("key file must hold the key LiteLLM got: %q, %v", b, err)
+	}
+	if st, err := os.Stat(keyFile); err != nil || st.Mode().Perm() != 0o600 {
+		t.Errorf("key file mode = %v (%v), want 0600", st.Mode().Perm(), err)
+	}
+	if strings.Contains(out, key) {
+		t.Errorf("start printed the key: %s", out)
+	}
+	for _, name := range []string{"litellm.args", "curl.args", "uv.args"} {
+		if strings.Contains(f.recorded(t, name), key) {
+			t.Errorf("the key reached a command line (%s)", name)
+		}
+	}
+	if !processAlive(f.pid(t)) {
+		t.Error("the proxy process start recorded is not running")
+	}
+}
+
+func TestLocalEndpointStartRefusesUnpinnedOrMismatchedVersion(t *testing.T) {
+	for _, tc := range []struct{ name, version string }{
+		{"unset", ""},
+		{"lock disagrees", "1.0.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newEndpointFixture(t, "200")
+			out, err := f.do(t, "start", "LITELLM_VERSION="+tc.version)
+			if err == nil {
+				t.Fatalf("start must refuse LITELLM_VERSION=%q, output: %s", tc.version, out)
+			}
+			if f.recorded(t, "uv.args") != "" || f.recorded(t, "litellm.args") != "" {
+				t.Error("nothing may be installed or started before the version check passes")
+			}
+		})
+	}
+}
+
+func TestLocalEndpointStartRefusesNonLoopbackHost(t *testing.T) {
+	f := newEndpointFixture(t, "200")
+	out, err := f.do(t, "start", "ENDPOINT_HOST=0.0.0.0")
+	if err == nil {
+		t.Fatalf("start must refuse a non-loopback host, output: %s", out)
+	}
+	if f.recorded(t, "litellm.args") != "" {
+		t.Error("LiteLLM must not start on a refused host")
+	}
+}
+
+func TestLocalEndpointSecondStartReportsRunningInstance(t *testing.T) {
+	f := newEndpointFixture(t, "200")
+	if out, err := f.do(t, "start"); err != nil {
+		t.Fatalf("start: %v: %s", err, out)
+	}
+	first := f.pid(t)
+	out, err := f.do(t, "start")
+	if err != nil {
+		t.Fatalf("second start: %v: %s", err, out)
+	}
+	if !strings.Contains(out, "running") {
+		t.Errorf("second start must report the running instance, got: %s", out)
+	}
+	if n := strings.Count(f.recorded(t, "litellm.args"), "\n"); n != 1 {
+		t.Errorf("litellm started %d times, want 1", n)
+	}
+	if f.pid(t) != first {
+		t.Error("second start replaced the recorded process")
+	}
+}
+
+func TestLocalEndpointStopEndsOnlyItsOwnProcess(t *testing.T) {
+	f := newEndpointFixture(t, "200")
+	if out, err := f.do(t, "start"); err != nil {
+		t.Fatalf("start: %v: %s", err, out)
+	}
+	pid := f.pid(t)
+	if out, err := f.do(t, "status"); err != nil || !strings.Contains(out, "running") || !strings.Contains(out, "local") {
+		t.Errorf("status while running: %v: %s", err, out)
+	}
+	if out, err := f.do(t, "stop"); err != nil {
+		t.Fatalf("stop: %v: %s", err, out)
+	}
+	if processAlive(pid) {
+		t.Error("stop left the proxy running")
+	}
+	for _, name := range []string{"pid", "key", "auth-header"} {
+		if _, err := os.Stat(filepath.Join(f.run, name)); !os.IsNotExist(err) {
+			t.Errorf("stop left run file %s", name)
+		}
+	}
+	out, err := f.do(t, "status")
+	if err == nil || !strings.Contains(out, "stopped") {
+		t.Errorf("status after stop must say stopped and exit non-zero: %v: %s", err, out)
+	}
+	if out, err := f.do(t, "stop"); err != nil {
+		t.Errorf("stop with nothing running must exit 0: %v: %s", err, out)
+	}
+
+	// A pid file naming someone else's process (its start time differs from
+	// the one recorded) must never lead to a kill.
+	// Its exit is observed through Wait: a killed child stays a zombie until
+	// reaped, and kill -0 still succeeds on a zombie.
+	other := exec.Command("sleep", "300")
+	if err := other.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan struct{})
+	go func() { _ = other.Wait(); close(exited) }()
+	t.Cleanup(func() { _ = other.Process.Kill(); <-exited })
+	if err := os.MkdirAll(f.run, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.run, "pid"), []byte(fmt.Sprint(other.Process.Pid)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.run, "started"), []byte("Thu Jan  1 00:00:00 1970\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := f.do(t, "stop"); err != nil {
+		t.Fatalf("stop with a stale record: %v: %s", err, out)
+	}
+	select {
+	case <-exited:
+		t.Error("stop killed a process it did not start")
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+func TestLocalEndpointStartTimesOutWithKeyFreeLogTail(t *testing.T) {
+	f := newEndpointFixture(t, "000")
+	out, err := f.do(t, "start")
+	if err == nil {
+		t.Fatalf("start must fail when the proxy never answers, output: %s", out)
+	}
+	if !strings.Contains(out, fakeEndpointKeyLeak) {
+		t.Errorf("a failed start must show the proxy's log tail, got: %s", out)
+	}
+	if key := f.recorded(t, "litellm.key"); key == "" || strings.Contains(out, key) {
+		t.Errorf("the log tail must not carry the key (key %q), got: %s", key, out)
+	}
+	if args := f.recorded(t, "litellm.args"); args == "" {
+		t.Fatal("litellm never started")
+	}
+	if _, err := os.Stat(filepath.Join(f.run, "pid")); !os.IsNotExist(err) {
+		t.Error("a failed start must not leave a pid file")
+	}
+}
