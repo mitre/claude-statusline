@@ -1,0 +1,22 @@
+# LiteLLM config for the local test endpoint (developer-only; never part of
+# make check or CI). Claude Code reaches it with ANTHROPIC_BASE_URL on
+# 127.0.0.1 and names a route with ANTHROPIC_MODEL.
+model_list:
+  # Answers every Anthropic Messages request with a fixed reply. Needs no
+  # model, no Ollama and no network.
+  - model_name: mock
+    litellm_params:
+      model: anthropic/mock
+      mock_response: "mock reply from the local test endpoint"
+  # A real model in the local Ollama. The route name stays "local" whatever
+  # model sits behind it; this line is the only place the model is named.
+  # Pull it into Ollama first. It must support tools: Claude Code sends tool
+  # definitions on every request.
+  - model_name: local
+    litellm_params:
+      model: ollama_chat/gemma4:e2b
+      api_base: http://127.0.0.1:11434
+
+general_settings:
+  # Set per run by the start script; never stored in this file.
+  master_key: os.environ/LITELLM_MASTER_KEY
