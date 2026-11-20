@@ -1,0 +1,5 @@
+# Packages left out of the LiteLLM lock (make endpoint-lock).
+# litellm-enterprise: required by litellm[proxy]; not MIT (its PyPI license
+# is LicenseRef-Proprietary). The proxy and its /v1/messages route run
+# without it.
+litellm-enterprise

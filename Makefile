@@ -3,7 +3,8 @@ DIST   := dist
 
 .PHONY: build test vet lint vuln race cover fuzz bench check release snapshot clean \
 	tools hooks preflight release-checksums publish-formula dev-install \
-	require-golangci-lint require-govulncheck require-goreleaser
+	require-golangci-lint require-govulncheck require-goreleaser \
+	endpoint-lock require-uv
 
 COVER_MIN ?= 90
 PKG_COVER_MIN ?= 85
@@ -16,6 +17,15 @@ FUZZTIME ?= 30s
 GOLANGCI_LINT_VERSION := v2.14.0
 GOVULNCHECK_VERSION   := v1.7.0
 GORELEASER_VERSION    := v2.17.0
+
+# LiteLLM for the local test endpoint (developer-only; never part of check or
+# CI). Run through uv from the hash-locked file make endpoint-lock writes;
+# nothing is installed globally. A new pin waits 7 days after its release
+# unless the owner approves an exception.
+LITELLM_VERSION  := 1.110.2
+LITELLM_PYTHON   := 3.12
+LITELLM_LOCK     := scripts/local-endpoint/requirements.txt
+LITELLM_EXCLUDES := scripts/local-endpoint/excludes.txt
 
 # Local builds use exactly go.mod's Go — the same version CI resolves from
 # go-version-file — so a newer Homebrew Go can't silently change the gates.
@@ -48,6 +58,21 @@ require-goreleaser:
 	@have=$$(goreleaser --version 2>/dev/null | awk '/^GitVersion:/ {print $$2}'); \
 	[ "$$have" = "$(GORELEASER_VERSION)" ] || { \
 	  echo "FAIL: local goreleaser is '$${have:-missing}', pinned $(GORELEASER_VERSION) — run: make tools" >&2; exit 1; }
+
+# uv resolves and runs the pinned LiteLLM; any uv release can read the lock,
+# so only its presence is checked.
+require-uv:
+	@command -v uv >/dev/null 2>&1 || { \
+	  echo "FAIL: uv is missing — install uv: https://docs.astral.sh/uv/getting-started/installation/" >&2; exit 1; }
+
+# Regenerates the LiteLLM lock from LITELLM_VERSION alone: every package
+# pinned with hashes, resolved for all platforms at LITELLM_PYTHON, minus the
+# packages listed in LITELLM_EXCLUDES.
+endpoint-lock: require-uv
+	printf 'litellm[proxy]==%s\n' '$(LITELLM_VERSION)' | uv pip compile - \
+	  --universal --python-version $(LITELLM_PYTHON) --generate-hashes \
+	  --excludes $(LITELLM_EXCLUDES) \
+	  --custom-compile-command 'make endpoint-lock' --output-file $(LITELLM_LOCK)
 
 # The one gate: everything a card close (and CI) must prove, in one command.
 # (race runs the full suite under the race detector; cover re-runs for the
