@@ -7,11 +7,15 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -1129,8 +1133,9 @@ type endpointFixture struct {
 const fakeEndpointKeyLeak = "LEAK-TEST-MARKER"
 
 // newEndpointFixture copies the script beside a fixture lock pinning
-// litellm 9.9.9 and installs the shims. curlCode is what the readiness
-// probe answers ("200" ready, "000" never ready).
+// litellm 9.9.9 and installs the shims. curlCode is what the shimmed
+// readiness probe answers ("200" ready, "000" never ready); "" leaves the
+// real curl on PATH, for tests that serve real HTTP on ENDPOINT_PORT.
 func newEndpointFixture(t *testing.T, curlCode string) *endpointFixture {
 	t.Helper()
 	root := t.TempDir()
@@ -1170,7 +1175,7 @@ printf '%s' "${LITELLM_MASTER_KEY:-}" > "` + f.rec + `/litellm.key"
 echo "proxy starting ` + fakeEndpointKeyLeak + ` ${LITELLM_MASTER_KEY:-}"
 exec sleep 300
 `
-	shimPath(t, map[string]string{
+	shims := map[string]string{
 		"uv": `printf '%s\n' "$*" >> "` + f.rec + `/uv.args"
 if [ "$1" = venv ]; then
   for a in "$@"; do v="$a"; done
@@ -1181,13 +1186,16 @@ if [ "$1" = venv ]; then
   : > "$v/bin/python"
 fi
 `,
-		"curl": `printf '%s\n' "$*" >> "` + f.rec + `/curl.args"
+	}
+	if curlCode != "" {
+		shims["curl"] = `printf '%s\n' "$*" >> "` + f.rec + `/curl.args"
 case "$*" in
   *-w*) printf '` + curlCode + `' ;;
   *) printf '{"data":[{"id":"mock"},{"id":"local"}]}' ;;
 esac
-`,
-	})
+`
+	}
+	shimPath(t, shims)
 	f.env = append(os.Environ(),
 		"ENDPOINT_RUN_DIR="+f.run,
 		"ENDPOINT_PORT=4999",
@@ -1404,5 +1412,133 @@ func TestLocalEndpointStartTimesOutWithKeyFreeLogTail(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(f.run, "pid")); !os.IsNotExist(err) {
 		t.Error("a failed start must not leave a pid file")
+	}
+}
+
+// proxyTrap listens like an HTTP proxy and counts the connections it gets;
+// any connection means a request (and its Authorization header) left the
+// loopback path.
+func proxyTrap(t *testing.T) (addr string, hits *atomic.Int32) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hits = new(atomic.Int32)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			hits.Add(1)
+			_ = c.Close()
+		}
+	}()
+	t.Cleanup(func() { _ = ln.Close() })
+	return ln.Addr().String(), hits
+}
+
+func TestLocalEndpointRequestsNeverGoThroughAProxy(t *testing.T) {
+	f := newEndpointFixture(t, "")
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" || !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer sk-") {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"mock"},{"id":"local"}]}`))
+	}))
+	t.Cleanup(api.Close)
+	port := api.URL[strings.LastIndex(api.URL, ":")+1:]
+	proxy, hits := proxyTrap(t)
+	// A .curlrc that proxies and traces: without -q, curl would write every
+	// request header, the key included, to the trace file.
+	curlHome := t.TempDir()
+	trace := filepath.Join(curlHome, "trace.txt")
+	curlrc := "proxy = \"http://" + proxy + "\"\ntrace-ascii = \"" + trace + "\"\n"
+	if err := os.WriteFile(filepath.Join(curlHome, ".curlrc"), []byte(curlrc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{
+		"ENDPOINT_PORT=" + port, "CURL_HOME=" + curlHome,
+		"http_proxy=http://" + proxy, "HTTP_PROXY=http://" + proxy,
+		"all_proxy=http://" + proxy, "ALL_PROXY=http://" + proxy,
+		"no_proxy=", "NO_PROXY=",
+	}
+	if out, err := f.do(t, "start", env...); err != nil {
+		t.Fatalf("start with proxy settings: %v: %s", err, out)
+	}
+	if out, err := f.do(t, "status", env...); err != nil || !strings.Contains(out, "local") {
+		t.Errorf("status with proxy settings: %v: %s", err, out)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("%d request(s) carrying the key went to the configured proxy", n)
+	}
+	if _, err := os.Stat(trace); !os.IsNotExist(err) {
+		t.Error("the user's .curlrc was applied: curl traced a request carrying the key")
+	}
+}
+
+func TestLocalEndpointStartGivesUpOnAStalledServer(t *testing.T) {
+	f := newEndpointFixture(t, "")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() { // accept and never answer
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { _ = c.Close() })
+		}
+	}()
+	port := ln.Addr().String()[strings.LastIndex(ln.Addr().String(), ":")+1:]
+
+	began := time.Now()
+	done := make(chan error, 1)
+	var out string
+	go func() {
+		var err error
+		out, err = f.do(t, "start", "ENDPOINT_PORT="+port, "ENDPOINT_READY_TIMEOUT=2")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatalf("start must fail against a server that never answers, output: %s", out)
+		}
+		if elapsed := time.Since(began); elapsed > 12*time.Second {
+			t.Errorf("start took %v with a 2 s readiness timeout", elapsed)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("start hung on a server that accepts and never answers")
+	}
+	if _, err := os.Stat(filepath.Join(f.run, "pid")); !os.IsNotExist(err) {
+		t.Error("a failed start must not leave a pid file")
+	}
+}
+
+func TestLocalEndpointRefusesWhileAnotherCommandHoldsTheLock(t *testing.T) {
+	f := newEndpointFixture(t, "200")
+	if err := os.MkdirAll(filepath.Join(f.run, "lock"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, verb := range []string{"start", "stop"} {
+		out, err := f.do(t, verb)
+		if err == nil || !strings.Contains(out, "lock") {
+			t.Errorf("%s must refuse while the lock is held, naming it: %v: %s", verb, err, out)
+		}
+	}
+	if f.recorded(t, "uv.args") != "" || f.recorded(t, "litellm.args") != "" {
+		t.Error("nothing may be installed or started while another command holds the lock")
+	}
+	if _, err := os.Stat(filepath.Join(f.run, "lock")); err != nil {
+		t.Error("a refused command must leave the other command's lock in place")
+	}
+	if err := os.Remove(filepath.Join(f.run, "lock")); err != nil {
+		t.Fatal(err)
 	}
 }

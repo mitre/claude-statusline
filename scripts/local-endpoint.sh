@@ -21,6 +21,9 @@ CONFIG="$HERE/local-endpoint/litellm.yaml"
 HOST=${ENDPOINT_HOST:-127.0.0.1}
 PORT=${ENDPOINT_PORT:-4000}
 TIMEOUT=${ENDPOINT_READY_TIMEOUT:-60}
+# Each request to the proxy may take this long; a server that accepts a
+# connection and never answers must not hold start past its deadline.
+REQUEST_TIMEOUT=2
 
 die() {
   echo "local-endpoint: $*" >&2
@@ -95,8 +98,29 @@ redact() {
     }'
 }
 
+# api requests a path from the proxy with the key. -q (first) ignores any
+# .curlrc and --noproxy '*' any proxy variables: the Authorization header
+# must never leave the loopback connection.
+api() {
+  curl -q --noproxy '*' --silent --max-time "$REQUEST_TIMEOUT" -H "@$RUN/auth-header" "$@"
+}
+
+# lock serializes start and stop for this run directory: one mkdir wins, a
+# second command refuses and names the lock. A lock left by a killed command
+# is never cleared automatically (two commands clearing it at once could
+# both proceed).
+lock() {
+  umask 077
+  mkdir -p "$RUN" || die "cannot create $RUN"
+  chmod 700 "$RUN"
+  mkdir "$RUN/lock" 2>/dev/null ||
+    die "another local-endpoint command holds $RUN/lock — if none is running, remove it: rmdir $RUN/lock"
+  trap 'rmdir "$RUN/lock" 2>/dev/null' EXIT
+  trap 'exit 1' HUP INT TERM
+}
+
 describe() {
-  routes=$(curl -s -H "@$RUN/auth-header" "http://127.0.0.1:$(cat "$RUN/port")/v1/models" |
+  routes=$(api "http://127.0.0.1:$(cat "$RUN/port")/v1/models" |
     tr ',{}[]' '\n\n\n\n\n' | sed -n 's/^ *"id": *"\([^"]*\)".*/\1/p' | tr '\n' ' ')
   echo "running: http://127.0.0.1:$(cat "$RUN/port") (pid $(cat "$RUN/pid")); routes: ${routes% }; key file: $RUN/key"
 }
@@ -122,14 +146,13 @@ start() {
     die "the lock pins litellm ${locked:-nothing}, the Makefile pins $LITELLM_VERSION — run: make endpoint-lock"
   case "$PORT" in '' | *[!0-9]*) die "ENDPOINT_PORT must be a number" ;; esac
 
+  case "$TIMEOUT" in '' | *[!0-9]*) die "ENDPOINT_READY_TIMEOUT must be a number of seconds" ;; esac
+
+  lock
   if running; then
     describe
     return 0
   fi
-
-  umask 077
-  mkdir -p "$RUN" || die "cannot create $RUN"
-  chmod 700 "$RUN"
   clear_run_files
   install_litellm
 
@@ -146,13 +169,15 @@ start() {
   echo "$pid" >"$RUN/pid"
   started_at "$pid" >"$RUN/started"
 
-  i=0
-  while [ "$i" -lt "$TIMEOUT" ]; do
-    code=$(curl -s -o /dev/null -w '%{http_code}' -H "@$RUN/auth-header" "http://127.0.0.1:$PORT/v1/models")
+  # A wall-clock deadline: each probe is bounded by REQUEST_TIMEOUT, so a
+  # stalled server costs at most one probe beyond it.
+  deadline=$(($(date +%s) + TIMEOUT))
+  code=
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    code=$(api -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/v1/models")
     [ "$code" = 200 ] && break
     kill -0 "$pid" 2>/dev/null || break
     sleep 1
-    i=$((i + 1))
   done
   if [ "${code:-}" != 200 ]; then
     echo "local-endpoint: LiteLLM did not answer on 127.0.0.1:$PORT within ${TIMEOUT}s; last log lines:" >&2
@@ -165,6 +190,7 @@ start() {
 }
 
 stop() {
+  lock
   if running; then
     end_process "$(cat "$RUN/pid")"
   fi
