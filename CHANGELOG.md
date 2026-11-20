@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Updated `golang.org/x/net` to v0.62.0 (GO-2026-6866, GO-2026-6860) and
+  `golang.org/x/crypto` to v0.59.0 (GO-2026-5932). `x/crypto` v0.59.0
+  requires `golang.org/x/sys` v0.50.0, so that moves too. govulncheck found
+  no call to the affected code before the update; it now reports none of
+  the three.
+
 ## [0.4.1] - 2026-11-19
 
 ### Fixed
