@@ -7,6 +7,7 @@
 #   local-endpoint.sh start    install (hash-checked) if needed, start, wait
 #   local-endpoint.sh stop     end the process start began; remove run files
 #   local-endpoint.sh status   exit 0 and describe it when running, else exit 3
+#   local-endpoint.sh model    the Ollama model behind the local route
 #
 # Run state lives in the user cache directory (ENDPOINT_RUN_DIR overrides):
 # the pid and its start time, a per-run key (mode 0600), the curl header
@@ -211,12 +212,36 @@ status() {
   return 3
 }
 
+# model prints the Ollama model behind the "local" route, as the running
+# proxy reports it in /v1/model/info: LiteLLM has already parsed the YAML,
+# so comments and key order in the config cannot change the answer. Exactly
+# one "local" route with an ollama_chat/<model> model is accepted.
+model() {
+  running || die "the endpoint is not running — run: make endpoint-up"
+  api "http://127.0.0.1:$(cat "$RUN/port")/v1/model/info" | "$VENV/bin/python" -I -c '
+import json, sys
+try:
+    routes = json.load(sys.stdin)["data"]
+except (ValueError, KeyError, TypeError):
+    sys.exit("local-endpoint: /v1/model/info did not return the route list")
+local = [r for r in routes if isinstance(r, dict) and r.get("model_name") == "local"]
+if len(local) != 1:
+    sys.exit("local-endpoint: expected one route named local, found %d" % len(local))
+model = (local[0].get("litellm_params") or {}).get("model")
+prefix = "ollama_chat/"
+if not isinstance(model, str) or not model.startswith(prefix) or model == prefix:
+    sys.exit("local-endpoint: the local route must name an ollama_chat/<model>, got %r" % (model,))
+print(model[len(prefix):])
+'
+}
+
 case "${1:-}" in
 start) start ;;
 stop) stop ;;
 status) status ;;
+model) model ;;
 *)
-  echo "usage: local-endpoint.sh start|stop|status" >&2
+  echo "usage: local-endpoint.sh start|stop|status|model" >&2
   exit 2
   ;;
 esac

@@ -86,14 +86,12 @@ endpoint-status:
 	sh scripts/local-endpoint.sh status
 
 # Pulls the Ollama model the "local" route names. The model is named only in
-# the config, so changing it there is the whole change.
-endpoint-pull:
+# the config, so changing it there is the whole change. The name comes from
+# the running proxy (local-endpoint.sh model), which has parsed the YAML.
+endpoint-pull: endpoint-up
 	@command -v ollama >/dev/null 2>&1 || { \
 	  echo "FAIL: ollama is missing — install Ollama: https://ollama.com/download" >&2; exit 1; }
-	@model=$$(awk '/model_name:/ { local = ($$NF == "local") } \
-	  local && $$1 == "model:" && $$2 ~ /^ollama_chat\// { sub(/^ollama_chat\//, "", $$2); print $$2; exit }' \
-	  scripts/local-endpoint/litellm.yaml); \
-	[ -n "$$model" ] || { echo "FAIL: no ollama_chat model on the local route in scripts/local-endpoint/litellm.yaml" >&2; exit 1; }; \
+	@model=$$(sh scripts/local-endpoint.sh model) || exit 1; \
 	echo "ollama pull $$model"; ollama pull "$$model"
 
 # The one gate: everything a card close (and CI) must prove, in one command.
