@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-19
+
 ### Fixed
 
+- The Homebrew formula a release publishes passes `brew audit --strict`: it
+  no longer repeats the version Homebrew reads from the URL, it picks each
+  platform's archive with `on_arm`/`on_intel` (which Homebrew's
+  cross-platform checks can read), and it has a `livecheck` block.
 - In a linked git worktree (`git worktree add`), the project row showed
   `⎇ ?` and counted every tracked file as dirty: the in-process git reader
   did not follow the worktree's `commondir` to the main repository's
@@ -498,7 +504,8 @@ regression tests:
   observe-only guards for the ~90 ms wall budget, which itself includes
   real IO the benchmarks deliberately exclude.
 
-[Unreleased]: https://github.com/mitre/claude-statusline/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/mitre/claude-statusline/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/mitre/claude-statusline/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/mitre/claude-statusline/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/mitre/claude-statusline/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/mitre/claude-statusline/compare/v0.2.0...v0.3.0
