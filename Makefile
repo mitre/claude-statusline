@@ -4,7 +4,8 @@ DIST   := dist
 .PHONY: build test vet lint vuln race cover fuzz bench check release snapshot clean \
 	tools hooks preflight release-checksums publish-formula dev-install \
 	require-golangci-lint require-govulncheck require-goreleaser \
-	endpoint-lock require-uv endpoint-up endpoint-down endpoint-status endpoint-pull
+	endpoint-lock require-uv endpoint-up endpoint-down endpoint-status endpoint-pull \
+	live-check
 
 COVER_MIN ?= 90
 PKG_COVER_MIN ?= 85
@@ -93,6 +94,17 @@ endpoint-pull: endpoint-up
 	  echo "FAIL: ollama is missing — install Ollama: https://ollama.com/download" >&2; exit 1; }
 	@model=$$(sh scripts/local-endpoint.sh model) || exit 1; \
 	echo "ollama pull $$model"; ollama pull "$$model"
+
+# One interactive Claude Code turn through the running endpoint, keeping the
+# statusline payload (scripts/live-check.sh). ROUTE is mock or local; VARS
+# adds NAME=value variables for Claude Code; STATUSLINE renders the payload
+# (default: the ./claude-statusline that make build writes). The values reach
+# the script through its environment, never through the recipe's shell text.
+live-check: export ROUTE ?= mock
+live-check: export STATUSLINE ?= ./$(BINARY)
+live-check: export VARS ?=
+live-check:
+	sh scripts/live-check.sh
 
 # The one gate: everything a card close (and CI) must prove, in one command.
 # (race runs the full suite under the race detector; cover re-runs for the
