@@ -395,6 +395,20 @@ make snapshot # local no-publish proof of the release pipeline: darwin/linux × 
 make preflight TAG=v0.2.0  # the release gate, runnable locally: tag shape, manifest parity, CHANGELOG section, tag-on-main
 ```
 
+A local LiteLLM test endpoint and a live check run real Claude Code
+custom-endpoint sessions against a build (developer-only; needs uv, plus tmux
+for the live check and Ollama for the `local` route).
+[docs/local-endpoint.md](docs/local-endpoint.md) is the full reference.
+
+```sh
+make endpoint-up      # start LiteLLM on 127.0.0.1:4000 (routes: mock, local)
+make endpoint-status  # prints the running endpoint, or stopped (then fails: the script exits 3)
+make endpoint-pull    # ollama pull the model the local route names
+make live-check ROUTE=mock VARS="NAME=value"  # one interactive Claude Code turn; keeps the statusline payload and rows
+make endpoint-down    # stop it and remove its key
+make endpoint-lock    # regenerate the hash-locked LiteLLM requirements from LITELLM_VERSION
+```
+
 Releases are cut by pushing a `v<major>.<minor>.<patch>` tag; everything
 after that is pipeline. [docs/release-pipeline.md](docs/release-pipeline.md)
 is the full reference — jobs, gates, artifacts, the Homebrew formula path,
