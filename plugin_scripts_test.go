@@ -1670,7 +1670,14 @@ func newLiveCheckFixture(t *testing.T, startEndpoint bool) *liveCheckFixture {
 	shimPath(t, map[string]string{
 		"tmux": `rec="` + rec + `"
 sock=
-if [ "$1" = -S ]; then sock=$2; shift 2; fi
+conf=
+while :; do
+  case "$1" in
+    -S) sock=$2; shift 2 ;;
+    -f) conf=$2; shift 2 ;;
+    *) break ;;
+  esac
+done
 sub=$1; shift
 case "$sub" in
 new-session)
@@ -1685,6 +1692,7 @@ new-session)
     esac
   done
   printf '%s\n' "$sock" > "$rec/tmux.socket"
+  printf '%s\n' "$conf" > "$rec/tmux.conf"
   printf '%s\n' "$*" >> "$rec/tmux.argv"
   ( cd "$dir" && exec "$@" ) > "$rec/session.log" 2>&1 &
   echo $! > "$rec/session.pid"
@@ -1717,14 +1725,17 @@ waitkey() { i=0; until grep -qx -- "$1" "$rec/keys" 2>/dev/null; do i=$((i + 1))
 waitkey Enter
 [ -f "$rec/hang" ] && exec sleep 300
 early() { sleep 1.5; grep -qx /exit "$rec/keys" && touch "$rec/exit-early"; }
+# Claude Code runs the statusline command without waiting for it.
+render_turn() { ( sh -c "$sl" < "$rec/turn.json" > /dev/null; touch "$rec/turn-rendered" ) & }
 if [ -f "$rec/stop-first" ]; then
   echo '{}' | sh -c "$stop"; early
-  sh -c "$sl" < "$rec/turn.json" > /dev/null
+  render_turn
 else
-  sh -c "$sl" < "$rec/turn.json" > /dev/null; early
+  render_turn; early
   echo '{}' | sh -c "$stop"
 fi
 waitkey /exit
+[ -f "$rec/turn-rendered" ] || touch "$rec/exit-before-render"
 `,
 	})
 	// The endpoint fixture copied PATH before these shims existed.
@@ -1858,6 +1869,9 @@ func TestLiveCheckRunsClaudeIsolatedAndCapturesPayload(t *testing.T) {
 	if sock == "" || !strings.HasPrefix(sock, filepath.Dir(home)+"/") {
 		t.Errorf("tmux must run on a private -S socket inside the throwaway directory, got %q (HOME %q)", sock, home)
 	}
+	if conf := strings.TrimSpace(f.recorded(t, "tmux.conf")); conf != "/dev/null" {
+		t.Errorf("the private tmux server must not load the owner's tmux configuration (-f /dev/null), got -f %q", conf)
+	}
 
 	kept := []string{out, f.recorded(t, "tmux.argv"), f.recorded(t, "claude.argv"), f.recorded(t, "settings.json"), f.recorded(t, "seed.json")}
 	entries, _ := os.ReadDir(dir)
@@ -1903,6 +1917,64 @@ func TestLiveCheckWaitsForTheStopHookAndThePostTurnCapture(t *testing.T) {
 				t.Error("/exit was sent before the turn had ended")
 			}
 		})
+	}
+}
+
+func TestLiveCheckKeepsOnlyASuccessfulRenderOfTheFinishedTurn(t *testing.T) {
+	t.Run("slow render", func(t *testing.T) {
+		// The post-turn render finishes after the Stop hook: /exit must wait
+		// for it, and the kept rows must be that render's.
+		f := newLiveCheckFixture(t, true)
+		slow := "#!/bin/sh\np=$(cat)\ncase \"$p\" in *post-turn*) sleep 4 ;; esac\nprintf 'rendered %s\\n' \"$(printf '%s' \"$p\" | sed -n 's/.*\"marker\":\"\\([^\"]*\\)\".*/\\1/p')\"\n"
+		if err := os.WriteFile(f.sl, []byte(slow), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		out, err := f.check(t)
+		if err != nil {
+			t.Fatalf("live-check: %v:\n%s", err, out)
+		}
+		if _, err := os.Stat(filepath.Join(f.rec, "exit-before-render")); err == nil {
+			t.Error("/exit was sent before the post-turn render finished")
+		}
+		dir := outputDir(t, out)
+		for name, want := range map[string]string{"capture.json": liveTurnPayload, "rows.txt": "rendered post-turn\n"} {
+			got, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil || string(got) != want {
+				t.Errorf("%s = %q (%v), want %q", name, got, err, want)
+			}
+		}
+	})
+	t.Run("failing render", func(t *testing.T) {
+		// A renderer that fails on the post-turn payload is not a capture of
+		// the finished turn: the check fails and shows the renderer's error.
+		f := newLiveCheckFixture(t, true)
+		failing := "#!/bin/sh\np=$(cat)\ncase \"$p\" in *post-turn*) echo 'renderer exploded' >&2; exit 1 ;; esac\necho rendered\n"
+		if err := os.WriteFile(f.sl, []byte(failing), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		out, err := f.check(t, "LIVE_CHECK_TIMEOUT=3")
+		if err == nil || !strings.Contains(out, "renderer exploded") {
+			t.Errorf("a failing post-turn render must fail the check and show the renderer's error: %v:\n%s", err, out)
+		}
+	})
+}
+
+func TestLiveCheckRunsUnderAnAwkwardTempDirectory(t *testing.T) {
+	// Claude Code runs the statusline and hook commands through a shell: a
+	// temp path with spaces, quotes or $(...) must reach it as one literal
+	// path, never as shell syntax.
+	awkward := filepath.Join(t.TempDir(), "it's a $(printf X) dir")
+	if err := os.MkdirAll(awkward, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f := newLiveCheckFixture(t, true)
+	out, err := f.check(t, "TMPDIR="+awkward)
+	if err != nil {
+		t.Fatalf("live-check under TMPDIR %q: %v:\n%s", awkward, err, out)
+	}
+	got, err := os.ReadFile(filepath.Join(outputDir(t, out), "rows.txt"))
+	if err != nil || string(got) != "rendered post-turn\n" {
+		t.Errorf("rows.txt = %q (%v), want the post-turn render", got, err)
 	}
 }
 

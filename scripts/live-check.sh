@@ -111,7 +111,7 @@ trap 'exit 1' HUP INT TERM
 umask 077
 base=${TMPDIR:-/tmp}
 TMP=$(mktemp -d "${base%/}/live-check.XXXXXX") || die "cannot create a temporary directory"
-mkdir "$TMP/home" "$TMP/config" "$TMP/work" || die "cannot create the throwaway directories"
+mkdir "$TMP/home" "$TMP/config" "$TMP/work" "$TMP/renders" || die "cannot create the throwaway directories"
 WORK=$(cd "$TMP/work" && pwd -P)
 # The tmux server's socket lives in the throwaway directory: private to this
 # run, and removed with it.
@@ -122,16 +122,62 @@ shq() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
+# Every statusline run gets its own directory under renders/: the payload
+# Claude Code sent, the rows STATUSLINE printed and its stderr. The directory
+# is renamed ok.* only when STATUSLINE succeeded (failed.* otherwise), so a
+# capture is never paired with another run's rows or a failed render.
 cat >"$TMP/statusline.sh" <<EOF
 #!/bin/sh
-# Saves the payload Claude Code sends, then renders it with STATUSLINE.
-t=$(shq "$OUT")/.capture.\$\$
-r=$(shq "$OUT")/.rows.\$\$
-cat >"\$t" || exit 0
-mv -f "\$t" $(shq "$OUT/capture.json")
-$(shq "$STATUSLINE") <$(shq "$OUT/capture.json") >"\$r" 2>&1
-mv -f "\$r" $(shq "$OUT/rows.txt")
-cat $(shq "$OUT/rows.txt")
+renders=$(shq "$TMP/renders")
+d=\$(mktemp -d "\$renders/run.XXXXXX") || exit 1
+cat >"\$d/capture.json" || exit 1
+if $(shq "$STATUSLINE") <"\$d/capture.json" >"\$d/rows.txt" 2>"\$d/stderr.txt"; then
+  mv "\$d" "\$renders/ok.\${d##*/run.}" && cat "\$renders/ok.\${d##*/run.}/rows.txt"
+else
+  mv "\$d" "\$renders/failed.\${d##*/run.}"
+  exit 1
+fi
+EOF
+# pick.py reads renders/: "started" succeeds once any render succeeded;
+# "turn" prints the successful render of the finished turn (output tokens
+# above zero; the most tokens, then the newest); "failed" prints the stderr
+# of failed renders of the turn.
+cat >"$TMP/pick.py" <<'EOF'
+import json, os, sys
+
+mode, root = sys.argv[1], sys.argv[2]
+
+
+def output_tokens(path):
+    try:
+        with open(os.path.join(path, "capture.json")) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return None
+    cw = d.get("context_window") if isinstance(d, dict) else None
+    n = cw.get("total_output_tokens") if isinstance(cw, dict) else None
+    return n if isinstance(n, int) and not isinstance(n, bool) else None
+
+
+runs = [os.path.join(root, name) for name in sorted(os.listdir(root))]
+ok = [p for p in runs if os.path.basename(p).startswith("ok.")]
+if mode == "started":
+    sys.exit(0 if ok else 1)
+if mode == "turn":
+    done = [(output_tokens(p), os.path.getmtime(p), p) for p in ok]
+    done = [r for r in done if r[0] is not None and r[0] > 0]
+    if not done:
+        sys.exit(1)
+    print(max(done)[2])
+    sys.exit(0)
+if mode == "failed":
+    for p in runs:
+        n = output_tokens(p)
+        if os.path.basename(p).startswith("failed.") and n is not None and n > 0:
+            with open(os.path.join(p, "stderr.txt")) as f:
+                sys.stdout.write("STATUSLINE failed on the turn's payload: " + f.read())
+    sys.exit(0)
+sys.exit("pick.py: unknown mode " + mode)
 EOF
 cat >"$TMP/stop.sh" <<EOF
 #!/bin/sh
@@ -146,14 +192,16 @@ EOF
 chmod 700 "$TMP/statusline.sh" "$TMP/stop.sh"
 
 # The settings and the seed are JSON, written by Python so any path is
-# encoded correctly. The seed only skips the first-run screens: onboarding,
-# the theme picker and the folder-trust prompt for the session's directory.
+# encoded correctly. Claude Code runs the statusline and hook commands
+# through a shell, so their paths are shell-quoted as well. The seed only
+# skips the first-run screens: onboarding, the theme picker and the
+# folder-trust prompt for the session's directory.
 "$PY" -I - "$TMP" "$WORK" <<'EOF' || die "cannot write the session settings"
-import json, os, sys
+import json, os, shlex, sys
 tmp, work = sys.argv[1], sys.argv[2]
 settings = {
-    "statusLine": {"type": "command", "command": os.path.join(tmp, "statusline.sh"), "padding": 0},
-    "hooks": {"Stop": [{"hooks": [{"type": "command", "command": os.path.join(tmp, "stop.sh")}]}]},
+    "statusLine": {"type": "command", "command": shlex.quote(os.path.join(tmp, "statusline.sh")), "padding": 0},
+    "hooks": {"Stop": [{"hooks": [{"type": "command", "command": shlex.quote(os.path.join(tmp, "stop.sh"))}]}]},
 }
 seed = {
     "hasCompletedOnboarding": True,
@@ -176,41 +224,43 @@ done
 env -i "$@" "$CLAUDE" --version >"$OUT/claude-version.txt" 2>&1 ||
   die "claude --version failed: $(cat "$OUT/claude-version.txt")"
 
+# -f /dev/null: the private server loads none of the owner's tmux
+# configuration (a remain-on-exit there would keep the session after /exit).
 unset TMUX
-tmux -S "$SOCK" new-session -d -s live -x 200 -y 50 -c "$WORK" \
+tmux -S "$SOCK" -f /dev/null new-session -d -s live -x 200 -y 50 -c "$WORK" \
   env -i "$@" /bin/sh "$TMP/launcher.sh" || die "tmux could not start the session"
 
 # wait_for runs the named check until it succeeds or TIMEOUT passes; it
 # gives up at once when the session has ended without the check passing.
+# Liveness is sampled before the check, so a session that ends between the
+# two is never reported as ending early.
 wait_for() {
   deadline=$(($(date +%s) + TIMEOUT))
-  while ! "$@"; do
-    [ "$(date +%s)" -lt "$deadline" ] || return 1
-    if ! tmux -S "$SOCK" has-session -t live 2>/dev/null; then
+  while :; do
+    alive=yes
+    tmux -S "$SOCK" has-session -t live 2>/dev/null || alive=
+    "$@" && return 0
+    if [ -z "$alive" ]; then
       echo "live-check: the Claude Code session ended early" >&2
       return 1
     fi
+    [ "$(date +%s)" -lt "$deadline" ] || return 1
     sleep 1
   done
 }
-started() { [ -f "$OUT/capture.json" ]; }
+started() { "$PY" -I "$TMP/pick.py" started "$TMP/renders"; }
+# The turn is over once the Stop hook has fired and a render of a payload
+# with the turn's output tokens has succeeded.
 turn_done() {
-  [ -f "$TMP/turn-done" ] && "$PY" -I -c '
-import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-except (OSError, ValueError):
-    sys.exit(1)
-cw = d.get("context_window") if isinstance(d, dict) else None
-n = cw.get("total_output_tokens") if isinstance(cw, dict) else None
-sys.exit(0 if isinstance(n, int) and n > 0 else 1)
-' "$OUT/capture.json"
+  [ -f "$TMP/turn-done" ] && "$PY" -I "$TMP/pick.py" turn "$TMP/renders" >/dev/null
 }
 ended() { ! tmux -S "$SOCK" has-session -t live 2>/dev/null; }
 
-# fail reports a wait that did not finish, with the session's last screen.
+# fail reports a wait that did not finish, with any failed renders of the
+# turn and the session's last screen.
 fail() {
   echo "live-check: $1" >&2
+  "$PY" -I "$TMP/pick.py" failed "$TMP/renders" >&2
   tmux -S "$SOCK" capture-pane -p -t live 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 15 >&2
   exit 1
 }
@@ -223,5 +273,12 @@ tmux -S "$SOCK" send-keys -t live -l "/exit"
 tmux -S "$SOCK" send-keys -t live Enter
 wait_for ended || fail "Claude Code did not exit within ${TIMEOUT}s of /exit"
 
+# Keep the render of the finished turn (picked again: a later successful
+# render may have landed before the session ended).
+best=$("$PY" -I "$TMP/pick.py" turn "$TMP/renders") || die "no successful render of the finished turn"
+cp "$best/capture.json" "$best/rows.txt" "$OUT/" || die "cannot copy the render into $OUT"
 echo "output: $OUT"
 cat "$OUT/rows.txt"
+# The last row has no newline of its own.
+[ -n "$(tail -c 1 "$OUT/rows.txt")" ] && echo
+exit 0
