@@ -64,6 +64,13 @@ make dev-install   # builds HEAD and installs it as ~/.claude/claude-statusline-
 claude --settings '{"statusLine":{"type":"command","command":"~/.claude/claude-statusline-dev","padding":0}}'
 ```
 
+Optional, for changes to how custom-endpoint or gateway sessions are shown:
+a local test endpoint runs a real Claude Code session against your build
+without your login or settings. It needs [uv](https://docs.astral.sh/uv/),
+`tmux`, and, for its `local` route, [Ollama](https://ollama.com/download)
+with the route's model (`make endpoint-pull`). See
+[docs/local-endpoint.md](docs/local-endpoint.md).
+
 ## Project conventions
 
 [AGENTS.md](AGENTS.md) describes the architecture in full. The rules a

@@ -73,6 +73,17 @@ CI (`.github/workflows/ci.yml`) runs exactly the make targets above — never ad
 
 The release pipeline (tag → preflight → gates → release → Homebrew formula) is documented end-to-end in [docs/release-pipeline.md](docs/release-pipeline.md) — jobs, guardrails, and the release runbook live there, not here.
 
+The local LiteLLM test endpoint and the live check are developer-only — never in `make check` or CI — and documented in [docs/local-endpoint.md](docs/local-endpoint.md). They run real Claude Code custom-endpoint sessions (isolated HOME and config dir) for live checks of billing and account display:
+
+```bash
+make endpoint-up      # LiteLLM on 127.0.0.1:4000, routes mock and local; needs uv
+make endpoint-status  # prints the running endpoint, or stopped (then fails: the script exits 3)
+make endpoint-pull    # ollama pull the model the local route names
+make live-check ROUTE=mock VARS="NAME=value"  # one interactive Claude Code turn in a private tmux server; keeps capture.json + rows.txt
+make endpoint-down    # stop it and remove its key
+make endpoint-lock    # regenerate scripts/local-endpoint/requirements.txt from LITELLM_VERSION (7-day rule)
+```
+
 `make hooks` installs the fast-gate pre-commit hook (once per clone). It runs `make lint` only — race/cover/vuln stay in CI because a slow hook gets bypassed — and inherits the tool-version guard, so a mismatched golangci-lint refuses rather than lints. The installer appends a marker-delimited block to `.git/hooks/pre-commit` alongside other tools' managed sections (beads keeps its own there); it never uses `core.hooksPath`, which would disable them. `git commit --no-verify` is acceptable only for commits no gate applies to (pure docs/board files) or when the hook itself is broken — never to sneak code past lint; CI runs the same pinned gate regardless.
 
 ### Test-hygiene traps (each has bitten before)
