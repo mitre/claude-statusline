@@ -3,7 +3,7 @@ module github.com/mitre/claude-statusline
 go 1.27.4
 
 require (
-	charm.land/lipgloss/v2 v2.1.0
+	charm.land/lipgloss/v2 v2.1.1
 	github.com/BurntSushi/toml v1.6.0
 	github.com/go-git/go-git/v5 v5.19.3
 	golang.org/x/text v0.44.0
